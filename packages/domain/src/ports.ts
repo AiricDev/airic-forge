@@ -1,5 +1,5 @@
 import type { AppIdentity, CapabilityCatalog, ForgeUser } from "./model.js";
-import type { WorkDefinition } from "./operating-model.js";
+import type { ValidationIssue, WorkDefinition } from "./operating-model.js";
 import type { Work } from "./work.js";
 
 /** A port is written in the language of a Forge use case, never an SDK or SQL API. */
@@ -23,10 +23,13 @@ export interface TrajectoryEvent { id: string; workId: string; turnId?: string; 
 
 export interface AccountPort {
   ensureUser(email: string, initialAdmin: boolean): MaybePromise<ForgeUser>;
+  linkedUserId(appId: string, appUserId: string): MaybePromise<string | undefined>;
   recordAppIdentity(appId: string, appUserId: string, userId: string, email: string): MaybePromise<void>;
   userByEmail(email: string): MaybePromise<ForgeUser | undefined>;
+  userById(userId: string): MaybePromise<ForgeUser | undefined>;
+  listUsers(): MaybePromise<ForgeUser[]>;
   passwordHash(email: string): MaybePromise<string | undefined>;
-  setPassword(userId: string, hash: string): MaybePromise<void>;
+  setInitialPassword(userId: string, hash: string): MaybePromise<boolean>;
 }
 
 export interface WorkPort {
@@ -47,9 +50,11 @@ export interface OperatingModelPort {
   initialize(): MaybePromise<void>;
   ensureUserBranch(userId: string): MaybePromise<{ branch: string; worktree: string }>;
   head(branch: string): MaybePromise<string>;
+  listFiles(revision: string): MaybePromise<string[]>;
   workDefinition(revision: string, id: string): MaybePromise<WorkDefinition>;
   document(revision: string, path: string): MaybePromise<string>;
   knownKnowledge(revision: string): MaybePromise<Set<string>>;
+  knowledgeIssues(revision: string): MaybePromise<ValidationIssue[]>;
   createProposal(userId: string, proposalId: string, baseRevision: string): MaybePromise<{ branch: string; worktree: string }>;
   writeProposalFile(worktree: string, path: string, content: string): MaybePromise<void>;
   proposalChanges(worktree: string): MaybePromise<string[]>;
@@ -57,12 +62,15 @@ export interface OperatingModelPort {
   adoptProposal(userBranch: string, userWorktree: string, proposalBranch: string, baseRevision: string, trailers: Record<string, string>): MaybePromise<string>;
 }
 
+export interface PasswordCodecPort { hash(password: string): string; verify(password: string, hash: string): boolean; }
+export interface PasswordSetupPort { issue(userId: string, expiresAt: string): MaybePromise<string>; consume(ticket: string, now: string): MaybePromise<string | undefined>; }
+
 export interface CertReporterPort {
   identity(token: string): Promise<AppIdentity>;
   catalog(token: string): Promise<CapabilityCatalog>;
   reportContext(token: string, reportId: string, selection?: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
-export interface AppSessionPort { put(session: SessionGrant): MaybePromise<void>; get(ticket: string): MaybePromise<SessionGrant | undefined>; remove(ticket: string): MaybePromise<void>; }
+export interface AppSessionPort { put(session: SessionGrant): MaybePromise<void>; get(ticket: string): MaybePromise<SessionGrant | undefined>; claim(ticket: string): MaybePromise<SessionGrant | undefined>; remove(ticket: string): MaybePromise<void>; }
 export interface TrajectoryPort { append(event: TrajectoryEvent): MaybePromise<void>; read(workId: string): MaybePromise<TrajectoryEvent[]>; }
 export interface SystemPort { id(prefix: string): string; now(): string; digest(value: unknown): string; }

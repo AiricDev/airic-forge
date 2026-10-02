@@ -14,6 +14,8 @@ export class ForgeDatabase {
     this.#migrate();
   }
 
+  close(): void { this.#db.close(); }
+
   #migrate(): void {
     this.#db.exec(`
       CREATE TABLE IF NOT EXISTS users (
@@ -97,9 +99,16 @@ export class ForgeDatabase {
   }
 
   recordAppIdentity(appId: string, appUserId: string, userId: string, email: string): void {
+    const linked = this.linkedUserId(appId, appUserId);
+    if (linked && linked !== userId) throw new Error("AppIdentityEmailConflict");
     this.#db.prepare(`INSERT INTO app_identities (app_id, app_user_id, forge_user_id, email, observed_at)
       VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(app_id, app_user_id) DO UPDATE SET forge_user_id=excluded.forge_user_id, email=excluded.email, observed_at=excluded.observed_at`).run(appId, appUserId, userId, normalizeEmail(email), new Date().toISOString());
+  }
+
+  linkedUserId(appId: string, appUserId: string): string | undefined {
+    const row = this.#db.prepare("SELECT forge_user_id FROM app_identities WHERE app_id=? AND app_user_id=?").get(appId, appUserId) as { forge_user_id?: string } | undefined;
+    return row?.forge_user_id;
   }
 
   userByEmail(email: string): ForgeUser | undefined {
@@ -107,12 +116,22 @@ export class ForgeDatabase {
     return row ? this.#user(row) : undefined;
   }
 
+  userById(userId: string): ForgeUser | undefined {
+    const row = this.#db.prepare("SELECT * FROM users WHERE id=?").get(userId) as Record<string, unknown> | undefined;
+    return row ? this.#user(row) : undefined;
+  }
+
+  listUsers(): ForgeUser[] {
+    const rows = this.#db.prepare("SELECT * FROM users ORDER BY email").all() as Record<string, unknown>[];
+    return rows.map((row) => this.#user(row));
+  }
+
   passwordHash(email: string): string | undefined {
     const row = this.#db.prepare("SELECT password_hash FROM users WHERE email=?").get(normalizeEmail(email)) as { password_hash?: string } | undefined;
     return row?.password_hash;
   }
 
-  setPassword(userId: string, passwordHash: string): void { this.#db.prepare("UPDATE users SET password_hash=? WHERE id=?").run(passwordHash, userId); }
+  setInitialPassword(userId: string, passwordHash: string): boolean { return this.#db.prepare("UPDATE users SET password_hash=? WHERE id=? AND password_hash IS NULL").run(passwordHash, userId).changes === 1; }
 
   userForWork(workId: string): string | undefined {
     const row = this.#db.prepare("SELECT owner_user_id FROM works WHERE id=?").get(workId) as { owner_user_id?: string } | undefined;

@@ -1,13 +1,16 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
-import { hashPassword, verifyPassword } from "./auth.js";
 import { loadConfig } from "./config.js";
 import { ForgeRuntime } from "./runtime.js";
+import { cookieToken, sessionCookie } from "./web-session-store.js";
+import { fileURLToPath } from "node:url";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 type BootstrapBody = { appId: "certreporter"; workType: "report-authoring"; entityId: string; selection?: Record<string, unknown> };
 type RpcRequest = { id?: string | number; method?: string; params?: Record<string, unknown> };
-type AcpConnection = { socket: { on(event: "message", listener: (raw: unknown) => void | Promise<void>): void; send(payload: string): void } };
+type AcpConnection = { socket: { on(event: "message" | "close", listener: (raw?: unknown) => void | Promise<void>): void; send(payload: string): void } };
 
 const bearer = (value: unknown): string => {
   const header = String(value ?? ""); const match = /^Bearer\s+(.+)$/i.exec(header);
@@ -21,6 +24,18 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
 
   app.get("/health", async () => ({ status: "ok", service: "airic-forge" }));
 
+  app.get("/", async (_request, reply) => {
+    try { return reply.type("text/html; charset=utf-8").send(await readFile(join(runtime.config.webDistDir, "index.html"))); }
+    catch { return reply.code(404).send({ error: "WebWorkspaceNotBuilt" }); }
+  });
+  app.get<{ Params: { file: string } }>("/assets/:file", async (request, reply) => {
+    const file = request.params.file;
+    if (!/^[a-zA-Z0-9_.-]+$/.test(file)) return reply.code(404).send({ error: "NotFound" });
+    const type = file.endsWith(".js") ? "text/javascript" : file.endsWith(".css") ? "text/css" : file.endsWith(".svg") ? "image/svg+xml" : file.endsWith(".woff2") ? "font/woff2" : "application/octet-stream";
+    try { return reply.type(type).send(await readFile(join(runtime.config.webDistDir, "assets", file))); }
+    catch { return reply.code(404).send({ error: "NotFound" }); }
+  });
+
   app.post<{ Body: BootstrapBody }>("/api/v1/app-sessions/bootstrap", async (request, reply) => {
     try {
       const body = request.body;
@@ -32,16 +47,51 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
 
   app.post<{ Params: { ticket: string }; Body: { password: string } }>("/api/v1/app-sessions/:ticket/password", async (request, reply) => {
     try {
-      await runtime.useCases.setPassword(request.params.ticket, hashPassword(request.body.password));
+      await runtime.useCases.setPassword(request.params.ticket, request.body.password);
       return reply.code(204).send();
     } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "PasswordSetupFailed" }); }
   });
 
   app.post<{ Body: { email: string; password: string } }>("/api/v1/auth/login", async (request, reply) => {
-    const user = await runtime.useCases.login(request.body.email, request.body.password, verifyPassword);
+    const user = await runtime.useCases.login(request.body.email, request.body.password);
     if (!user) return reply.code(401).send({ error: "InvalidCredentials" });
-    // The web-session implementation is intentionally isolated from App bearer tokens.
-    return reply.send({ user, message: "Use the returned user identity to establish the dashboard session adapter." });
+    const token = runtime.webSessions.issue(user.id);
+    reply.header("Set-Cookie", sessionCookie(token, request.protocol === "https"));
+    return reply.send({ user });
+  });
+
+  app.get("/api/v1/auth/me", async (request, reply) => {
+    const userId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!userId) return reply.code(401).send({ error: "Unauthorized" });
+    const user = await runtime.useCases.webUser(userId);
+    return user ? reply.send({ user }) : reply.code(401).send({ error: "Unauthorized" });
+  });
+
+  app.get("/api/v1/users", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send({ users: await runtime.useCases.listUsers(actorId) }); }
+    catch { return reply.code(403).send({ error: "Forbidden" }); }
+  });
+
+  app.get<{ Params: { ownerId: string } }>("/api/v1/om/users/:ownerId", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.personalOm(actorId, request.params.ownerId)); }
+    catch { return reply.code(403).send({ error: "Forbidden" }); }
+  });
+
+  app.get<{ Params: { ownerId: string }; Querystring: { path: string } }>("/api/v1/om/users/:ownerId/file", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.personalOmFile(actorId, request.params.ownerId, request.query.path)); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 404).send({ error: error instanceof Error ? error.message : "OmFileNotFound" }); }
+  });
+
+  app.post("/api/v1/auth/logout", async (request, reply) => {
+    runtime.webSessions.revoke(cookieToken(request.headers.cookie));
+    reply.header("Set-Cookie", sessionCookie("", request.protocol === "https").replace("Max-Age=1800", "Max-Age=0"));
+    return reply.code(204).send();
   });
 
   app.get<{ Params: { workId: string } }>("/api/v1/works/:workId/trajectory", async (request, reply) => {
@@ -53,7 +103,7 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
 
   app.post<{ Params: { workId: string } }>("/api/v1/works/:workId/complete", async (request, reply) => {
     try {
-      await runtime.useCases.completeWork(String(request.headers["x-forge-ticket"] ?? "")); return reply.code(204).send();
+      await runtime.useCases.completeWork(String(request.headers["x-forge-ticket"] ?? ""), request.params.workId); return reply.code(204).send();
     } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "WorkCompletionFailed" }); }
   });
 
@@ -77,12 +127,15 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
 
   app.get("/acp", { websocket: true }, (connection: AcpConnection) => {
     let ticket = "";
+    connection.socket.on("close", () => { if (ticket) void runtime.useCases.disconnectAcp(ticket); });
     connection.socket.on("message", async (raw: unknown) => {
       let request: RpcRequest;
       try { request = JSON.parse(String(raw)) as RpcRequest; } catch { connection.socket.send(JSON.stringify({ error: { code: -32700, message: "Parse error" } })); return; }
       try {
         if (request.method === "session/new") {
-          ticket = String(request.params?.ticket ?? ""); const session = await runtime.useCases.appSession(ticket);
+          const requestedTicket = String(request.params?.ticket ?? "");
+          const session = await runtime.useCases.connectAcp(requestedTicket);
+          ticket = requestedTicket;
           connection.socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { sessionId: session.sessionId, workId: session.workId } })); return;
         }
         if (request.method === "session/prompt") {
@@ -99,6 +152,8 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
   return app;
 }
 
-const app = buildServer();
-const config = loadConfig();
-await app.listen({ port: config.port, host: "0.0.0.0" });
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const config = loadConfig();
+  const app = buildServer(new ForgeRuntime(config));
+  await app.listen({ port: config.port, host: "0.0.0.0" });
+}

@@ -4,8 +4,11 @@ import { CertReporterClient } from "./certreporter-client.js";
 import { ForgeConfig } from "./config.js";
 import { ForgeDatabase } from "./database.js";
 import { GitOperatingModel } from "./git-om.js";
+import { InMemoryPasswordSetupStore } from "./password-setup-store.js";
+import { hashPassword, verifyPassword } from "./auth.js";
 import { systemPort } from "./system-port.js";
 import { JsonlTrajectoryStore } from "./trajectory.js";
+import { InMemoryWebSessionStore } from "./web-session-store.js";
 
 /** Composition root only. Application policy lives in ForgeUseCases. */
 export class ForgeRuntime {
@@ -13,6 +16,8 @@ export class ForgeRuntime {
   readonly om: GitOperatingModel;
   readonly trajectories: JsonlTrajectoryStore;
   readonly sessions = new InMemoryAppSessionStore();
+  readonly passwordSetups = new InMemoryPasswordSetupStore();
+  readonly webSessions = new InMemoryWebSessionStore();
   readonly certReporter: CertReporterClient;
   readonly useCases: ForgeUseCases;
   constructor(readonly config: ForgeConfig) {
@@ -21,6 +26,6 @@ export class ForgeRuntime {
     this.trajectories = new JsonlTrajectoryStore(config.dataDir);
     this.certReporter = new CertReporterClient(config.certReporterUrl);
     this.om.initialize();
-    this.useCases = new ForgeUseCases({ accounts: this.db, works: this.db, om: this.om, certReporter: this.certReporter, sessions: this.sessions, trajectories: this.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
+    this.useCases = new ForgeUseCases({ accounts: this.db, works: this.db, om: this.om, certReporter: this.certReporter, sessions: this.sessions, passwordSetups: this.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: this.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
   }
 }

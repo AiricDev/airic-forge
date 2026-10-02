@@ -7,7 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "check": "tsc --noEmit -p tsconfig.json",
-    "test": "node --test dist/git-om.test.js"
+    "test": "node --test dist/*.test.js"
   },
   "dependencies": {
     "@airic-forge/domain": "workspace:*",

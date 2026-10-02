@@ -8,14 +8,22 @@ COPY prototype/package.json prototype/package.json
 RUN pnpm install --frozen-lockfile
 COPY apps apps
 COPY packages packages
+COPY prototype prototype
 COPY seed seed
-RUN pnpm --filter @airic-forge/domain build && pnpm --filter @airic-forge/api build
+RUN pnpm --filter @airic-forge/domain build && pnpm --filter @airic-forge/api build && pnpm --filter magic-patterns-vite-template build
 
 FROM node:24-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/node_modules /app/node_modules
+COPY --from=build /app/apps/api/node_modules /app/apps/api/node_modules
+COPY --from=build /app/packages/domain/dist /app/packages/domain/dist
+COPY --from=build /app/packages/domain/package.json /app/packages/domain/package.json
 COPY --from=build /app/apps/api/dist /app/apps/api/dist
+COPY --from=build /app/apps/api/package.json /app/apps/api/package.json
+COPY --from=build /app/prototype/dist /app/prototype/dist
 COPY --from=build /app/seed /app/seed
 EXPOSE 4175
 CMD ["node", "apps/api/dist/server.js"]

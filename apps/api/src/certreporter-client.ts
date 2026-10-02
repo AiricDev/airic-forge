@@ -24,7 +24,15 @@ export class CertReporterClient {
     return { id: `catalog_${String(domain?.digest ?? digest(capabilities))}`, appId: "certreporter", domainRelease: String(domain?.release ?? "certreporter/v1"), digest: String(domain?.digest ?? digest(capabilities)), acceptedAt: new Date().toISOString(), capabilities: capabilities as CapabilityCatalog["capabilities"] };
   }
 
+  async openApi(token: string): Promise<Json> {
+    return this.#request("/airic/v1/openapi", token) as Promise<Json>;
+  }
+
   async command(token: string, capabilityId: string, body: Json): Promise<Json> { return this.#request(`/airic/v1/commands/${encodeURIComponent(capabilityId)}`, token, body) as Promise<Json>; }
+
+  async receipt(token: string, commandId: string): Promise<Json> {
+    return this.#request(`/airic/v1/commands/receipts/${encodeURIComponent(commandId)}`, token) as Promise<Json>;
+  }
 
   async #request(path: string, token: string, body?: Json): Promise<unknown> {
     const response = await fetch(`${this.baseUrl}${path}`, { method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });

@@ -7,6 +7,7 @@ export interface ForgeConfig {
   projectDir: string;
   dataDir: string;
   seedProjectDir: string;
+  webDistDir: string;
   certReporterUrl: string;
   allowedOrigin: string;
   initialAdminEmails: Set<string>;
@@ -18,6 +19,7 @@ export function loadConfig(env = process.env): ForgeConfig {
     projectDir: resolve(env.FORGE_PROJECT_DIR ?? "./runtime/project"),
     dataDir: resolve(env.FORGE_DATA_DIR ?? "./runtime/data"),
     seedProjectDir: resolve(env.FORGE_SEED_PROJECT_DIR ?? "./seed/project"),
+    webDistDir: resolve(env.FORGE_WEB_DIST_DIR ?? "./prototype/dist"),
     certReporterUrl: (env.FORGE_CERTREPORTER_URL ?? "http://127.0.0.1:8000").replace(/\/$/, ""),
     allowedOrigin: env.FORGE_ALLOWED_ORIGIN ?? "http://127.0.0.1:5173",
     initialAdminEmails: list(env.FORGE_INITIAL_ADMIN_EMAILS),

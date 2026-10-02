@@ -2,7 +2,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { parse } from "yaml";
-import type { WorkDefinition } from "@airic-forge/domain";
+import { isAllowedProposalPath, type ValidationIssue, type WorkDefinition } from "@airic-forge/domain";
 
 const run = (cwd: string, args: string[]): string => {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -35,10 +35,19 @@ export class GitOperatingModel {
 
   head(branch: string): string { return run(this.projectDir, ["rev-parse", branch]); }
 
+  listFiles(revision: string): string[] {
+    return run(this.projectDir, ["ls-tree", "-r", "--name-only", revision, "work-definitions", "subject-knowledge"])
+      .split("\n").filter((path) => /^(work-definitions\/[a-z0-9-]+\/(?:work\.yml|[a-z0-9-]+\.md)|subject-knowledge\/[a-z0-9-]+\.md)$/.test(path));
+  }
+
   workDefinition(revision: string, id: string): WorkDefinition {
     const raw = run(this.projectDir, ["show", `${revision}:work-definitions/${id}/work.yml`]);
     const parsed = parse(raw) as WorkDefinition;
-    if (!parsed || parsed.id !== id) throw new Error(`invalid work definition ${id}`);
+    if (!parsed || parsed.id !== id || parsed.schemaVersion !== 1 || !Array.isArray(parsed.documents)
+      || !Array.isArray(parsed.capabilities?.allowed) || !Array.isArray(parsed.knowledge?.bootstrap)
+      || !Array.isArray(parsed.knowledge?.available) || !Array.isArray(parsed.completion?.requiredCapabilities)) {
+      throw new Error(`InvalidOperatingModel: invalid work definition ${id}`);
+    }
     return parsed;
   }
 
@@ -55,9 +64,31 @@ export class GitOperatingModel {
       const match = raw.match(/^---\s*\n([\s\S]*?)\n---/);
       if (!match) continue;
       const metadata = parse(match[1]) as { id?: string };
-      if (metadata.id) known.add(metadata.id);
+      if (metadata?.id) known.add(metadata.id);
     }
     return known;
+  }
+
+  knowledgeIssues(revision: string): ValidationIssue[] {
+    const names = run(this.projectDir, ["ls-tree", "-r", "--name-only", revision, "subject-knowledge"]);
+    const issues: ValidationIssue[] = [];
+    const ids = new Set<string>();
+    for (const path of names.split("\n").filter((name) => name.endsWith(".md") && !name.endsWith("README.md"))) {
+      const raw = this.document(revision, path);
+      const match = raw.match(/^---\s*\n([\s\S]*?)\n---/);
+      if (!match) { issues.push({ path, message: "Subject Knowledge needs YAML front matter" }); continue; }
+      let metadata: { id?: unknown; title?: unknown; summary?: unknown; topics?: unknown };
+      try { metadata = parse(match[1]) as typeof metadata; }
+      catch { issues.push({ path, message: "invalid Subject Knowledge front matter" }); continue; }
+      const id = typeof metadata?.id === "string" ? metadata.id : "";
+      if (!/^[a-z][a-z0-9.-]*$/.test(id)) issues.push({ path, message: "Subject Knowledge needs a stable id" });
+      if (ids.has(id)) issues.push({ path, message: "Subject Knowledge id must be unique" });
+      ids.add(id);
+      if (typeof metadata?.title !== "string" || !metadata.title.trim()) issues.push({ path, message: "Subject Knowledge needs a title" });
+      if (typeof metadata?.summary !== "string" || !metadata.summary.trim()) issues.push({ path, message: "Subject Knowledge needs a summary" });
+      if (!Array.isArray(metadata?.topics) || metadata.topics.some((topic) => typeof topic !== "string")) issues.push({ path, message: "Subject Knowledge topics must be a string list" });
+    }
+    return issues;
   }
 
   createProposal(userId: string, proposalId: string, baseRevision: string): { branch: string; worktree: string } {
@@ -68,10 +99,14 @@ export class GitOperatingModel {
     return { branch, worktree };
   }
 
-  proposalChanges(worktree: string): string[] { return run(worktree, ["diff", "--name-only", "HEAD"]).split("\n").filter(Boolean); }
+  proposalChanges(worktree: string): string[] {
+    const result = spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: worktree, encoding: "utf8" });
+    if (result.status !== 0) throw new Error(`git status failed: ${result.stderr.trim()}`);
+    return result.stdout.split("\n").filter(Boolean).map((line) => line.slice(3));
+  }
 
   writeProposalFile(worktree: string, path: string, content: string): void {
-    if (!/^(work-definitions\/[a-z0-9-]+\/|subject-knowledge\/).+\.md$/.test(path) || path.includes("..")) throw new Error("ProposalPathNotAllowed");
+    if (!isAllowedProposalPath(path)) throw new Error("ProposalPathNotAllowed");
     const destination = resolve(worktree, path);
     if (!destination.startsWith(`${resolve(worktree)}/`)) throw new Error("ProposalPathNotAllowed");
     mkdirSync(resolve(destination, ".."), { recursive: true }); writeFileSync(destination, content, "utf8");

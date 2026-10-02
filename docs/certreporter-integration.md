@@ -7,7 +7,7 @@ token only for the in-memory lifetime of an App Session.
 ## Required CertReporter endpoints
 
 - `GET /api/v1/users/me/` returns the authenticated user's stable id and email.
-- `GET /airic/v1/manifest` returns the accepted capability manifest.
+- `GET /airic/v1/manifest` returns the App-published capability manifest. Forge accepts a version separately before registering tools.
 - `GET /airic/v1/openapi` returns the authenticated OpenAPI 3.1 projection.
 - `POST /airic/v1/queries/report.context` returns authoritative report context.
 - `POST /airic/v1/commands/{capabilityId}` accepts `commandId`, `workId`, `actionId`, `expectedDomainRelease` and typed input.
@@ -20,3 +20,15 @@ token only for the in-memory lifetime of an App Session.
 3. AiricForge validates the identity and obtains `report.context` itself. The browser-provided selection is only a focus hint.
 4. The drawer opens `/acp` with the short-lived bootstrap ticket and sends `session/new`, then `session/prompt` JSON-RPC messages.
 5. Loss of the ACP connection does not alter the Work. A new bootstrap is required to restore authority for another business command.
+
+Bootstrap first calls `report.context` and checks that its resource is the requested
+CertReporter report before it creates or resumes a Forge Work. A connection ticket
+may be claimed once. Forge removes its in-memory App token when the ACP socket
+closes.
+
+When the linked Forge account has no password, bootstrap also returns
+`passwordSetupTicket`. This separate, single-use ticket is sent to
+`POST /api/v1/app-sessions/{passwordSetupTicket}/password`. Independent Web login
+then issues a short-lived HttpOnly `forge_session` cookie. The drawer can open
+the Forge workspace at `/#setup={passwordSetupTicket}`; the fragment is read by
+the password setup page and removed after a successful setup.
