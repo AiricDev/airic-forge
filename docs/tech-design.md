@@ -27,7 +27,7 @@ Accountable role: Unknown。
 | --- | --- | --- |
 | 运行时 | Node.js 24 LTS | 与 pi-sdk 的 Node/TypeScript 接口一致，长期支持版本 |
 | 语言 | TypeScript 7.x，strict 模式 | 契约类型与 schema 校验可共享 |
-| 包管理 | pnpm workspace | 约定要求；monorepo 内部包边界清晰，安装体积小 |
+| 包管理 | pnpm workspace | 约定要求；按架构分层划分包边界 |
 | 进程管理 | 单 Node 进程 + 内部任务调度 | 首版单实例部署，避免引入外部队列中间件 |
 
 ### 主要依赖（Proposed）
@@ -46,65 +46,100 @@ Accountable role: Unknown。
 | 日志 | pino | 结构化日志，便于事件与轨迹关联 |
 | 测试 | Vitest + 临时仓库夹具 | 单元与集成测试；Git 与轨迹文件行为使用夹具验证 |
 
-### Monorepo 结构（Proposed）
+### 代码组织（Proposed）
+
+采用 Clean Architecture 分层，按职责而非功能模块划分包：
 
 ```text
 airic-forge/
   packages/
-    core-domain/     # 领域模型、状态机、类型与 Zod schema
-    db/              # Drizzle schema、迁移、仓储层
-    trajectory/      # 轨迹文件读写、分段、索引与检索
-    git-om/          # OM 仓库、分支、worktree、commit trailer
-    acp-server/      # ACP JSON-RPC 服务端与会话桥接
-    agents/          # pi-sdk 封装：Work Agent、Reflection Agent、工具注入
-    capability/      # OpenAPI 导入、能力目录、Command API 客户端
-    api/             # Fastify 路由、鉴权、权限判定
-    app/             # 组装入口，单进程启动
-  web/               # Web 工作台前端（独立构建，静态托管）
+    domain/              纯业务核心，无框架与 IO 依赖
+      models/            Work、Proposal、OperatingModelVersion、
+                         CapabilityCatalog、User、TrajectoryRef
+      use-cases/         startWorkTurn、recordCommandResult、
+                         resolveUnknownCommand、openOrCreateReflection、
+                         updateProposalFromReflection、adoptProposal、
+                         abandonProposal、importCapabilityCatalog、
+                         mergeContribution
+      ports/             OperatingModelRepository、ProposalWorkspacePort、
+                         TrajectoryStore、WorkRepository、
+                         CapabilityCatalogRepository、AgentRunnerPort、
+                         AppCommandPort、AppIdentityPort、ClockPort、LockPort
+    adapters/            ports 的具体实现
+      git/               OperatingModelRepository、ProposalWorkspacePort
+      persistence/       SQLite + Drizzle 的 Repository 实现与迁移
+      trajectory/        JSONL 分段文件实现 TrajectoryStore
+      agents/            pi-sdk 实现 AgentRunnerPort
+      app-client/        AppIdentityPort、AppCommandPort 的 HTTP 客户端
+    entrypoints/         对外服务入口，仅做协议转换与用例编排
+      http/              Fastify REST API
+      acp/               ACP over WebSocket（Copilot 与 Reflection 对话）
+      bootstrap/         组合根：读取配置、装配 adapters、启动 http 与 acp
   docker/
+  docs/
 
 ```
+
+依赖方向约束
+
+* 依赖只能由外向内：entrypoints 依赖 domain 的 use-cases 与模型；adapters 依赖 domain 的 ports；domain 不依赖任何外层包、框架或 IO 库。
+* domain 内部不出现 Fastify、Drizzle、simple-git、pi-sdk、ACP 等具体技术类型；这些类型只出现在 adapters 与 entrypoints。
+* ports 使用领域语言定义输入输出；Git commit SHA、worktree 路径、轨迹文件偏移等基础设施细节以值对象或标识符形式表达，不泄漏具体实现 API。
+* 新增一类外部依赖时，先在 domain/ports 定义接口，再在 adapters 下实现；use-cases 不直接调用第三方库。
+* 测试策略：use-cases 使用 ports 的内存实现做单元测试；adapters 使用真实 Git 仓库、临时 SQLite 与临时轨迹目录做集成测试。
+
+组合根与依赖注入（Proposed）
+
+* 组合根是唯一允许同时引用 domain 与具体 adapters 的位置，但不需要独立包；首版由 entrypoints/bootstrap 下的少量启动代码实现。
+* 默认采用显式手写装配：用普通工厂函数创建 adapter 实例并注入 use-cases，依赖关系在编译期完全可检查。
+* 每个 Work 或 Reflection 所需的 agent 会话与 worktree 句柄由显式工厂按需创建和释放，不依赖容器作用域机制。
+* 装配代码规模增长后可引入轻量容器 Awilix：不依赖装饰器与 reflect-metadata，可用 `asFunction` 注册普通工厂。
+* 不采用 tsyringe、InversifyJS 等装饰器式方案，避免基础设施注解渗入领域模型与 ports。
 
 ## System Architecture
 
-### 分层视图
+### 分层视图（Proposed）
 
 ```text
-业务 App 前端（Copilot 面板）        Airic Web 工作台
-        │ ACP over WebSocket              │ HTTPS + ACP over WebSocket
-        ▼                                 ▼
-┌─────────────────────────────────────────────────────┐
-│ API / ACP 接入层 (Fastify)                          │
-│  - 身份解析、权限判定、请求校验                      │
-│  - ACP session 路由（Work / Reflection）             │
-├─────────────────────────────────────────────────────┤
-│ 应用服务层                                           │
-│  WorkService | ReflectionService | ProposalService    │
-│  OMVersionService | CapabilityService | TrajectoryLog │
-├─────────────────────────────────────────────────────┤
-│ Agent 运行层 (pi-sdk)                                │
-│  WorkAgentRunner | ReflectionAgentRunner              │
-│  工具注入、上下文组装、事件流                         │
-├─────────────────────────────────────────────────────┤
-│ 存储与外部系统                                        │
-│  /project Git 仓库 | /data SQLite + 轨迹文件          │
-│  业务 App：身份接口、页面上下文接口、Command API      │
-└─────────────────────────────────────────────────────┘
+entrypoints/            协议与边界转换，不含业务逻辑
+  http                  REST 请求校验、鉴权、构建上下文、调用 use-cases
+  acp                   JSON-RPC 会话路由与断线恢复
+        │ 调用
+        ▼
+domain/                 框架无关的业务核心
+  use-cases             编排 ports 完成业务流程
+  models                领域模型与不变量
+  ports                 以领域语言定义的出站接口
+        ▲ 实现
+        │
+adapters/               基础设施实现
+  git                   分支、worktree、commit trailer
+  persistence           实体元数据持久化
+  trajectory            JSONL 追加写与按偏移读取
+  agents                pi-sdk 会话桥接与工具注入
+  app-client            App 身份接口与 Command API 客户端
 
 ```
 
-### 运行单元与职责
+entrypoints/bootstrap 作为组合根，把 adapters 注入 use-cases，并启动 HTTP 与 ACP 入口。
 
-* WorkService：解析 Work 上下文，锁定本轮 OM commit，驱动一轮执行，并将 Turn、动作与 App 回执写入该 Work 的轨迹文件。
-* ReflectionService：保证 Work 与 Reflection 一对一；管理对话、lens 切换、Proposal 生命周期。
-* ProposalService：管理 Proposal 分支、worktree 租约、采纳与放弃。
-* OMVersionService：封装 Git 读写；对外只暴露 commit SHA、文件树与 diff。
-* CapabilityService：导入、比较并接受能力目录；向 Work Agent 暴露已授权工具。
-* TrajectoryLog：以追加写方式维护轨迹文件，提供按 Turn、动作与时间范围的读取接口。
+### 核心用例与职责
+
+| 用例 | 职责 | 主要依赖 ports |
+| --- | --- | --- |
+| startWorkTurn | 解析 Work 上下文，锁定本轮 OM commit，驱动一轮执行 | WorkRepository、OperatingModelRepository、AgentRunnerPort、TrajectoryStore |
+| recordCommandResult | 以 App 回执确认动作结果并写入轨迹 | AppCommandPort、TrajectoryStore |
+| resolveUnknownCommand | 按幂等键查询原命令结果，恢复未知状态 | AppCommandPort、TrajectoryStore |
+| openOrCreateReflection | 保证 Work 与 Reflection 一对一，必要时创建候选分支 | WorkRepository、ProposalWorkspacePort |
+| updateProposalFromReflection | 将对话结论持续写入 Proposal worktree | AgentRunnerPort、ProposalWorkspacePort |
+| adoptProposal | 在 active 分支创建 commit，更新 active OM | OperatingModelRepository、LockPort |
+| abandonProposal | 删除候选分支与 worktree，保留对话记录 | ProposalWorkspacePort |
+| importCapabilityCatalog | 解析并比较 OpenAPI 目录，产出差异 | CapabilityCatalogRepository |
+| mergeContribution | 选择性合并个人改动至组织 `main` | OperatingModelRepository |
 
 ### Agent 运行模型（pi-sdk）
 
-两类 agent 共用 pi-sdk 的 `createAgentSession`，差异在 cwd、工具集与系统提示：
+两类 agent 共用 pi-sdk 的 `createAgentSession`，差异在 cwd、工具集与系统提示；两者都通过 `AgentRunnerPort` 暴露给 use-cases：
 
 | 维度 | Work Agent | Reflection Agent |
 | --- | --- | --- |
@@ -114,9 +149,9 @@ airic-forge/
 | 输出 | 消息、tool call、命令回执引用 | 对话消息 + 持续更新的 Proposal 文件变更 |
 | 业务副作用 | 有（经 App 校验） | 无；仅修改候选分支文件 |
 
-关键约束：Work Agent 不得写 `/project`；Reflection Agent 不得调用业务 Command API。两者的工具注册表在启动 session 时由服务端构造，不接受来自模型输出的工具扩展。
+关键约束：Work Agent 不得写 `/project`；Reflection Agent 不得调用业务 Command API。两者的工具注册表在启动 session 时由 adapters 构造，不接受来自模型输出的工具扩展。
 
-会话持久化：pi-sdk 的会话历史以 JSONL 存储于 `/data/agent-sessions/`；产品级轨迹由 TrajectoryLog 单独写入轨迹文件，用于展示、权限过滤与 Reflection 证据检索。轨迹只记录可观察事件，不记录模型私有推理。
+会话持久化：pi-sdk 的会话历史以 JSONL 存储于 `/data/agent-sessions/`；产品级轨迹由 TrajectoryStore 单独写入轨迹文件，用于展示、权限过滤与 Reflection 证据检索。轨迹只记录可观察事件，不记录模型私有推理。
 
 ## Data Model
 
@@ -162,6 +197,7 @@ Git 保存 OM 内容与版本；轨迹文件保存 Work 的执行过程；SQLite
 * REST 风格 JSON API，路径前缀 `/api/v1`。
 * 写操作要求幂等键或乐观并发字段。
 * 所有响应包含 `requestId`，与结构化日志、轨迹记录关联。
+* HTTP 层只负责校验与编排，业务判断全部位于 use-cases。
 
 ### 主要端点（Proposed）
 
@@ -235,12 +271,12 @@ Command API 调用规则：携带幂等键与预期版本；网络超时或响�
 
 ### Git 与 OM 版本
 
-沿用已定版本管理方案：
+沿用已定版本管理方案，实现位于 `adapters/git`：
 
-* Org main 分支：main
-* User 分支：`users/{userId}`，HEAD 即 active OM。
+* 组织分支：`main`。
+* 用户分支：`users/{userId}`，HEAD 即 active OM。
 * Proposal 候选分支：`proposals/{proposalId}`，base 为创建时的 active commit。
-* worktree：按需创建、空闲回收；采纳或放弃后立即移除。开启reflection时会需要worktree。
+* worktree：开启 Reflection 时按需创建，空闲回收；采纳或放弃后立即移除。
 * 采纳：在 active 分支创建 commit，结构化 trailer 记录理由、来源 Reflection、base version、证据引用与受影响路径。
 * 组织侧：管理员选择性合并至 `main`；个人分支不被自动覆盖。
 
@@ -254,7 +290,7 @@ Command API 调用规则：携带幂等键与预期版本；网络超时或响�
 
 ### 配置
 
-* 模型供应商凭据、App 身份接口地址、Web 会话密钥等通过环境变量或部署密钥注入。
+* 模型供应商凭据、App 身份接口地址、Web 会话密钥等通过环境变量或部署密钥注入，由 entrypoints/bootstrap 读取。
 * 配置与凭据不进入 OM 文档、轨迹文件与对话展示。
 
 ### 启动与恢复
@@ -277,11 +313,11 @@ Command API 调用规则：携带幂等键与预期版本；网络超时或响�
 Proposed 的工程约束：
 
 * 轨迹采用追加写与分段文件，避免单文件无限增长；读取使用游标分页，不整体加载。
-* 轨迹写入在服务层串行化到每个 Work，保证顺序与可恢复性。
+* 轨迹写入在 TrajectoryStore 实现中串行化到每个 Work，保证顺序与可恢复性。
 * worktree 采用租约与 LRU 回收，限制同时物化的 Proposal 数量。
 * Agent 运行使用有界并发池，按用户限流，避免单用户占满模型调用能力。
-* SQLite 开启 WAL，写操作集中在服务层，避免跨进程并发写。
-* 若未来需要多实例，优先替换点为：数据库（迁移至 Postgres）、轨迹文件宿主（共享卷或对象存储）、worktree 宿主、ACP 会话路由（粘性会话）。
+* SQLite 开启 WAL，写操作集中在 persistence adapter，避免跨进程并发写。
+* 若未来需要多实例，替换点集中在 adapters：数据库（迁移至 Postgres）、轨迹宿主（共享卷或对象存储）、worktree 宿主、ACP 会话路由（粘性会话）。domain 层不需改动。
 
 ## Risks & Open Questions
 
@@ -298,4 +334,4 @@ Proposed 的工程约束：
 | 组织约束的执行点与规则集合 | Unknown |
 | 容量、并发、响应时间与保留周期 | Unknown，首个部署后建立基线 |
 
-Proposed 的风险应对：对每个未定契约先写出最小接口定义与契约测试，再进入对应验收项；在契约确定前不将相关能力纳入交付门槛。
+Proposed 的风险应对：对每个未定契约先在 `domain/ports` 写出最小接口定义与契约测试，再进入对应验收项；在契约确定前不将相关能力纳入交付门槛。

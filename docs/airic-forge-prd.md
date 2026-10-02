@@ -73,7 +73,7 @@ Airic 的产品价值围绕一个持续循环形成：
 * C12 Reflection 首版由人主动发起，基于有权查看的工作轨迹产生模型 patch 或 API 能力建议
 * C13 API 建议不自动成为工具，App 发布并经 Airic 接受后，能力才可能被工作定义使用
 * C14 Airic以docker image形态发布，运行时的本地目录氛围OM和Runtime两个目录，`/project` 保存git管理的OM模型文档；`/data` 保存账号、Work、轨迹和运行数据
-* C15 每个用户有自己的git worktree，外部编辑和普通 Git 提交可导入候选不自动生效，导入不得覆盖外部工作；采纳须防止并发覆盖
+* C15 每个用户有自己的 Git worktree，个人分支 HEAD 是 active Operating Model；外部编辑和普通 Git 提交从下一轮生效。Reflection Proposal 使用独立 worktree，采纳须防止并发覆盖
 * C16 首版采纳检查以结构和能力校验为门槛，不把历史案例回放加入首版采纳流程
 
 
@@ -215,9 +215,8 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 * 用户可通过无代码界面创建和维护 Work Definition 与知识文档。
 * Work Definition 可声明目标、方法、完成条件、知识引用和允许使用的 App 能力。
 * 知识文档可被多个 Work Definition 引用。
-* 编辑、保存草稿、外部文件修改和普通 Git 提交均不得自动改变运行时正在使用的 OM 版本。
-* 后台编辑、外部文件修改和 Git 提交可导入为包含来源和基准版本的 Proposal。
-* 导入过程不得覆盖用户 worktree 中的外部修改。
+* 编辑草稿和 Proposal worktree 修改均不得自动改变运行时正在使用的 OM 版本；个人 active 分支的普通 Git 提交从下一 Turn 生效。
+* Reflection 形成的 Proposal 必须包含来源和基准版本，并使用独立 worktree，不得覆盖用户个人 worktree 中的外部修改。
 * 删除、重命名或修改引用关系时，系统应检查文档依赖。
 * 新 Work Definition 在被用户采纳后，无需重启服务即可被运行时发现和使用。
 * 自动生成的文档候选不得自动获得采纳权限。
@@ -305,8 +304,8 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 
 1. 用户在 Airic Web 工作台打开个人 OM。
 2. 用户可以创建或编辑 Work Definition、Subject Knowledge 或其他 OM 文档内容。
-3. 因为worktree只能包含一个未合并的proposal，如果存在未提交改动，则不允许启动reflection
-4. 当前的HEAD版本为active operating model
+3. 当前的 HEAD 版本为 active Operating Model；未提交改动不会进入运行时。
+4. Reflection Proposal 在独立 worktree 中维护，用户可以并行维护多个 Proposal。
 5. 若检测到 `main` 存在尚未同步的上游改动，Airic 提醒用户可进行 rebase。
 6. 用户选择 rebase 时，Airic 执行 rebase；如存在冲突，用户手工处理冲突后形成更新后的 Proposal。
 7. 新版本从后续 Turn 开始生效；已经开始的 Turn 保持原 OM 上下文与版本归因不变。
@@ -327,8 +326,8 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 
  1. 用户在 Airic Web 工作台选择自己有权访问的 Work Session 轨迹。
  2. 用户选择 Reflection lens，并指定希望分析的问题。
- 3. Airic 基于所选轨迹和 lens 生成 Reflection 结果。Reflection的结果将形成对OM的修改Proposal，Proposal体现为用户Worktree未提交的修改，并在Reflection界面总结修改理由、来源和基准版本。
- 4. 因为worktree只能包含一个未合并的proposal，如果存在未提交改动，则不允许启动Reflection
+3. Airic 基于所选轨迹和 lens 生成 Reflection 结果。需要修改 OM 时，Proposal 在独立 worktree 中保存，并在 Reflection 界面总结修改理由、来源和基准版本。
+4. 同一用户可以并行维护多个 Proposal；每一个 Reflection 最多形成一个 Proposal。
  5. Domain Knowledge lens 提取本次工作中可复用的领域知识，并生成写入 Subject Knowledge 的 Proposal。
  6. Delegation Gap lens 分析阻碍 Agent 更自动完成任务的环节，并提出可减少人工依赖的规则或工作方法 Proposal。
  7. API Suggestion lens 分析现有 API 是否存在导致操作效率低或易出错的问题，并生成 API 能力建议。
@@ -415,9 +414,9 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 | P0-09 | 页面切换、Token 撤销或跨业务目标调用 | 已发出的命令保持原目标；撤销后不能继续执行业务操作；App 拒绝越权目标；界面不会将上下文文本当作授权 |
 | P0-10 | 命令已执行但响应丢失 | 保持结果未知状态并查询原命令；恢复已有回执，不因重复发起操作产生第二次业务效果 |
 | P0-11 | 两个用户维护各自的 OM | 个人 branch、worktree、资源归属和 active 版本相互独立；修改一个用户的 OM 不改变另一个用户的运行版本 |
-| P0-12 | 编辑个人文档、保存草稿或导入外部修改 | 候选保留来源和基准；不覆盖 worktree 中已有外部工作；未采纳内容不进入执行上下文；普通 Git 提交的处理按 D02 明确后验证 |
+| P0-12 | 编辑个人文档、保存草稿或提交外部修改 | Proposal 保留来源和基准且不覆盖其他 worktree；草稿与未提交 Proposal 不进入执行上下文；个人 active 分支的普通 Git 提交从下一 Turn 生效 |
 | P0-13 | 用户审核并采纳个人 Proposal | 可查看、修改差异，检查结构、能力引用、路径和依赖；本人一次确认后生成提交，提交说明含修改理由、来源和基准；无需管理员审批或独立激活 |
-| P0-15 | worktree 有未提交改动时启动 Reflection | 阻止启动，并说明需先处理当前改动；不能覆盖已有候选；两个同时发起的请求不能在同一 worktree 生成相互混杂的 Proposal |
+| P0-15 | 并发启动 Reflection | 每个 Proposal 使用独立 worktree；两个同时发起的请求不能混写文件，且采纳只能在 Proposal 基准仍等于 active HEAD 时成功 |
 | P0-16 | 使用三种 Reflection lens | 普通用户可选择 lens，管理员控制 lens 管理；Domain Knowledge 形成 SK 候选，Delegation Gap 形成规则或方法候选，API Suggestion 可只产生人可阅读的能力建议 |
 | P0-17 | Reflection 证据不足或只产生 API 建议 | 可以没有 OM Proposal；界面仍保存本次分析结果与来源，不为凑齐结果制造提交；API 建议不改变工具目录 |
 | P0-18 | 用户在运行中采纳新 OM，或新增 WD | 当前 Turn 保持原快照，后续 Turn 使用更新后的 active 版本；新 WD 无需重启即可发现；轨迹保留每轮实际版本 |

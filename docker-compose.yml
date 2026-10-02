@@ -1,0 +1,20 @@
+services:
+  airic-forge:
+    build: .
+    ports:
+      - "4175:4175"
+    environment:
+      FORGE_PORT: "4175"
+      FORGE_PROJECT_DIR: /project
+      FORGE_DATA_DIR: /data
+      FORGE_SEED_PROJECT_DIR: /app/seed/project
+      FORGE_CERTREPORTER_URL: ${FORGE_CERTREPORTER_URL:-http://host.docker.internal:8000}
+      FORGE_ALLOWED_ORIGIN: ${FORGE_ALLOWED_ORIGIN:-http://localhost:5173}
+      FORGE_INITIAL_ADMIN_EMAILS: ${FORGE_INITIAL_ADMIN_EMAILS:-}
+    volumes:
+      - forge-project:/project
+      - forge-data:/data
+
+volumes:
+  forge-project:
+  forge-data:
