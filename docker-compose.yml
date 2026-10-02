@@ -2,7 +2,7 @@ services:
   airic-forge:
     build: .
     ports:
-      - "4175:4175"
+      - "127.0.0.1:4175:4175"
     environment:
       FORGE_PORT: "4175"
       FORGE_PROJECT_DIR: /project
@@ -13,15 +13,21 @@ services:
       FORGE_ALLOWED_ORIGIN: ${FORGE_ALLOWED_ORIGIN:-http://localhost:5173}
       FORGE_PUBLIC_URL: ${FORGE_PUBLIC_URL:-http://127.0.0.1:4175}
       FORGE_INITIAL_ADMIN_EMAILS: ${FORGE_INITIAL_ADMIN_EMAILS:-}
-      FORGE_MODEL_PROVIDER: ${FORGE_MODEL_PROVIDER:-${AIRIC_PROVIDER:-}}
-      FORGE_MODEL_ID: ${FORGE_MODEL_ID:-${AIRIC_MODEL:-}}
-      FORGE_MODEL_API_KEY: ${FORGE_MODEL_API_KEY:-${AIRIC_API_KEY:-}}
-      FORGE_MODEL_BASE_URL: ${FORGE_MODEL_BASE_URL:-${AIRIC_API_ENDPOINT:-}}
+      FORGE_MODEL_PROVIDER: ${FORGE_MODEL_PROVIDER:-}
+      FORGE_MODEL_ID: ${FORGE_MODEL_ID:-}
+      FORGE_MODEL_API_KEY: ${FORGE_MODEL_API_KEY:-}
+      FORGE_MODEL_BASE_URL: ${FORGE_MODEL_BASE_URL:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - forge-project:/project
       - forge-data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4175/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
 
 volumes:
   forge-project:

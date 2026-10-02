@@ -1,11 +1,12 @@
 import { isAllowedProposalPath, validateWorkDefinition } from "./operating-model.js";
-import type { AccountPort, AgentRunnerPort, AppSessionPort, CatalogPort, CertReporterPort, OperatingModelPort, PasswordCodecPort, PasswordSetupPort, ProposalRecord, SessionGrant, SystemPort, TrajectoryPort, WorkPort, WorkAgentTool } from "./ports.js";
+import type { AccountPort, AgentRunnerPort, AppSessionPort, CatalogPort, CertReporterPort, OperatingModelPort, PasswordCodecPort, PasswordSetupPort, ProposalRecord, ReflectionAgentPort, ReflectionLens, ReflectionRecord, SessionGrant, SystemPort, TrajectoryPort, WorkPort, WorkAgentTool } from "./ports.js";
 
 const lenses = new Set(["domain-knowledge", "delegation-gap", "api-suggestion"]);
 
 export class ForgeUseCases {
   private readonly runningWorks = new Set<string>();
-  constructor(private readonly ports: { accounts: AccountPort; works: WorkPort; om: OperatingModelPort; certReporter: CertReporterPort; catalogs: CatalogPort; agents: AgentRunnerPort; sessions: AppSessionPort; passwordSetups: PasswordSetupPort; passwordCodec: PasswordCodecPort; trajectories: TrajectoryPort; system: SystemPort; initialAdminEmails: Set<string>; }) {}
+  private readonly runningReflections = new Set<string>();
+  constructor(private readonly ports: { accounts: AccountPort; works: WorkPort; om: OperatingModelPort; certReporter: CertReporterPort; catalogs: CatalogPort; agents: AgentRunnerPort; reflectionAgent?: ReflectionAgentPort; sessions: AppSessionPort; passwordSetups: PasswordSetupPort; passwordCodec: PasswordCodecPort; trajectories: TrajectoryPort; system: SystemPort; initialAdminEmails: Set<string>; }) {}
 
   async bootstrap(input: { token: string; reportId: string; selection?: Record<string, unknown> }) {
     const identity = await this.ports.certReporter.identity(input.token);
@@ -134,14 +135,102 @@ export class ForgeUseCases {
     } finally { this.runningWorks.delete(session.workId); }
   }
 
-  async openReflection(ticket: string, lensId: string, question: string) {
+  async reflectionLenses(actorUserId: string) {
+    const user = await this.ports.accounts.userById(actorUserId);
+    if (!user) throw new Error("Unauthorized");
+    const all = await this.ports.works.lenses();
+    return user.role === "admin" ? all : all.filter((lens) => lens.enabled);
+  }
+
+  async updateReflectionLens(actorUserId: string, lensId: string, enabled: boolean, prompt: string) {
+    await this.requireAdmin(actorUserId);
     if (!lenses.has(lensId)) throw new Error("UnknownReflectionLens");
-    const session = await this.appSession(ticket); await this.assertActiveWork(session); const revision = await this.ports.om.head(`users/${session.forgeUserId}`);
-    const reflection = await this.ports.works.createReflection(session.workId, session.forgeUserId, lensId, question);
-    const proposalId = this.ports.system.id("prp"); const proposalGit = await this.ports.om.createProposal(session.forgeUserId, proposalId, revision);
-    const proposal = await this.ports.works.createProposal({ id: proposalId, reflectionId: reflection.id, workId: session.workId, ownerUserId: session.forgeUserId, baseRevision: revision, branchRef: proposalGit.branch, worktreePath: proposalGit.worktree, status: "open", source: `reflection:${reflection.id}`, reason: question, evidence: session.workId });
-    await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId, type: "message", at: this.ports.system.now(), payload: { kind: "reflection.opened", reflectionId: reflection.id, lensId, question, proposalId: proposal.id, baseRevision: revision } });
-    return { reflection, proposal };
+    if (!prompt.trim()) throw new Error("ReflectionPromptRequired");
+    return this.ports.works.updateLens(lensId, enabled, prompt.trim());
+  }
+
+  async reflectionsForWork(actorUserId: string, workId: string) {
+    const work = await this.ports.works.work(workId);
+    if (!work) throw new Error("WorkNotFound");
+    await this.authorizedOmOwner(actorUserId, work.ownerUserId);
+    return this.ports.works.reflectionsForWork(workId);
+  }
+
+  async reflectionDetail(actorUserId: string, reflectionId: string) {
+    const reflection = await this.readableReflection(actorUserId, reflectionId);
+    const [messages, proposal] = await Promise.all([this.ports.works.reflectionMessages(reflectionId), this.ports.works.proposalForReflection(reflectionId)]);
+    return { reflection, messages, proposal };
+  }
+
+  async startReflection(actorUserId: string, workId: string, lensId: string, question: string, evidenceEventIds: string[]) {
+    const work = await this.ports.works.work(workId);
+    if (!work || work.ownerUserId !== actorUserId) throw new Error("WorkNotOwned");
+    const lens = await this.ports.works.lens(lensId);
+    if (!lens || !lenses.has(lensId)) throw new Error("UnknownReflectionLens");
+    if (!lens.enabled) throw new Error("ReflectionLensDisabled");
+    if (!question.trim() || question.length > 4000) throw new Error("ReflectionQuestionRequired");
+    if (!Array.isArray(evidenceEventIds) || evidenceEventIds.length > 20 || new Set(evidenceEventIds).size !== evidenceEventIds.length) throw new Error("InvalidReflectionEvidence");
+    const events = await this.ports.trajectories.read(workId);
+    if (evidenceEventIds.some((id) => !events.some((event) => event.id === id))) throw new Error("ReflectionEvidenceMismatch");
+    if (JSON.stringify(events.filter((event) => evidenceEventIds.includes(event.id))).length > 100_000) throw new Error("ReflectionEvidenceTooLarge");
+    const omRevision = await this.ports.om.head(`users/${actorUserId}`);
+    const reflection = await this.ports.works.createReflection({ workId, ownerUserId: actorUserId, lensId, lensVersion: lens.version, lensPrompt: lens.prompt, question: question.trim(), evidenceEventIds, omRevision });
+    return this.continueReflection(actorUserId, reflection.id, question);
+  }
+
+  async continueReflection(actorUserId: string, reflectionId: string, message: string) {
+    const reflection = await this.readableReflection(actorUserId, reflectionId);
+    if (reflection.ownerUserId !== actorUserId) throw new Error("ReflectionNotOwned");
+    if (!message.trim() || message.length > 4000) throw new Error("ReflectionMessageRequired");
+    if (this.runningReflections.has(reflectionId)) throw new Error("ReflectionAlreadyRunning");
+    this.runningReflections.add(reflectionId);
+    try {
+      await this.ports.works.appendReflectionMessage(reflectionId, "user", message.trim());
+      const events = await this.ports.trajectories.read(reflection.workId);
+      const selected = reflection.evidenceEventIds.map((id) => events.find((event) => event.id === id));
+      if (selected.some((event) => !event)) throw new Error("ReflectionEvidenceMismatch");
+      if (selected.length === 0) {
+        const analysis = "未选择 Work 轨迹证据。请从该 Work 选择事件后重新发起 Reflection；当前分析已保存，未创建 Proposal。";
+        await this.ports.works.appendReflectionMessage(reflectionId, "agent", analysis);
+        await this.ports.works.setReflectionResult(reflectionId, { status: "insufficient_evidence", outcome: "analysis", analysis, attribution: "无来源事件" });
+        return this.reflectionDetail(actorUserId, reflectionId);
+      }
+      if (!this.ports.reflectionAgent) throw new Error("ReflectionAgentNotConfigured");
+      const existing = await this.ports.works.proposalForReflection(reflectionId);
+      const files = await this.ports.om.listFiles(reflection.omRevision);
+      const relevant = files.filter((path) => path.startsWith("work-definitions/report-authoring/") || path.startsWith("subject-knowledge/"));
+      const documents = await Promise.all(relevant.map(async (path) => ({ path, content: await this.ports.om.document(reflection.omRevision, path) })));
+      const lens: ReflectionLens = { id: reflection.lensId as ReflectionLens["id"], version: reflection.lensVersion, enabled: true, prompt: reflection.lensPrompt };
+      const result = await this.ports.reflectionAgent.analyze({ reflectionId, lens, question: message.trim(), messages: await this.ports.works.reflectionMessages(reflectionId), evidence: selected as NonNullable<typeof selected[number]>[], omRevision: reflection.omRevision, documents });
+      if (!result.analysis.trim() || !Array.isArray(result.citedEventIds) || result.citedEventIds.some((id) => !reflection.evidenceEventIds.includes(id))) throw new Error("ReflectionEvidenceMismatch");
+      if (result.outcome !== "analysis" && (!result.attribution.trim() || !result.citedEventIds.length)) throw new Error("ReflectionAttributionRequired");
+      if (result.outcome === "proposal") {
+        if (lens.id === "api-suggestion" || !result.edits?.length || result.edits.some((edit) => !isAllowedProposalPath(edit.path) || (lens.id === "domain-knowledge" ? !edit.path.startsWith("subject-knowledge/") : !edit.path.startsWith("work-definitions/")))) throw new Error("InvalidReflectionProposal");
+        if (existing?.status === "adopted") throw new Error("ReflectionProposalAlreadyAdopted");
+        let proposal = existing;
+        if (!proposal) {
+          const proposalId = this.ports.system.id("prp");
+          const proposalGit = await this.ports.om.createProposal(actorUserId, proposalId, reflection.omRevision);
+          proposal = await this.ports.works.createProposal({ id: proposalId, reflectionId, workId: reflection.workId, ownerUserId: actorUserId, baseRevision: reflection.omRevision, branchRef: proposalGit.branch, worktreePath: proposalGit.worktree, status: "open", source: `reflection:${reflectionId}`, reason: result.attribution, evidence: result.citedEventIds.join(",") });
+        }
+        for (const edit of result.edits) await this.ports.om.writeProposalFile(proposal.worktreePath, edit.path, edit.content);
+        if (lens.id === "domain-knowledge") await this.ports.om.makeKnowledgeAvailable(proposal.worktreePath, "report-authoring", result.edits.map((edit) => edit.path.split("/").pop()!.replace(/\.md$/, "")));
+        await this.ports.works.setProposalReview(proposal.id, undefined);
+      }
+      if (result.outcome === "api-suggestion" && (lens.id !== "api-suggestion" || !result.suggestionMarkdown?.trim())) throw new Error("InvalidApiSuggestion");
+      await this.ports.works.appendReflectionMessage(reflectionId, "agent", result.analysis);
+      await this.ports.works.setReflectionResult(reflectionId, { status: "completed", outcome: result.outcome, analysis: result.analysis, attribution: result.attribution, ...(result.outcome === "api-suggestion" ? { suggestionMarkdown: result.suggestionMarkdown } : {}) });
+      return this.reflectionDetail(actorUserId, reflectionId);
+    } catch (error) {
+      await this.ports.works.setReflectionResult(reflectionId, { status: "failed" });
+      throw error;
+    } finally { this.runningReflections.delete(reflectionId); }
+  }
+
+  async reflectionSuggestion(actorUserId: string, reflectionId: string) {
+    const reflection = await this.readableReflection(actorUserId, reflectionId);
+    if (reflection.outcome !== "api-suggestion" || !reflection.suggestionMarkdown) throw new Error("ApiSuggestionNotFound");
+    return reflection.suggestionMarkdown;
   }
 
   async writeProposal(ticket: string, proposalId: string, path: string, content: string) {
@@ -321,6 +410,12 @@ export class ForgeUseCases {
     if (!proposal) throw new Error("ProposalNotFound");
     await this.authorizedOmOwner(actorUserId, proposal.ownerUserId);
     return proposal;
+  }
+  private async readableReflection(actorUserId: string, reflectionId: string): Promise<ReflectionRecord> {
+    const reflection = await this.ports.works.reflection(reflectionId);
+    if (!reflection) throw new Error("ReflectionNotFound");
+    await this.authorizedOmOwner(actorUserId, reflection.ownerUserId);
+    return reflection;
   }
   private async editableProposal(actorUserId: string, proposalId: string): Promise<ProposalRecord> {
     const proposal = await this.readableProposal(actorUserId, proposalId);

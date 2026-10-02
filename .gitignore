@@ -7,3 +7,5 @@ dist/
 !.env.example
 runtime/
 coverage/
+__pycache__/
+deploy/p0/state/

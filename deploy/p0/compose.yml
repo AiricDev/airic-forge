@@ -1,0 +1,66 @@
+# Single-host P0 example. Run from this directory with a compatible CertReporter image.
+name: airicforge-p0
+services:
+  certreporter:
+    image: ${CERTREPORTER_IMAGE:?Set a compatible pinned CertReporter image}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${CERTREPORTER_HOST_PORT:-3000}:3000"
+    volumes:
+      - ${P0_STATE_ROOT:-./state}/certreporter-data:/data
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY}
+      DJANGO_DEBUG: "0"
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,certreporter
+      DJANGO_CSRF_TRUSTED_ORIGINS: ${CERTREPORTER_PUBLIC_ORIGIN:-http://localhost:3000}
+      DJANGO_SECURE_SSL_REDIRECT: "0"
+      DJANGO_SESSION_COOKIE_SECURE: "0"
+      DJANGO_CSRF_COOKIE_SECURE: "0"
+      CERTREPORTER_DATA_DIR: /data
+      CERTREPORTER_SQLITE_PATH: /data/db.sqlite3
+      DJANGO_STATIC_ROOT: /data/staticfiles
+      DJANGO_MEDIA_ROOT: /data/media
+      PORT: "3000"
+      FORGE_ORIGIN: http://airic-forge:4175
+      CERTREPORTER_AIRIC_ENABLED: "0"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "node", "/app/docker/healthcheck.mjs"]
+      interval: 30s
+      timeout: 10s
+      start_period: 45s
+      retries: 3
+
+  airic-forge:
+    build:
+      context: ../..
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${FORGE_HOST_PORT:-4175}:4175"
+    volumes:
+      - ${P0_STATE_ROOT:-./state}/forge-project:/project
+      - ${P0_STATE_ROOT:-./state}/forge-data:/data
+    environment:
+      FORGE_PORT: "4175"
+      FORGE_PROJECT_DIR: /project
+      FORGE_DATA_DIR: /data
+      FORGE_SEED_PROJECT_DIR: /app/seed/project
+      FORGE_WEB_DIST_DIR: /app/prototype/dist
+      FORGE_CERTREPORTER_URL: http://certreporter:3000
+      FORGE_ALLOWED_ORIGIN: ${CERTREPORTER_PUBLIC_ORIGIN:-http://localhost:3000}
+      FORGE_PUBLIC_URL: ${FORGE_PUBLIC_URL:-http://localhost:4175}
+      FORGE_INITIAL_ADMIN_EMAILS: ${FORGE_INITIAL_ADMIN_EMAILS:-}
+      FORGE_MODEL_PROVIDER: ${FORGE_MODEL_PROVIDER:-}
+      FORGE_MODEL_ID: ${FORGE_MODEL_ID:-}
+      FORGE_MODEL_API_KEY: ${FORGE_MODEL_API_KEY:-}
+      FORGE_MODEL_BASE_URL: ${FORGE_MODEL_BASE_URL:-}
+    depends_on:
+      certreporter:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4175/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3

@@ -90,10 +90,23 @@ Feature: 阶段 4 基于轨迹的 Reflection
 
   Scenario: 三种内置 lens 与无 Proposal 结果
     Given 用户甲有可访问的 Work 轨迹
-    When 用户甲分别运行 Domain Knowledge、Delegation Gap 和 API Suggestion
+    When 用户甲选择来源事件并分别运行 Domain Knowledge、Delegation Gap 和 API Suggestion
     Then 每次 Reflection 记录 lens 版本和来源证据
     And 只有需要修改 OM 的结果才产生 Proposal
     And API Suggestion 可导出且不进入可调用能力目录
+
+  Scenario: 证据边界与无证据结果
+    Given 用户甲可读取自己的 Work 且不能读取用户乙的 Work
+    When 用户甲以用户乙的事件或不存在的事件发起 Reflection
+    Then 请求被拒绝且不创建 Reflection
+    When 用户甲不选择证据发起 Reflection
+    Then 分析被保存但不创建空 Proposal 或 API Suggestion
+
+  Scenario: lens 管理与版本快照
+    Given 管理员可以查看三种固定 lens
+    When 管理员停用一个 lens 或修改其提示词
+    Then 新 Reflection 遵循启停状态并记录新的 lens 版本
+    And 已有 Reflection 保留原版本和分析记录
 
   Scenario: 并发 Reflection 不混写
     Given 同一用户从同一 Work 发起两个 Reflection
@@ -109,3 +122,14 @@ Feature: 阶段 5 P0 交付与恢复
     Then 同一用户可以重新找到旧 Work、Turn 和 Proposal
     And 旧 Turn 的 OM 来源与 App 回执仍可查
     And 未知命令仍按原 commandId 恢复而不重复执行
+
+  Scenario: 损坏的备份不能进入恢复目录
+    Given 同一恢复点包含 Forge project、Forge data 和 CertReporter 数据
+    When 任一归档的校验值不匹配
+    Then 恢复被拒绝且现有数据不被覆盖
+
+  Scenario: P0 Report 部署不依赖旧 sidecar
+    Given CertReporter 的 Report Drawer 使用 Forge ACP
+    When 以阶段 5 同机 Compose 启动且旧 Airic sidecar 显式禁用
+    Then Forge 和 CertReporter 的健康检查不需要旧 sidecar 端口或内部签名密钥
+    And Report Work 仍可通过 App bearer token 启动与恢复

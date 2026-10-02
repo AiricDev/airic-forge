@@ -13,6 +13,12 @@ token only for the in-memory lifetime of an App Session.
 - `POST /airic/v1/commands/{capabilityId}` accepts `commandId`, `workId`, `actionId`, `expectedDomainRelease` and typed input.
 - `GET /airic/v1/commands/receipts/{commandId}` returns an existing command receipt without replaying the command.
 
+When Forge uses CertReporter's container HTTP origin (port 3000), the
+CertReporter frontend server must proxy `/airic/v1/*` to Django in addition to
+its `/api/*` proxy. Forge must receive the same bearer-protected response at
+that origin; an internal Django listener bound only to `127.0.0.1` is not
+reachable from the Forge container.
+
 ## Drawer flow
 
 1. The report drawer saves all local edits before it sends a task.

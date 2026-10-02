@@ -152,12 +152,52 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "WorkCompletionFailed" }); }
   });
 
-  app.post<{ Params: { workId: string }; Body: { lensId: string; question: string } }>("/api/v1/works/:workId/reflections", async (request, reply) => {
-    try {
-      const ticket = String(request.headers["x-forge-ticket"] ?? ""); const session = await runtime.useCases.appSession(ticket);
-      if (session.workId !== request.params.workId) return reply.code(403).send({ error: "WorkNotOwned" });
-      return reply.code(201).send(await runtime.useCases.openReflection(ticket, request.body.lensId, request.body.question));
-    } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "ReflectionFailed" }); }
+  app.get("/api/v1/reflection-lenses", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    return reply.send({ lenses: await runtime.useCases.reflectionLenses(actorId) });
+  });
+
+  app.patch<{ Params: { lensId: string }; Body: { enabled: boolean; prompt: string } }>("/api/v1/reflection-lenses/:lensId", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.updateReflectionLens(actorId, request.params.lensId, request.body.enabled, request.body.prompt)); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 400).send({ error: error instanceof Error ? error.message : "LensUpdateFailed" }); }
+  });
+
+  app.get<{ Params: { workId: string } }>("/api/v1/works/:workId/reflections", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send({ reflections: await runtime.useCases.reflectionsForWork(actorId, request.params.workId) }); }
+    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "Forbidden" }); }
+  });
+
+  app.post<{ Params: { workId: string }; Body: { lensId: string; question: string; evidenceEventIds: string[] } }>("/api/v1/works/:workId/reflections", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.code(201).send(await runtime.useCases.startReflection(actorId, request.params.workId, request.body.lensId, request.body.question, request.body.evidenceEventIds ?? [])); }
+    catch (error) { return reply.code(error instanceof Error && ["WorkNotOwned", "ReflectionEvidenceMismatch"].includes(error.message) ? 403 : 400).send({ error: error instanceof Error ? error.message : "ReflectionFailed" }); }
+  });
+
+  app.get<{ Params: { reflectionId: string } }>("/api/v1/reflections/:reflectionId", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.reflectionDetail(actorId, request.params.reflectionId)); }
+    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "ReflectionReadFailed" }); }
+  });
+
+  app.post<{ Params: { reflectionId: string }; Body: { message: string } }>("/api/v1/reflections/:reflectionId/messages", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.continueReflection(actorId, request.params.reflectionId, request.body.message)); }
+    catch (error) { return reply.code(error instanceof Error && ["Forbidden", "ReflectionNotOwned"].includes(error.message) ? 403 : 400).send({ error: error instanceof Error ? error.message : "ReflectionMessageFailed" }); }
+  });
+
+  app.get<{ Params: { reflectionId: string } }>("/api/v1/reflections/:reflectionId/suggestion.md", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.header("Content-Disposition", `attachment; filename="airicforge-suggestion-${request.params.reflectionId}.md"`).type("text/markdown; charset=utf-8").send(await runtime.useCases.reflectionSuggestion(actorId, request.params.reflectionId)); }
+    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "SuggestionUnavailable" }); }
   });
 
   app.get<{ Params: { ownerId: string } }>("/api/v1/users/:ownerId/proposals", async (request, reply) => {

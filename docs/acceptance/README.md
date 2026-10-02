@@ -9,3 +9,9 @@ p0-stages.feature 是行为合同草案，按开发计划的阶段 1–5 分组�
 阶段 2 的真实 Report 页面、ACP、模型命令、轨迹、重启与故障验收见 stage-2-record.md。响应丢失的可重复脚本是 `scripts/acceptance/stage-two-recovery.mjs`；只对一次性测试 Report 运行。
 
 阶段 3 的个人 OM 提议、条件采纳、历史浏览、冲突 rebase 和下一 Turn 版本切换见 stage-3-record.md。
+
+阶段 4 的三种 Reflection lens、证据归因、API Suggestion、并行 Proposal、真实 Report 闭环和容器重启恢复见 stage-4-record.md。
+
+阶段 5 的三份数据快照与隔离还原、同机部署示例和 P0 总验收进度见 stage-5-record.md。该记录在所有门槛通过前保持“进行中”。
+
+P0-01～13、15～21 的逐项证据索引见 p0-evidence-matrix.md。

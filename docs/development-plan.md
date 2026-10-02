@@ -2,7 +2,7 @@
 
 > 状态：实施中；以 `airic-forge-prd.md`、`decisions/0001-p0-runtime-contract.md` 和已确认的 CertReporter P0 集成计划为基线。
 > 范围：单实例、单业务 App、多用户；先完成个人工作与学习闭环（P0），再完成组织协作与运行增强（P1）。  
-> 当前进度：阶段 0–3 已完成并记录验收；阶段 4–5 尚未通过阶段验收。见 `acceptance/stage-0-record.md`、`acceptance/stage-1-record.md`、`acceptance/stage-2-record.md` 和 `acceptance/stage-3-record.md`。
+> 当前进度：阶段 0–4 已完成并记录验收；阶段 5 正在进行，尚未通过全部交付门槛。见 `acceptance/stage-0-record.md` 至 `acceptance/stage-5-record.md`。
 
 ## 当前推进位置
 
@@ -13,8 +13,9 @@
 | 0. 契约与迁移基线 | 已完成，见 acceptance/stage-0-record.md | 进入阶段 1；阶段 0 文档不替代后续运行验收 |
 | 1. 可部署的身份与 OM 基础 | 已完成，见 acceptance/stage-1-record.md | 进入阶段 2；真实 CertReporter Drawer 接入与业务命令尚未验收 |
 | 2. App 内完成可追溯的 Work | 已完成，见 acceptance/stage-2-record.md | 进入阶段 3；附件迁移与旧侧车退出仍需在 P0 交付前核对 |
-| 3. 个人 OM 编辑、提议与采纳 | 已完成，见 acceptance/stage-3-record.md | 进入阶段 4；Reflection 的真实学习闭环仍待验收 |
-| 4–5 | 未开始阶段验收；已有部分支撑代码 | 按各阶段的完成证据逐项验收，不从代码存在推定阶段完成 |
+| 3. 个人 OM 编辑、提议与采纳 | 已完成，见 acceptance/stage-3-record.md | 阶段 4 已复用审阅、条件采纳和 rebase |
+| 4. 从轨迹到可审核的 Reflection | 已完成，见 acceptance/stage-4-record.md | 进入阶段 5；部署备份还原和 P0 总验收仍待完成 |
+| 5. P0 交付与恢复验收 | 进行中，见 acceptance/stage-5-record.md | 完成旧 sidecar 退出边界、附件迁移核对与同机新环境运行验收 |
 
 ## 1. 要实现的行为
 

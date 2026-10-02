@@ -1,7 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { parse } from "yaml";
+import { parse, stringify } from "yaml";
 import { isAllowedProposalPath, type ValidationIssue, type WorkDefinition } from "@airic-forge/domain";
 
 const run = (cwd: string, args: string[]): string => {
@@ -95,6 +95,7 @@ export class GitOperatingModel {
       catch { issues.push({ path, message: "invalid Subject Knowledge front matter" }); continue; }
       const id = typeof metadata?.id === "string" ? metadata.id : "";
       if (!/^[a-z][a-z0-9.-]*$/.test(id)) issues.push({ path, message: "Subject Knowledge needs a stable id" });
+      if (id !== path.split("/").pop()?.replace(/\.md$/, "")) issues.push({ path, message: "Subject Knowledge id must match its file name" });
       if (ids.has(id)) issues.push({ path, message: "Subject Knowledge id must be unique" });
       ids.add(id);
       if (typeof metadata?.title !== "string" || !metadata.title.trim()) issues.push({ path, message: "Subject Knowledge needs a title" });
@@ -150,6 +151,16 @@ export class GitOperatingModel {
     const destination = resolve(worktree, path);
     if (!destination.startsWith(`${resolve(worktree)}/`)) throw new Error("ProposalPathNotAllowed");
     mkdirSync(resolve(destination, ".."), { recursive: true }); writeFileSync(destination, content, "utf8");
+  }
+
+  makeKnowledgeAvailable(worktree: string, workDefinitionId: string, knowledgeIds: string[]): void {
+    const path = `work-definitions/${workDefinitionId}/work.yml`;
+    if (!isAllowedProposalPath(path)) throw new Error("ProposalPathNotAllowed");
+    const destination = resolve(worktree, path);
+    const definition = parse(readFileSync(destination, "utf8")) as { knowledge?: { bootstrap?: string[]; available?: string[] } };
+    if (!definition.knowledge || !Array.isArray(definition.knowledge.available)) throw new Error("InvalidWorkKnowledgeDeclaration");
+    definition.knowledge.available = [...new Set([...definition.knowledge.available, ...knowledgeIds])];
+    writeFileSync(destination, stringify(definition), "utf8");
   }
 
   commitProposal(worktree: string, title: string): void {

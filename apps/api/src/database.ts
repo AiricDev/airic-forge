@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { CapabilityCatalog, ForgeUser, ProposalRecord, ReflectionRecord, TurnRecord, UserRole, Work } from "@airic-forge/domain";
+import type { CapabilityCatalog, ForgeUser, ProposalRecord, ReflectionLens, ReflectionMessage, ReflectionOutcome, ReflectionRecord, TurnRecord, UserRole, Work } from "@airic-forge/domain";
 import { id, normalizeEmail } from "./ids.js";
 
 export class ForgeDatabase {
@@ -73,6 +73,20 @@ export class ForgeDatabase {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS reflection_lenses (
+        id TEXT PRIMARY KEY,
+        version INTEGER NOT NULL,
+        enabled INTEGER NOT NULL,
+        prompt TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS reflection_messages (
+        id TEXT PRIMARY KEY,
+        reflection_id TEXT NOT NULL REFERENCES reflections(id),
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        at TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS reflection_messages_order ON reflection_messages(reflection_id, at);
       CREATE TABLE IF NOT EXISTS proposals (
         id TEXT PRIMARY KEY,
         work_id TEXT REFERENCES works(id),
@@ -133,6 +147,16 @@ export class ForgeDatabase {
     }
     const upgradedColumns = this.#db.prepare("PRAGMA table_info(proposals)").all() as Array<{ name: string }>;
     if (!upgradedColumns.some((column) => column.name === "reviewed_revision")) this.#db.exec("ALTER TABLE proposals ADD COLUMN reviewed_revision TEXT");
+    const reflectionColumns = new Set((this.#db.prepare("PRAGMA table_info(reflections)").all() as Array<{ name: string }>).map((column) => column.name));
+    for (const [name, ddl] of Object.entries({ lens_version: "INTEGER NOT NULL DEFAULT 1", lens_prompt: "TEXT NOT NULL DEFAULT ''", evidence_ids_json: "TEXT NOT NULL DEFAULT '[]'", om_revision: "TEXT NOT NULL DEFAULT ''", outcome: "TEXT", analysis: "TEXT", attribution: "TEXT", suggestion_markdown: "TEXT" })) {
+      if (!reflectionColumns.has(name)) this.#db.exec(`ALTER TABLE reflections ADD COLUMN ${name} ${ddl}`);
+    }
+    const defaults = [
+      ["domain-knowledge", "Summarize reusable domain knowledge grounded in the selected Work events. If evidence supports a durable fact, propose one Subject Knowledge markdown file with YAML front matter (id, title, summary, topics). The front matter id must equal the markdown filename stem, and the knowledge will be listed in the Work Definition's knowledge.available. Otherwise return analysis only."],
+      ["delegation-gap", "Identify a repeatable delegation or method gap grounded in the selected Work events. If evidence supports a narrow behavioral improvement, propose an edit to a Work Definition markdown document. Otherwise return analysis only."],
+      ["api-suggestion", "Identify a missing App capability grounded in the selected Work events. Produce a human-readable API suggestion only when evidence supports a concrete gap. Never propose OM edits or imply that the capability already exists."],
+    ] as const;
+    for (const [lensId, prompt] of defaults) this.#db.prepare("INSERT OR IGNORE INTO reflection_lenses (id, version, enabled, prompt) VALUES (?, 1, 1, ?)").run(lensId, prompt);
   }
 
   ensureUser(email: string, isInitialAdmin: boolean): ForgeUser {
@@ -255,11 +279,31 @@ export class ForgeDatabase {
   completeTurn(turnId: string, status: "completed" | "failed"): void { this.#db.prepare("UPDATE turns SET status=?, completed_at=? WHERE id=?").run(status, new Date().toISOString(), turnId); }
   completeWork(workId: string): void { this.#db.prepare("UPDATE works SET status='completed', updated_at=? WHERE id=?").run(new Date().toISOString(), workId); }
 
-  createReflection(workId: string, ownerUserId: string, lensId: string, question: string): ReflectionRecord {
-    const now = new Date().toISOString(); const reflection = { id: id("rfl"), work_id: workId, owner_user_id: ownerUserId, lens_id: lensId, question, status: "active", created_at: now, updated_at: now };
-    this.#db.prepare("INSERT INTO reflections (id, work_id, owner_user_id, lens_id, question, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(reflection.id, reflection.work_id, reflection.owner_user_id, reflection.lens_id, reflection.question, reflection.status, reflection.created_at, reflection.updated_at);
-    return { id: reflection.id, workId, ownerUserId, lensId, question, status: reflection.status };
+  lenses(): ReflectionLens[] { return (this.#db.prepare("SELECT * FROM reflection_lenses ORDER BY id").all() as Record<string, unknown>[]).map((row) => this.#lens(row)); }
+  lens(lensId: string): ReflectionLens | undefined { const row = this.#db.prepare("SELECT * FROM reflection_lenses WHERE id=?").get(lensId) as Record<string, unknown> | undefined; return row ? this.#lens(row) : undefined; }
+  updateLens(lensId: string, enabled: boolean, prompt: string): ReflectionLens {
+    this.#db.prepare("UPDATE reflection_lenses SET version=version+1, enabled=?, prompt=? WHERE id=?").run(enabled ? 1 : 0, prompt, lensId);
+    const lens = this.lens(lensId); if (!lens) throw new Error("UnknownReflectionLens"); return lens;
   }
+  createReflection(input: Omit<ReflectionRecord, "id" | "status" | "outcome" | "analysis" | "attribution" | "suggestionMarkdown">): ReflectionRecord {
+    const now = new Date().toISOString(); const reflectionId = id("rfl");
+    this.#db.prepare("INSERT INTO reflections (id, work_id, owner_user_id, lens_id, question, status, created_at, updated_at, lens_version, lens_prompt, evidence_ids_json, om_revision) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)")
+      .run(reflectionId, input.workId, input.ownerUserId, input.lensId, input.question, now, now, input.lensVersion, input.lensPrompt, JSON.stringify(input.evidenceEventIds), input.omRevision);
+    return { ...input, id: reflectionId, status: "active" };
+  }
+  reflection(reflectionId: string): ReflectionRecord | undefined { const row = this.#db.prepare("SELECT * FROM reflections WHERE id=?").get(reflectionId) as Record<string, unknown> | undefined; return row ? this.#reflection(row) : undefined; }
+  reflectionsForWork(workId: string): ReflectionRecord[] { return (this.#db.prepare("SELECT * FROM reflections WHERE work_id=? ORDER BY created_at DESC").all(workId) as Record<string, unknown>[]).map((row) => this.#reflection(row)); }
+  reflectionMessages(reflectionId: string): ReflectionMessage[] { return (this.#db.prepare("SELECT * FROM reflection_messages WHERE reflection_id=? ORDER BY at, rowid").all(reflectionId) as Record<string, unknown>[]).map((row) => ({ id: String(row.id), reflectionId, role: row.role as ReflectionMessage["role"], content: String(row.content), at: String(row.at) })); }
+  appendReflectionMessage(reflectionId: string, role: ReflectionMessage["role"], content: string): ReflectionMessage {
+    const message = { id: id("msg"), reflectionId, role, content, at: new Date().toISOString() };
+    this.#db.prepare("INSERT INTO reflection_messages (id, reflection_id, role, content, at) VALUES (?, ?, ?, ?, ?)").run(message.id, reflectionId, role, content, message.at); return message;
+  }
+  setReflectionResult(reflectionId: string, result: { status: string; outcome?: ReflectionOutcome; analysis?: string; attribution?: string; suggestionMarkdown?: string }): void {
+    if (result.status === "failed") { this.#db.prepare("UPDATE reflections SET status='failed', updated_at=? WHERE id=?").run(new Date().toISOString(), reflectionId); return; }
+    this.#db.prepare("UPDATE reflections SET status=?, outcome=?, analysis=?, attribution=?, suggestion_markdown=?, updated_at=? WHERE id=?")
+      .run(result.status, result.outcome ?? null, result.analysis ?? null, result.attribution ?? null, result.suggestionMarkdown ?? null, new Date().toISOString(), reflectionId);
+  }
+  proposalForReflection(reflectionId: string): ProposalRecord | undefined { const row = this.#db.prepare("SELECT * FROM proposals WHERE reflection_id=? ORDER BY created_at LIMIT 1").get(reflectionId) as Record<string, unknown> | undefined; return row ? this.#proposal(row) : undefined; }
 
   createProposal(input: ProposalRecord): ProposalRecord {
     const now = new Date().toISOString(); const proposal = { id: input.id, work_id: input.workId ?? null, reflection_id: input.reflectionId ?? null, owner_user_id: input.ownerUserId, base_revision: input.baseRevision, branch_ref: input.branchRef, worktree_path: input.worktreePath, status: input.status, source: input.source, reason: input.reason, evidence: input.evidence, reviewed_revision: input.reviewedRevision ?? null, created_at: now, updated_at: now };
@@ -274,6 +318,8 @@ export class ForgeDatabase {
   adoptProposal(proposalId: string): void { this.#db.prepare("UPDATE proposals SET status='adopted', updated_at=? WHERE id=?").run(new Date().toISOString(), proposalId); }
 
   #user(row: Record<string, unknown>): ForgeUser { return { id: String(row.id), email: String(row.email), role: row.role as UserRole, passwordConfigured: typeof row.password_hash === "string", activeBranch: String(row.active_branch), createdAt: String(row.created_at) }; }
+  #lens(row: Record<string, unknown>): ReflectionLens { return { id: String(row.id) as ReflectionLens["id"], version: Number(row.version), enabled: Number(row.enabled) === 1, prompt: String(row.prompt) }; }
+  #reflection(row: Record<string, unknown>): ReflectionRecord { return { id: String(row.id), workId: String(row.work_id), ownerUserId: String(row.owner_user_id), lensId: String(row.lens_id), lensVersion: Number(row.lens_version), lensPrompt: String(row.lens_prompt), question: String(row.question), evidenceEventIds: JSON.parse(String(row.evidence_ids_json)) as string[], omRevision: String(row.om_revision), status: String(row.status), ...(row.outcome ? { outcome: row.outcome as ReflectionOutcome } : {}), ...(row.analysis ? { analysis: String(row.analysis) } : {}), ...(row.attribution ? { attribution: String(row.attribution) } : {}), ...(row.suggestion_markdown ? { suggestionMarkdown: String(row.suggestion_markdown) } : {}) }; }
   #work(row: Record<string, unknown>): Work { return { id: String(row.id), ownerUserId: String(row.owner_user_id), appId: "certreporter", workType: "report-authoring", entityId: String(row.entity_id), status: row.status === "completed" ? "completed" : "active", createdAt: String(row.created_at), updatedAt: String(row.updated_at) }; }
   #proposal(row: Record<string, unknown>): ProposalRecord { return { id: String(row.id), ...(row.reflection_id == null ? {} : { reflectionId: String(row.reflection_id) }), ...(row.work_id == null ? {} : { workId: String(row.work_id) }), ownerUserId: String(row.owner_user_id), baseRevision: String(row.base_revision), branchRef: String(row.branch_ref), worktreePath: String(row.worktree_path), status: String(row.status), source: String(row.source), reason: String(row.reason), evidence: String(row.evidence), ...(row.reviewed_revision == null ? {} : { reviewedRevision: String(row.reviewed_revision) }) }; }
 }

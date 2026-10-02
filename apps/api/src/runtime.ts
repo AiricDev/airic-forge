@@ -10,6 +10,7 @@ import { systemPort } from "./system-port.js";
 import { JsonlTrajectoryStore } from "./trajectory.js";
 import { InMemoryWebSessionStore } from "./web-session-store.js";
 import { PiWorkAgentRunner } from "./pi-work-agent.js";
+import { PiReflectionAgentRunner } from "./pi-reflection-agent.js";
 
 /** Composition root only. Application policy lives in ForgeUseCases. */
 export class ForgeRuntime {
@@ -27,6 +28,6 @@ export class ForgeRuntime {
     this.trajectories = new JsonlTrajectoryStore(config.dataDir);
     this.certReporter = new CertReporterClient(config.certReporterUrl);
     this.om.initialize();
-    this.useCases = new ForgeUseCases({ accounts: this.db, works: this.db, om: this.om, certReporter: this.certReporter, catalogs: this.db, agents: new PiWorkAgentRunner(config), sessions: this.sessions, passwordSetups: this.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: this.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
+    this.useCases = new ForgeUseCases({ accounts: this.db, works: this.db, om: this.om, certReporter: this.certReporter, catalogs: this.db, agents: new PiWorkAgentRunner(config), reflectionAgent: new PiReflectionAgentRunner(config), sessions: this.sessions, passwordSetups: this.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: this.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
   }
 }
