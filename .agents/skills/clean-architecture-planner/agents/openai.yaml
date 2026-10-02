@@ -1,0 +1,4 @@
+interface:
+  display_name: "Clean Architecture Planner"
+  short_description: "Plan changes through Clean Architecture routes"
+  default_prompt: "Use $clean-architecture-planner to plan this change through the codebase's existing Clean Architecture routes."

@@ -1,14 +1,6 @@
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-
-export interface TrajectoryEvent {
-  id: string;
-  workId: string;
-  turnId?: string;
-  type: "turn.started" | "turn.completed" | "context.assembled" | "message" | "action" | "error";
-  at: string;
-  payload: Record<string, unknown>;
-}
+import type { TrajectoryEvent } from "@airic-forge/domain";
 
 export class JsonlTrajectoryStore {
   constructor(private readonly dataDir: string) {}

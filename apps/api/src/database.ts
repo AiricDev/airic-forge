@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { ForgeUser, UserRole } from "@airic-forge/domain";
+import type { ForgeUser, ProposalRecord, ReflectionRecord, TurnRecord, UserRole, Work } from "@airic-forge/domain";
 import { id, normalizeEmail } from "./ids.js";
 
 export class ForgeDatabase {
@@ -119,47 +119,50 @@ export class ForgeDatabase {
     return row?.owner_user_id;
   }
 
-  activeWork(ownerUserId: string, appId: string, workType: string, entityId: string): Record<string, unknown> | undefined {
-    return this.#db.prepare("SELECT * FROM works WHERE owner_user_id=? AND app_id=? AND work_type=? AND entity_id=? AND status='active' ORDER BY updated_at DESC LIMIT 1").get(ownerUserId, appId, workType, entityId) as Record<string, unknown> | undefined;
+  activeWork(ownerUserId: string, appId: string, workType: string, entityId: string): Work | undefined {
+    const row = this.#db.prepare("SELECT * FROM works WHERE owner_user_id=? AND app_id=? AND work_type=? AND entity_id=? AND status='active' ORDER BY updated_at DESC LIMIT 1").get(ownerUserId, appId, workType, entityId) as Record<string, unknown> | undefined;
+    return row ? this.#work(row) : undefined;
   }
 
-  createWork(ownerUserId: string, appId: string, workType: string, entityId: string): Record<string, unknown> {
+  createWork(ownerUserId: string, appId: string, workType: string, entityId: string): Work {
     const now = new Date().toISOString(); const work = { id: id("wrk"), owner_user_id: ownerUserId, app_id: appId, work_type: workType, entity_id: entityId, status: "active", created_at: now, updated_at: now };
     this.#db.prepare("INSERT INTO works (id, owner_user_id, app_id, work_type, entity_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(...Object.values(work));
-    return work;
+    return this.#work(work);
   }
 
-  createOrTouchSession(workId: string): Record<string, unknown> {
+  createOrTouchSession(workId: string): { id: string } {
     const now = new Date().toISOString();
     const existing = this.#db.prepare("SELECT * FROM sessions WHERE work_id=? ORDER BY last_connected_at DESC LIMIT 1").get(workId) as Record<string, unknown> | undefined;
-    if (existing) { this.#db.prepare("UPDATE sessions SET last_connected_at=? WHERE id=?").run(now, String(existing.id)); return { ...existing, last_connected_at: now }; }
+    if (existing) { this.#db.prepare("UPDATE sessions SET last_connected_at=? WHERE id=?").run(now, String(existing.id)); return { id: String(existing.id) }; }
     const session = { id: id("ses"), work_id: workId, created_at: now, last_connected_at: now };
-    this.#db.prepare("INSERT INTO sessions (id, work_id, created_at, last_connected_at) VALUES (?, ?, ?, ?)").run(...Object.values(session)); return session;
+    this.#db.prepare("INSERT INTO sessions (id, work_id, created_at, last_connected_at) VALUES (?, ?, ?, ?)").run(...Object.values(session)); return { id: session.id };
   }
 
-  nextTurn(workId: string, omRevision: string, catalogDigest: string, contextDigest: string): Record<string, unknown> {
+  nextTurn(workId: string, omRevision: string, catalogDigest: string, contextDigest: string): TurnRecord {
     const now = new Date().toISOString(); const row = this.#db.prepare("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM turns WHERE work_id=?").get(workId) as { sequence: number };
     const turn = { id: id("trn"), work_id: workId, sequence: row.sequence + 1, status: "running", om_revision: omRevision, catalog_digest: catalogDigest, context_digest: contextDigest, started_at: now };
-    this.#db.prepare("INSERT INTO turns (id, work_id, sequence, status, om_revision, catalog_digest, context_digest, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(turn.id, turn.work_id, turn.sequence, turn.status, turn.om_revision, turn.catalog_digest, turn.context_digest, turn.started_at); return turn;
+    this.#db.prepare("INSERT INTO turns (id, work_id, sequence, status, om_revision, catalog_digest, context_digest, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(turn.id, turn.work_id, turn.sequence, turn.status, turn.om_revision, turn.catalog_digest, turn.context_digest, turn.started_at); return { id: turn.id, workId: turn.work_id, sequence: turn.sequence, status: turn.status, omRevision: turn.om_revision, catalogDigest: turn.catalog_digest, contextDigest: turn.context_digest, startedAt: turn.started_at };
   }
 
   completeTurn(turnId: string, status: "completed" | "failed"): void { this.#db.prepare("UPDATE turns SET status=?, completed_at=? WHERE id=?").run(status, new Date().toISOString(), turnId); }
   completeWork(workId: string): void { this.#db.prepare("UPDATE works SET status='completed', updated_at=? WHERE id=?").run(new Date().toISOString(), workId); }
 
-  createReflection(workId: string, ownerUserId: string, lensId: string, question: string): Record<string, unknown> {
+  createReflection(workId: string, ownerUserId: string, lensId: string, question: string): ReflectionRecord {
     const now = new Date().toISOString(); const reflection = { id: id("rfl"), work_id: workId, owner_user_id: ownerUserId, lens_id: lensId, question, status: "active", created_at: now, updated_at: now };
     this.#db.prepare("INSERT INTO reflections (id, work_id, owner_user_id, lens_id, question, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(reflection.id, reflection.work_id, reflection.owner_user_id, reflection.lens_id, reflection.question, reflection.status, reflection.created_at, reflection.updated_at);
-    return reflection;
+    return { id: reflection.id, workId, ownerUserId, lensId, question, status: reflection.status };
   }
 
-  createProposal(proposalId: string, reflectionId: string, workId: string, ownerUserId: string, baseRevision: string, branchRef: string, worktreePath: string): Record<string, unknown> {
-    const now = new Date().toISOString(); const proposal = { id: proposalId, work_id: workId, reflection_id: reflectionId, owner_user_id: ownerUserId, base_revision: baseRevision, branch_ref: branchRef, worktree_path: worktreePath, status: "open", created_at: now, updated_at: now };
+  createProposal(input: ProposalRecord): ProposalRecord {
+    const now = new Date().toISOString(); const proposal = { id: input.id, work_id: input.workId, reflection_id: input.reflectionId, owner_user_id: input.ownerUserId, base_revision: input.baseRevision, branch_ref: input.branchRef, worktree_path: input.worktreePath, status: input.status, created_at: now, updated_at: now };
     this.#db.prepare("INSERT INTO proposals (id, work_id, reflection_id, owner_user_id, base_revision, branch_ref, worktree_path, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(proposal.id, proposal.work_id, proposal.reflection_id, proposal.owner_user_id, proposal.base_revision, proposal.branch_ref, proposal.worktree_path, proposal.status, proposal.created_at, proposal.updated_at);
-    return proposal;
+    return input;
   }
 
-  proposal(proposalId: string): Record<string, unknown> | undefined { return this.#db.prepare("SELECT * FROM proposals WHERE id=?").get(proposalId) as Record<string, unknown> | undefined; }
+  proposal(proposalId: string): ProposalRecord | undefined { const row = this.#db.prepare("SELECT * FROM proposals WHERE id=?").get(proposalId) as Record<string, unknown> | undefined; return row ? this.#proposal(row) : undefined; }
   adoptProposal(proposalId: string): void { this.#db.prepare("UPDATE proposals SET status='adopted', updated_at=? WHERE id=?").run(new Date().toISOString(), proposalId); }
 
   #user(row: Record<string, unknown>): ForgeUser { return { id: String(row.id), email: String(row.email), role: row.role as UserRole, passwordConfigured: typeof row.password_hash === "string", activeBranch: String(row.active_branch), createdAt: String(row.created_at) }; }
+  #work(row: Record<string, unknown>): Work { return { id: String(row.id), ownerUserId: String(row.owner_user_id), appId: "certreporter", workType: "report-authoring", entityId: String(row.entity_id), status: row.status === "completed" ? "completed" : "active", createdAt: String(row.created_at), updatedAt: String(row.updated_at) }; }
+  #proposal(row: Record<string, unknown>): ProposalRecord { return { id: String(row.id), reflectionId: String(row.reflection_id), workId: String(row.work_id), ownerUserId: String(row.owner_user_id), baseRevision: String(row.base_revision), branchRef: String(row.branch_ref), worktreePath: String(row.worktree_path), status: String(row.status) }; }
 }

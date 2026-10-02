@@ -1,0 +1,4 @@
+interface:
+  display_name: "Post-change Design Reflection"
+  short_description: "Reflect on live change routes and design signals"
+  default_prompt: "Use $post-change-design-reflection to reflect directly on the live context of this completed change."

@@ -25,23 +25,21 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     try {
       const body = request.body;
       if (body.appId !== "certreporter" || body.workType !== "report-authoring" || !body.entityId) return reply.code(400).send({ error: "UnsupportedAppContext" });
-      const result = await runtime.bootstrap(bearer(request.headers.authorization), body.entityId, body.selection);
+      const result = await runtime.useCases.bootstrap({ token: bearer(request.headers.authorization), reportId: body.entityId, selection: body.selection });
       return reply.code(201).send({ ...result, acpUrl: "/acp" });
     } catch (error) { return reply.code(401).send({ error: error instanceof Error ? error.message : "BootstrapFailed" }); }
   });
 
   app.post<{ Params: { ticket: string }; Body: { password: string } }>("/api/v1/app-sessions/:ticket/password", async (request, reply) => {
     try {
-      const appSession = runtime.session(request.params.ticket);
-      runtime.db.setPassword(appSession.forgeUserId, hashPassword(request.body.password));
+      await runtime.useCases.setPassword(request.params.ticket, hashPassword(request.body.password));
       return reply.code(204).send();
     } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "PasswordSetupFailed" }); }
   });
 
   app.post<{ Body: { email: string; password: string } }>("/api/v1/auth/login", async (request, reply) => {
-    const user = runtime.db.userByEmail(request.body.email);
-    const passwordHash = user && runtime.db.passwordHash(user.email);
-    if (!user || !passwordHash || !verifyPassword(request.body.password, passwordHash)) return reply.code(401).send({ error: "InvalidCredentials" });
+    const user = await runtime.useCases.login(request.body.email, request.body.password, verifyPassword);
+    if (!user) return reply.code(401).send({ error: "InvalidCredentials" });
     // The web-session implementation is intentionally isolated from App bearer tokens.
     return reply.send({ user, message: "Use the returned user identity to establish the dashboard session adapter." });
   });
@@ -49,35 +47,31 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
   app.get<{ Params: { workId: string } }>("/api/v1/works/:workId/trajectory", async (request, reply) => {
     const ticket = String(request.headers["x-forge-ticket"] ?? "");
     try {
-      const session = runtime.session(ticket);
-      if (session.workId !== request.params.workId) return reply.code(403).send({ error: "WorkNotOwned" });
-      return reply.send({ events: runtime.trajectories.read(session.workId) });
+      return reply.send({ events: await runtime.useCases.trajectory(ticket, request.params.workId) });
     } catch (error) { return reply.code(401).send({ error: error instanceof Error ? error.message : "Unauthorized" }); }
   });
 
   app.post<{ Params: { workId: string } }>("/api/v1/works/:workId/complete", async (request, reply) => {
     try {
-      const session = runtime.session(String(request.headers["x-forge-ticket"] ?? ""));
-      if (session.workId !== request.params.workId) return reply.code(403).send({ error: "WorkNotOwned" });
-      runtime.completeWork(session.ticket); return reply.code(204).send();
+      await runtime.useCases.completeWork(String(request.headers["x-forge-ticket"] ?? "")); return reply.code(204).send();
     } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "WorkCompletionFailed" }); }
   });
 
   app.post<{ Params: { workId: string }; Body: { lensId: string; question: string } }>("/api/v1/works/:workId/reflections", async (request, reply) => {
     try {
-      const session = runtime.session(String(request.headers["x-forge-ticket"] ?? ""));
+      const ticket = String(request.headers["x-forge-ticket"] ?? ""); const session = await runtime.useCases.appSession(ticket);
       if (session.workId !== request.params.workId) return reply.code(403).send({ error: "WorkNotOwned" });
-      return reply.code(201).send(runtime.openReflection(session.ticket, request.body.lensId, request.body.question));
+      return reply.code(201).send(await runtime.useCases.openReflection(ticket, request.body.lensId, request.body.question));
     } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "ReflectionFailed" }); }
   });
 
   app.patch<{ Params: { proposalId: string }; Body: { path: string; content: string } }>("/api/v1/proposals/:proposalId/files", async (request, reply) => {
-    try { return reply.send(runtime.writeProposal(String(request.headers["x-forge-ticket"] ?? ""), request.params.proposalId, request.body.path, request.body.content)); }
+    try { return reply.send(await runtime.useCases.writeProposal(String(request.headers["x-forge-ticket"] ?? ""), request.params.proposalId, request.body.path, request.body.content)); }
     catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "ProposalWriteFailed" }); }
   });
 
   app.post<{ Params: { proposalId: string }; Body: { title: string } }>("/api/v1/proposals/:proposalId/adopt", async (request, reply) => {
-    try { return reply.send(runtime.adoptProposal(String(request.headers["x-forge-ticket"] ?? ""), request.params.proposalId, request.body.title)); }
+    try { return reply.send(await runtime.useCases.adoptProposal(String(request.headers["x-forge-ticket"] ?? ""), request.params.proposalId, request.body.title)); }
     catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : "ProposalAdoptionFailed" }); }
   });
 
@@ -88,13 +82,13 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
       try { request = JSON.parse(String(raw)) as RpcRequest; } catch { connection.socket.send(JSON.stringify({ error: { code: -32700, message: "Parse error" } })); return; }
       try {
         if (request.method === "session/new") {
-          ticket = String(request.params?.ticket ?? ""); const session = runtime.session(ticket);
+          ticket = String(request.params?.ticket ?? ""); const session = await runtime.useCases.appSession(ticket);
           connection.socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { sessionId: session.sessionId, workId: session.workId } })); return;
         }
         if (request.method === "session/prompt") {
           const message = String(request.params?.message ?? ""); if (!ticket || !message) throw new Error("InvalidPrompt");
           connection.socket.send(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { phase: "running" } }));
-          const result = await runtime.startTurn(ticket, message);
+          const result = await runtime.useCases.startTurn(ticket, message);
           connection.socket.send(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { phase: "completed", text: result.reply, turn: result.turn } }));
           connection.socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, result })); return;
         }
