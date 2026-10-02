@@ -43,6 +43,8 @@ export function validateWorkDefinition(
   const issues: ValidationIssue[] = [];
   if (definition.schemaVersion !== 1) issues.push({ path: "schemaVersion", message: "must be 1" });
   if (!/^[a-z][a-z0-9-]*$/.test(definition.id)) issues.push({ path: "id", message: "must be a kebab-case identifier" });
+  if (typeof definition.title !== "string" || !definition.title.trim()) issues.push({ path: "title", message: "must be a non-empty string" });
+  if (typeof definition.description !== "string") issues.push({ path: "description", message: "must be a string" });
   const documentIds = new Set<string>();
   for (const document of definition.documents) {
     if (!document || typeof document.id !== "string" || typeof document.path !== "string") {
@@ -52,17 +54,22 @@ export function validateWorkDefinition(
     if (documentIds.has(document.id)) issues.push({ path: `documents.${document.id}`, message: "document id must be unique" });
     documentIds.add(document.id);
     if (!/^[a-z][a-z0-9-]*$/.test(document.id)) issues.push({ path: `documents.${document.id}.id`, message: "must be a stable kebab-case identifier" });
+    if (typeof document.title !== "string" || !document.title.trim()) issues.push({ path: `documents.${document.id}.title`, message: "must be a non-empty string" });
     if (!/^[a-z0-9-]+\.md$/.test(document.path)) issues.push({ path: `documents.${document.id}.path`, message: "must name a markdown file in the work definition package" });
     if (!["policy", "procedure", "reference", "precedent"].includes(document.role)) issues.push({ path: `documents.${document.id}.role`, message: "must be a supported document role" });
     if (!["required", "on-demand"].includes(document.load)) issues.push({ path: `documents.${document.id}.load`, message: "must be required or on-demand" });
   }
   for (const capability of definition.capabilities.allowed) {
+    if (typeof capability !== "string") { issues.push({ path: "capabilities.allowed", message: "must contain capability IDs" }); continue; }
     if (!knownCapabilities.has(capability)) issues.push({ path: `capabilities.allowed.${capability}`, message: "is not in the accepted capability catalog" });
   }
   for (const knowledge of [...definition.knowledge.bootstrap, ...definition.knowledge.available]) {
+    if (typeof knowledge !== "string") { issues.push({ path: "knowledge", message: "must contain Subject Knowledge IDs" }); continue; }
     if (!knownKnowledge.has(knowledge)) issues.push({ path: `knowledge.${knowledge}`, message: "does not resolve to Subject Knowledge" });
   }
+  if (definition.completion.mode !== "user") issues.push({ path: "completion.mode", message: "must be user" });
   for (const capability of definition.completion.requiredCapabilities) {
+    if (typeof capability !== "string") { issues.push({ path: "completion.requiredCapabilities", message: "must contain capability IDs" }); continue; }
     if (!definition.capabilities.allowed.includes(capability)) issues.push({ path: `completion.requiredCapabilities.${capability}`, message: "must be allowed by this Work" });
   }
   return issues;

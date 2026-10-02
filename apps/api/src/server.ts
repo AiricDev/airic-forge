@@ -10,7 +10,6 @@ import { join } from "node:path";
 
 type BootstrapBody = { appId: "certreporter"; workType: "report-authoring"; entityId: string; selection?: Record<string, unknown> };
 type RpcRequest = { id?: string | number; method?: string; params?: Record<string, unknown> };
-type AcpConnection = { socket: { on(event: "message" | "close", listener: (raw?: unknown) => void | Promise<void>): void; send(payload: string): void } };
 
 const bearer = (value: unknown): string => {
   const header = String(value ?? ""); const match = /^Bearer\s+(.+)$/i.exec(header);
@@ -41,7 +40,7 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
       const body = request.body;
       if (body.appId !== "certreporter" || body.workType !== "report-authoring" || !body.entityId) return reply.code(400).send({ error: "UnsupportedAppContext" });
       const result = await runtime.useCases.bootstrap({ token: bearer(request.headers.authorization), reportId: body.entityId, selection: body.selection });
-      return reply.code(201).send({ ...result, acpUrl: "/acp" });
+      return reply.code(201).send({ ...result, acpUrl: "/acp", workspaceUrl: runtime.config.publicUrl ?? "http://127.0.0.1:4175" });
     } catch (error) { return reply.code(401).send({ error: error instanceof Error ? error.message : "BootstrapFailed" }); }
   });
 
@@ -50,6 +49,16 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
       await runtime.useCases.setPassword(request.params.ticket, request.body.password);
       return reply.code(204).send();
     } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "PasswordSetupFailed" }); }
+  });
+
+  app.post("/api/v1/catalog/import", async (request, reply) => {
+    try { return reply.code(201).send(await runtime.useCases.importCatalog(String(request.headers["x-forge-ticket"] ?? ""))); }
+    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "CatalogImportFailed" }); }
+  });
+
+  app.post<{ Params: { digest: string } }>("/api/v1/catalog/:digest/accept", async (request, reply) => {
+    try { return reply.send(await runtime.useCases.acceptCatalog(String(request.headers["x-forge-ticket"] ?? ""), request.params.digest)); }
+    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "CatalogAcceptanceFailed" }); }
   });
 
   app.post<{ Body: { email: string; password: string } }>("/api/v1/auth/login", async (request, reply) => {
@@ -74,17 +83,53 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     catch { return reply.code(403).send({ error: "Forbidden" }); }
   });
 
-  app.get<{ Params: { ownerId: string } }>("/api/v1/om/users/:ownerId", async (request, reply) => {
+  app.get<{ Params: { ownerId: string } }>("/api/v1/users/:ownerId/works", async (request, reply) => {
     const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
     if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
-    try { return reply.send(await runtime.useCases.personalOm(actorId, request.params.ownerId)); }
+    try { return reply.send({ works: await runtime.useCases.worksForUser(actorId, request.params.ownerId) }); }
     catch { return reply.code(403).send({ error: "Forbidden" }); }
   });
 
-  app.get<{ Params: { ownerId: string }; Querystring: { path: string } }>("/api/v1/om/users/:ownerId/file", async (request, reply) => {
+  app.get<{ Params: { workId: string } }>("/api/v1/works/:workId", async (request, reply) => {
     const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
     if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
-    try { return reply.send(await runtime.useCases.personalOmFile(actorId, request.params.ownerId, request.query.path)); }
+    try { return reply.send(await runtime.useCases.workHistory(actorId, request.params.workId)); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "WorkNotFound" ? 404 : 403).send({ error: error instanceof Error ? error.message : "Forbidden" }); }
+  });
+
+  app.post<{ Params: { commandId: string } }>("/api/v1/commands/:commandId/recover", async (request, reply) => {
+    try { return reply.send(await runtime.useCases.recoverCommand(String(request.headers["x-forge-ticket"] ?? ""), request.params.commandId)); }
+    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "CommandRecoveryFailed" }); }
+  });
+
+  app.get<{ Params: { workId: string } }>("/api/v1/app-sessions/works/:workId/trajectory", async (request, reply) => {
+    try { return reply.send({ events: await runtime.useCases.trajectory(String(request.headers["x-forge-ticket"] ?? ""), request.params.workId) }); }
+    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "TrajectoryUnavailable" }); }
+  });
+
+  app.post<{ Params: { workId: string } }>("/api/v1/app-sessions/works/:workId/complete", async (request, reply) => {
+    try { await runtime.useCases.completeWork(String(request.headers["x-forge-ticket"] ?? ""), request.params.workId); return reply.code(204).send(); }
+    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "WorkCompletionFailed" }); }
+  });
+
+  app.get<{ Params: { ownerId: string }; Querystring: { revision?: string } }>("/api/v1/om/users/:ownerId", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.personalOm(actorId, request.params.ownerId, request.query.revision)); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "OmRevisionNotReachable" ? 404 : 403).send({ error: error instanceof Error ? error.message : "Forbidden" }); }
+  });
+
+  app.get<{ Params: { ownerId: string } }>("/api/v1/om/users/:ownerId/history", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send({ commits: await runtime.useCases.personalOmHistory(actorId, request.params.ownerId) }); }
+    catch { return reply.code(403).send({ error: "Forbidden" }); }
+  });
+
+  app.get<{ Params: { ownerId: string }; Querystring: { path: string; revision?: string } }>("/api/v1/om/users/:ownerId/file", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.personalOmFile(actorId, request.params.ownerId, request.query.path, request.query.revision)); }
     catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 404).send({ error: error instanceof Error ? error.message : "OmFileNotFound" }); }
   });
 
@@ -115,40 +160,92 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "ReflectionFailed" }); }
   });
 
-  app.patch<{ Params: { proposalId: string }; Body: { path: string; content: string } }>("/api/v1/proposals/:proposalId/files", async (request, reply) => {
-    try { return reply.send(await runtime.useCases.writeProposal(String(request.headers["x-forge-ticket"] ?? ""), request.params.proposalId, request.body.path, request.body.content)); }
-    catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "ProposalWriteFailed" }); }
+  app.get<{ Params: { ownerId: string } }>("/api/v1/users/:ownerId/proposals", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send({ proposals: await runtime.useCases.personalProposals(actorId, request.params.ownerId) }); }
+    catch { return reply.code(403).send({ error: "Forbidden" }); }
   });
 
-  app.post<{ Params: { proposalId: string }; Body: { title: string } }>("/api/v1/proposals/:proposalId/adopt", async (request, reply) => {
-    try { return reply.send(await runtime.useCases.adoptProposal(String(request.headers["x-forge-ticket"] ?? ""), request.params.proposalId, request.body.title)); }
+  app.post<{ Body: { source: string; reason: string; evidence?: string } }>("/api/v1/proposals", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.code(201).send(await runtime.useCases.createPersonalProposal(actorId, request.body.source, request.body.reason, request.body.evidence ?? "")); }
+    catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "ProposalCreationFailed" }); }
+  });
+
+  app.get<{ Params: { proposalId: string } }>("/api/v1/proposals/:proposalId", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.personalProposal(actorId, request.params.proposalId)); }
+    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "ProposalReadFailed" }); }
+  });
+
+  app.get<{ Params: { proposalId: string }; Querystring: { path: string } }>("/api/v1/proposals/:proposalId/file", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.personalProposalFile(actorId, request.params.proposalId, request.query.path)); }
+    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "ProposalFileReadFailed" }); }
+  });
+
+  app.patch<{ Params: { proposalId: string }; Body: { path: string; content: string } }>("/api/v1/proposals/:proposalId/files", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    const ticket = String(request.headers["x-forge-ticket"] ?? "");
+    if (!actorId && !ticket) return reply.code(401).send({ error: "Unauthorized" });
+    try {
+      return reply.send(actorId ? await runtime.useCases.writePersonalProposal(actorId, request.params.proposalId, request.body.path, request.body.content) : await runtime.useCases.writeProposal(ticket, request.params.proposalId, request.body.path, request.body.content));
+    }
+    catch (error) { return reply.code(error instanceof Error && ["Forbidden", "ProposalNotEditable", "ProposalNotOwned"].includes(error.message) ? 403 : 400).send({ error: error instanceof Error ? error.message : "ProposalWriteFailed" }); }
+  });
+
+  app.post<{ Params: { proposalId: string } }>("/api/v1/proposals/:proposalId/review", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.reviewPersonalProposal(actorId, request.params.proposalId)); }
+    catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "ProposalReviewFailed" }); }
+  });
+
+  app.post<{ Params: { proposalId: string } }>("/api/v1/proposals/:proposalId/rebase", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.rebasePersonalProposal(actorId, request.params.proposalId)); }
+    catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : "ProposalRebaseFailed" }); }
+  });
+
+  app.post<{ Params: { proposalId: string }; Body: { title: string; reviewedRevision?: string } }>("/api/v1/proposals/:proposalId/adopt", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    const ticket = String(request.headers["x-forge-ticket"] ?? "");
+    if (!actorId && !ticket) return reply.code(401).send({ error: "Unauthorized" });
+    try {
+      return reply.send(actorId ? await runtime.useCases.adoptPersonalProposal(actorId, request.params.proposalId, request.body.title, request.body.reviewedRevision ?? "") : await runtime.useCases.adoptProposal(ticket, request.params.proposalId, request.body.title));
+    }
     catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : "ProposalAdoptionFailed" }); }
   });
 
-  app.get("/acp", { websocket: true }, (connection: AcpConnection) => {
+  app.after(() => app.get("/acp", { websocket: true }, (socket) => {
     let ticket = "";
-    connection.socket.on("close", () => { if (ticket) void runtime.useCases.disconnectAcp(ticket); });
-    connection.socket.on("message", async (raw: unknown) => {
+    socket.on("close", () => { if (ticket) void runtime.useCases.disconnectAcp(ticket); });
+    socket.on("message", async (raw: unknown) => {
       let request: RpcRequest;
-      try { request = JSON.parse(String(raw)) as RpcRequest; } catch { connection.socket.send(JSON.stringify({ error: { code: -32700, message: "Parse error" } })); return; }
+      try { request = JSON.parse(String(raw)) as RpcRequest; } catch { socket.send(JSON.stringify({ error: { code: -32700, message: "Parse error" } })); return; }
       try {
         if (request.method === "session/new") {
           const requestedTicket = String(request.params?.ticket ?? "");
           const session = await runtime.useCases.connectAcp(requestedTicket);
           ticket = requestedTicket;
-          connection.socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { sessionId: session.sessionId, workId: session.workId } })); return;
+          socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { sessionId: session.sessionId, workId: session.workId } })); return;
         }
         if (request.method === "session/prompt") {
           const message = String(request.params?.message ?? ""); if (!ticket || !message) throw new Error("InvalidPrompt");
-          connection.socket.send(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { phase: "running" } }));
-          const result = await runtime.useCases.startTurn(ticket, message);
-          connection.socket.send(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { phase: "completed", text: result.reply, turn: result.turn } }));
-          connection.socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, result })); return;
+          socket.send(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { phase: "running" } }));
+          const result = await runtime.useCases.startTurn(ticket, message, (text) => socket.send(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { phase: "text-delta", text } })));
+          socket.send(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { phase: "completed", text: result.reply, turn: result.turn } }));
+          socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, result })); return;
         }
-        connection.socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Method not found" } }));
-      } catch (error) { connection.socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: -32000, message: error instanceof Error ? error.message : "Runtime failure" } })); }
+        socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Method not found" } }));
+      } catch (error) { socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: -32000, message: error instanceof Error ? error.message : "Runtime failure" } })); }
     });
-  });
+  }));
   return app;
 }
 

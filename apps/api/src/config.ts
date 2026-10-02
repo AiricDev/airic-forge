@@ -10,7 +10,12 @@ export interface ForgeConfig {
   webDistDir: string;
   certReporterUrl: string;
   allowedOrigin: string;
+  publicUrl?: string;
   initialAdminEmails: Set<string>;
+  modelProvider?: string;
+  modelId?: string;
+  modelApiKey?: string;
+  modelBaseUrl?: string;
 }
 
 export function loadConfig(env = process.env): ForgeConfig {
@@ -22,6 +27,11 @@ export function loadConfig(env = process.env): ForgeConfig {
     webDistDir: resolve(env.FORGE_WEB_DIST_DIR ?? "./prototype/dist"),
     certReporterUrl: (env.FORGE_CERTREPORTER_URL ?? "http://127.0.0.1:8000").replace(/\/$/, ""),
     allowedOrigin: env.FORGE_ALLOWED_ORIGIN ?? "http://127.0.0.1:5173",
+    publicUrl: (env.FORGE_PUBLIC_URL ?? "http://127.0.0.1:4175").replace(/\/$/, ""),
     initialAdminEmails: list(env.FORGE_INITIAL_ADMIN_EMAILS),
+    modelProvider: env.FORGE_MODEL_PROVIDER,
+    modelId: env.FORGE_MODEL_ID,
+    modelApiKey: env.FORGE_MODEL_API_KEY,
+    modelBaseUrl: env.FORGE_MODEL_BASE_URL,
   };
 }

@@ -30,6 +30,15 @@ Feature: 阶段 1 可部署的身份与个人 OM
 
 Feature: 阶段 2 CertReporter 中可追溯的 Work
 
+  Scenario: 未接受或已变化的能力目录阻止新 Turn
+    Given CertReporter 提供能力目录和 OpenAPI
+    When 管理员导入目录但尚未接受
+    Then Work Agent 不获得任何报告命令能力
+    When 管理员接受该目录版本
+    And CertReporter 随后改变目录 digest
+    Then 下一 Turn 拒绝执行并显示目录变化
+    And 旧 Turn 继续引用原目录 digest
+
   Scenario: 受允许的报告更新得到真实回执
     Given 用户甲可编辑一个 Draft Report
     And Forge 已接受的能力目录包含 report.update-master

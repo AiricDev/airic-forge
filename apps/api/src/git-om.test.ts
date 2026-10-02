@@ -84,3 +84,31 @@ test("a second Proposal cannot merge after active HEAD advances", () => {
     assert.throws(() => om.adoptProposal(user.branch, user.worktree, second.branch, base, {}), /ActiveRevisionChanged/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("a conflicting Proposal rebase keeps conflict text for manual resolution", () => {
+  const root = mkdtempSync(join(tmpdir(), "airic-forge-rebase-"));
+  try {
+    const om = new GitOperatingModel(join(root, "project"), join(root, "data"), resolve(process.cwd(), "../../seed/project"));
+    om.initialize();
+    const user = om.ensureUserBranch("user-1");
+    const base = om.head(user.branch);
+    const first = om.createProposal("user-1", "conflict-first", base);
+    const second = om.createProposal("user-1", "conflict-second", base);
+    const path = "work-definitions/report-authoring/policy.md";
+    const original = om.proposalFile(first.worktree, path);
+    om.writeProposalFile(first.worktree, path, `${original}\nFirst rule.\n`);
+    om.writeProposalFile(second.worktree, path, `${original}\nSecond rule.\n`);
+    om.commitProposal(first.worktree, "First rule");
+    om.commitProposal(second.worktree, "Second rule");
+    const active = om.adoptProposal(user.branch, user.worktree, first.branch, base, {});
+    assert.throws(() => om.rebaseProposal(second.worktree, base, active), /ProposalRebaseConflict/);
+    assert.deepEqual(om.proposalConflicts(second.worktree), [path]);
+    assert.match(om.proposalFile(second.worktree, path), /<<<<<<< /);
+    om.writeProposalFile(second.worktree, path, `${om.document(active, path)}\nSecond rule.\n`);
+    om.rebaseProposal(second.worktree, base, active);
+    assert.deepEqual(om.proposalConflicts(second.worktree), []);
+    const adopted = om.adoptProposal(user.branch, user.worktree, second.branch, active, {});
+    assert.match(om.document(adopted, path), /First rule/);
+    assert.match(om.document(adopted, path), /Second rule/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

@@ -2,7 +2,7 @@
 
 > 状态：实施中；以 `airic-forge-prd.md`、`decisions/0001-p0-runtime-contract.md` 和已确认的 CertReporter P0 集成计划为基线。
 > 范围：单实例、单业务 App、多用户；先完成个人工作与学习闭环（P0），再完成组织协作与运行增强（P1）。  
-> 当前进度：阶段 0 契约基线与阶段 1 身份及 OM 基础已完成并记录验收；阶段 2–5 尚未通过阶段验收。见 `acceptance/stage-0-record.md` 和 `acceptance/stage-1-record.md`。
+> 当前进度：阶段 0–3 已完成并记录验收；阶段 4–5 尚未通过阶段验收。见 `acceptance/stage-0-record.md`、`acceptance/stage-1-record.md`、`acceptance/stage-2-record.md` 和 `acceptance/stage-3-record.md`。
 
 ## 当前推进位置
 
@@ -12,7 +12,9 @@
 | --- | --- | --- |
 | 0. 契约与迁移基线 | 已完成，见 acceptance/stage-0-record.md | 进入阶段 1；阶段 0 文档不替代后续运行验收 |
 | 1. 可部署的身份与 OM 基础 | 已完成，见 acceptance/stage-1-record.md | 进入阶段 2；真实 CertReporter Drawer 接入与业务命令尚未验收 |
-| 2–5 | 未开始阶段验收；已有部分支撑代码 | 按各阶段的完成证据逐项验收，不从代码存在推定阶段完成 |
+| 2. App 内完成可追溯的 Work | 已完成，见 acceptance/stage-2-record.md | 进入阶段 3；附件迁移与旧侧车退出仍需在 P0 交付前核对 |
+| 3. 个人 OM 编辑、提议与采纳 | 已完成，见 acceptance/stage-3-record.md | 进入阶段 4；Reflection 的真实学习闭环仍待验收 |
+| 4–5 | 未开始阶段验收；已有部分支撑代码 | 按各阶段的完成证据逐项验收，不从代码存在推定阶段完成 |
 
 ## 1. 要实现的行为
 
@@ -41,7 +43,7 @@
 | --- | --- | --- |
 | OM 文档格式 | 文档曾使用 `definition.md` 与 `work.yml` 两种示例 | 已定 `work.yml` 多文件 package，SK 独立于 `subject-knowledge/`；仍需补齐迁移与引用夹具 |
 | 个人 active 版本 | 曾同时描述显式 active 与 HEAD active | 已定个人分支 HEAD 即 active，外部提交下一 Turn 生效；Proposal 只在 base 等于 active HEAD 时可采纳 |
-| Proposal 与工作区 | 曾限制每用户一个未完成 Proposal | 已定每个 Proposal 独立分支与 worktree，可并行；仍需重启恢复与冲突验收 |
+| Proposal 与工作区 | 曾限制每用户一个未完成 Proposal | 已定每个 Proposal 独立分支与 worktree，可并行；阶段 3 已验证重启恢复和冲突处理 |
 | Work / Session / Reflection | 基数和恢复键曾未定 | 已定同一用户、Work Type、Report 页面恢复长期 Work/Session；每 Work 可多 Reflection，每 Reflection 至多一个 Proposal；API Suggestion 为可导出结果 |
 | 身份与权限 | Web 登录及 App 身份关联曾未定 | 已定规范化 Email 自动关联、首次访问建无密码账户、独立密码与短期 Web 会话；资源权限矩阵仍需补齐 |
 | App / ACP 契约 | 页面事实、Token 与命令恢复曾未统一 | 已定 CertReporter 真实业务 App、`report.context` 权威投影、ACP WebSocket、内存 App token 与按 `commandId` 查回执；可执行夹具见 API 契约测试 |

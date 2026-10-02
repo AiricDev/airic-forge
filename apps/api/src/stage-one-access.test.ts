@@ -32,6 +32,15 @@ test("two users are isolated; an admin can inspect without becoming the OM owner
     runtime.om.ensureUserBranch(user.id);
     assert.equal(runtime.db.setInitialPassword(user.id, hashPassword("stage-one-password")), true);
   }
+  const catalog = { id: "catalog-1", appId: "certreporter", domainRelease: "certreporter/v1", digest: "digest-1", acceptedAt: "", capabilities: [
+    { id: "report.context", kind: "query" as const, title: "Context", description: "", inputSchema: {}, outputSchema: {} },
+  ] };
+  runtime.db.saveCandidate(catalog, { paths: { "/airic/v1/queries/report.context": {} } });
+  runtime.db.accept("certreporter", catalog.digest, admin.id);
+  assert.equal(runtime.db.accepted("certreporter")?.digest, catalog.digest);
+  const bobWork = runtime.db.createWork(bob.id, "certreporter", "report-authoring", "report-bob");
+  const bobTurn = runtime.db.nextTurn(bobWork.id, runtime.om.head(`users/${bob.id}`), catalog.digest, "context-digest");
+  runtime.trajectories.append({ id: "event-bob", workId: bobWork.id, turnId: bobTurn.id, type: "turn.started", at: bobTurn.startedAt, payload: { omRevision: bobTurn.omRevision } });
   const app = buildServer(runtime);
   const login = async (email: string) => {
     const response = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { email, password: "stage-one-password" } });
@@ -46,11 +55,25 @@ test("two users are isolated; an admin can inspect without becoming the OM owner
     assert.ok(aliceOm.json().files.includes("work-definitions/report-authoring/work.yml"));
     assert.equal((await app.inject({ method: "GET", url: `/api/v1/om/users/${bob.id}`, headers: { cookie: aliceCookie } })).statusCode, 403);
     assert.equal((await app.inject({ method: "GET", url: "/api/v1/users", headers: { cookie: aliceCookie } })).statusCode, 403);
+    assert.equal((await app.inject({ method: "GET", url: `/api/v1/works/${bobWork.id}`, headers: { cookie: aliceCookie } })).statusCode, 403);
+    assert.equal((await app.inject({ method: "POST", url: "/api/v1/proposals", payload: { source: "manual", reason: "Check ownership" } })).statusCode, 401);
+    const createdProposal = await app.inject({ method: "POST", url: "/api/v1/proposals", headers: { cookie: aliceCookie }, payload: { source: "manual", reason: "Check ownership", evidence: "test" } });
+    assert.equal(createdProposal.statusCode, 201);
+    const proposalId = createdProposal.json().id as string;
+    const bobCookie = await login("bob@example.com");
+    assert.equal((await app.inject({ method: "GET", url: `/api/v1/users/${alice.id}/proposals`, headers: { cookie: bobCookie } })).statusCode, 403);
+    assert.equal((await app.inject({ method: "GET", url: `/api/v1/proposals/${proposalId}`, headers: { cookie: bobCookie } })).statusCode, 403);
+    assert.equal((await app.inject({ method: "PATCH", url: `/api/v1/proposals/${proposalId}/files`, headers: { cookie: bobCookie }, payload: { path: "work-definitions/report-authoring/policy.md", content: "bad" } })).statusCode, 403);
     const adminCookie = await login("admin@example.com");
     const inspected = await app.inject({ method: "GET", url: `/api/v1/om/users/${bob.id}`, headers: { cookie: adminCookie } });
     assert.equal(inspected.statusCode, 200);
     assert.equal(inspected.json().owner.id, bob.id);
     assert.equal((await app.inject({ method: "GET", url: "/api/v1/users", headers: { cookie: adminCookie } })).json().users.length, 3);
+    assert.equal((await app.inject({ method: "GET", url: `/api/v1/proposals/${proposalId}`, headers: { cookie: adminCookie } })).json().proposal.ownerUserId, alice.id);
+    const history = await app.inject({ method: "GET", url: `/api/v1/works/${bobWork.id}`, headers: { cookie: adminCookie } });
+    assert.equal(history.statusCode, 200);
+    assert.equal(history.json().work.ownerUserId, bob.id);
+    assert.equal(history.json().events[0].id, "event-bob");
     const revision = aliceOm.json().revision as string;
     await app.close(); runtime.db.close();
     const restarted = new ForgeRuntime(config);
@@ -58,6 +81,9 @@ test("two users are isolated; an admin can inspect without becoming the OM owner
       assert.equal(restarted.db.ensureUser("alice@example.com", false).id, alice.id);
       assert.equal(restarted.db.linkedUserId("certreporter", "app-alice"), alice.id);
       assert.equal(restarted.om.head(`users/${alice.id}`), revision);
+      assert.equal(restarted.db.accepted("certreporter")?.digest, catalog.digest);
+      assert.equal(restarted.db.work(bobWork.id)?.ownerUserId, bob.id);
+      assert.equal(restarted.trajectories.read(bobWork.id)[0]?.id, "event-bob");
     } finally { restarted.db.close(); }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

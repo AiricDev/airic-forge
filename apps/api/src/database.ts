@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { ForgeUser, ProposalRecord, ReflectionRecord, TurnRecord, UserRole, Work } from "@airic-forge/domain";
+import type { CapabilityCatalog, ForgeUser, ProposalRecord, ReflectionRecord, TurnRecord, UserRole, Work } from "@airic-forge/domain";
 import { id, normalizeEmail } from "./ids.js";
 
 export class ForgeDatabase {
@@ -75,17 +75,64 @@ export class ForgeDatabase {
       ) STRICT;
       CREATE TABLE IF NOT EXISTS proposals (
         id TEXT PRIMARY KEY,
-        work_id TEXT NOT NULL REFERENCES works(id),
-        reflection_id TEXT NOT NULL,
+        work_id TEXT REFERENCES works(id),
+        reflection_id TEXT,
         owner_user_id TEXT NOT NULL REFERENCES users(id),
         base_revision TEXT NOT NULL,
         branch_ref TEXT NOT NULL,
         worktree_path TEXT NOT NULL,
         status TEXT NOT NULL,
+        source TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        evidence TEXT NOT NULL,
+        reviewed_revision TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS catalog_candidates (
+        app_id TEXT NOT NULL,
+        digest TEXT NOT NULL,
+        catalog_json TEXT NOT NULL,
+        openapi_json TEXT NOT NULL,
+        imported_at TEXT NOT NULL,
+        PRIMARY KEY (app_id, digest)
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS accepted_catalogs (
+        app_id TEXT PRIMARY KEY,
+        digest TEXT NOT NULL,
+        accepted_by TEXT NOT NULL REFERENCES users(id),
+        accepted_at TEXT NOT NULL,
+        FOREIGN KEY (app_id, digest) REFERENCES catalog_candidates(app_id, digest)
+      ) STRICT;
     `);
+    const proposalColumns = this.#db.prepare("PRAGMA table_info(proposals)").all() as Array<{ name: string }>;
+    if (!proposalColumns.some((column) => column.name === "source")) {
+      this.#db.exec(`
+        BEGIN;
+        CREATE TABLE proposals_v2 (
+          id TEXT PRIMARY KEY,
+          work_id TEXT REFERENCES works(id),
+          reflection_id TEXT,
+          owner_user_id TEXT NOT NULL REFERENCES users(id),
+          base_revision TEXT NOT NULL,
+          branch_ref TEXT NOT NULL,
+          worktree_path TEXT NOT NULL,
+          status TEXT NOT NULL,
+          source TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          evidence TEXT NOT NULL,
+          reviewed_revision TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT;
+        INSERT INTO proposals_v2 SELECT id, work_id, reflection_id, owner_user_id, base_revision, branch_ref, worktree_path, status, 'reflection', '', '', NULL, created_at, updated_at FROM proposals;
+        DROP TABLE proposals;
+        ALTER TABLE proposals_v2 RENAME TO proposals;
+        COMMIT;
+      `);
+    }
+    const upgradedColumns = this.#db.prepare("PRAGMA table_info(proposals)").all() as Array<{ name: string }>;
+    if (!upgradedColumns.some((column) => column.name === "reviewed_revision")) this.#db.exec("ALTER TABLE proposals ADD COLUMN reviewed_revision TEXT");
   }
 
   ensureUser(email: string, isInitialAdmin: boolean): ForgeUser {
@@ -133,9 +180,51 @@ export class ForgeDatabase {
 
   setInitialPassword(userId: string, passwordHash: string): boolean { return this.#db.prepare("UPDATE users SET password_hash=? WHERE id=? AND password_hash IS NULL").run(passwordHash, userId).changes === 1; }
 
+  saveCandidate(catalog: CapabilityCatalog, openApi: Record<string, unknown>): void {
+    const serialized = JSON.stringify({ ...catalog, acceptedAt: "" });
+    const existing = this.#db.prepare("SELECT catalog_json FROM catalog_candidates WHERE app_id=? AND digest=?").get(catalog.appId, catalog.digest) as { catalog_json: string } | undefined;
+    if (existing && existing.catalog_json !== serialized) throw new Error("CatalogDigestCollision");
+    this.#db.prepare("INSERT OR IGNORE INTO catalog_candidates (app_id, digest, catalog_json, openapi_json, imported_at) VALUES (?, ?, ?, ?, ?)")
+      .run(catalog.appId, catalog.digest, serialized, JSON.stringify(openApi), new Date().toISOString());
+  }
+
+  candidate(appId: string, digest: string): CapabilityCatalog | undefined {
+    const row = this.#db.prepare("SELECT catalog_json FROM catalog_candidates WHERE app_id=? AND digest=?").get(appId, digest) as { catalog_json: string } | undefined;
+    return row ? JSON.parse(row.catalog_json) as CapabilityCatalog : undefined;
+  }
+
+  accept(appId: string, digest: string, acceptedBy: string): void {
+    if (!this.candidate(appId, digest)) throw new Error("CatalogCandidateNotFound");
+    this.#db.prepare(`INSERT INTO accepted_catalogs (app_id, digest, accepted_by, accepted_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(app_id) DO UPDATE SET digest=excluded.digest, accepted_by=excluded.accepted_by, accepted_at=excluded.accepted_at`)
+      .run(appId, digest, acceptedBy, new Date().toISOString());
+  }
+
+  accepted(appId: string): CapabilityCatalog | undefined {
+    const row = this.#db.prepare("SELECT c.catalog_json, a.accepted_at FROM accepted_catalogs a JOIN catalog_candidates c ON c.app_id=a.app_id AND c.digest=a.digest WHERE a.app_id=?")
+      .get(appId) as { catalog_json: string; accepted_at: string } | undefined;
+    return row ? { ...(JSON.parse(row.catalog_json) as CapabilityCatalog), acceptedAt: row.accepted_at } : undefined;
+  }
+
   userForWork(workId: string): string | undefined {
     const row = this.#db.prepare("SELECT owner_user_id FROM works WHERE id=?").get(workId) as { owner_user_id?: string } | undefined;
     return row?.owner_user_id;
+  }
+
+  worksForUser(ownerUserId: string): Work[] {
+    return (this.#db.prepare("SELECT * FROM works WHERE owner_user_id=? ORDER BY updated_at DESC").all(ownerUserId) as Record<string, unknown>[]).map((row) => this.#work(row));
+  }
+
+  work(workId: string): Work | undefined {
+    const row = this.#db.prepare("SELECT * FROM works WHERE id=?").get(workId) as Record<string, unknown> | undefined;
+    return row ? this.#work(row) : undefined;
+  }
+
+  turnsForWork(workId: string): TurnRecord[] {
+    return (this.#db.prepare("SELECT * FROM turns WHERE work_id=? ORDER BY sequence").all(workId) as Record<string, unknown>[]).map((row) => ({
+      id: String(row.id), workId: String(row.work_id), sequence: Number(row.sequence), status: String(row.status),
+      omRevision: String(row.om_revision), catalogDigest: String(row.catalog_digest), contextDigest: String(row.context_digest), startedAt: String(row.started_at),
+    }));
   }
 
   activeWork(ownerUserId: string, appId: string, workType: string, entityId: string): Work | undefined {
@@ -173,15 +262,18 @@ export class ForgeDatabase {
   }
 
   createProposal(input: ProposalRecord): ProposalRecord {
-    const now = new Date().toISOString(); const proposal = { id: input.id, work_id: input.workId, reflection_id: input.reflectionId, owner_user_id: input.ownerUserId, base_revision: input.baseRevision, branch_ref: input.branchRef, worktree_path: input.worktreePath, status: input.status, created_at: now, updated_at: now };
-    this.#db.prepare("INSERT INTO proposals (id, work_id, reflection_id, owner_user_id, base_revision, branch_ref, worktree_path, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(proposal.id, proposal.work_id, proposal.reflection_id, proposal.owner_user_id, proposal.base_revision, proposal.branch_ref, proposal.worktree_path, proposal.status, proposal.created_at, proposal.updated_at);
+    const now = new Date().toISOString(); const proposal = { id: input.id, work_id: input.workId ?? null, reflection_id: input.reflectionId ?? null, owner_user_id: input.ownerUserId, base_revision: input.baseRevision, branch_ref: input.branchRef, worktree_path: input.worktreePath, status: input.status, source: input.source, reason: input.reason, evidence: input.evidence, reviewed_revision: input.reviewedRevision ?? null, created_at: now, updated_at: now };
+    this.#db.prepare("INSERT INTO proposals (id, work_id, reflection_id, owner_user_id, base_revision, branch_ref, worktree_path, status, source, reason, evidence, reviewed_revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(...Object.values(proposal));
     return input;
   }
 
   proposal(proposalId: string): ProposalRecord | undefined { const row = this.#db.prepare("SELECT * FROM proposals WHERE id=?").get(proposalId) as Record<string, unknown> | undefined; return row ? this.#proposal(row) : undefined; }
+  proposalsForUser(ownerUserId: string): ProposalRecord[] { return (this.#db.prepare("SELECT * FROM proposals WHERE owner_user_id=? ORDER BY created_at DESC").all(ownerUserId) as Record<string, unknown>[]).map((row) => this.#proposal(row)); }
+  updateProposalBase(proposalId: string, baseRevision: string): void { this.#db.prepare("UPDATE proposals SET base_revision=?, reviewed_revision=NULL, updated_at=? WHERE id=? AND status='open'").run(baseRevision, new Date().toISOString(), proposalId); }
+  setProposalReview(proposalId: string, revision: string | undefined): void { this.#db.prepare("UPDATE proposals SET reviewed_revision=?, updated_at=? WHERE id=? AND status='open'").run(revision ?? null, new Date().toISOString(), proposalId); }
   adoptProposal(proposalId: string): void { this.#db.prepare("UPDATE proposals SET status='adopted', updated_at=? WHERE id=?").run(new Date().toISOString(), proposalId); }
 
   #user(row: Record<string, unknown>): ForgeUser { return { id: String(row.id), email: String(row.email), role: row.role as UserRole, passwordConfigured: typeof row.password_hash === "string", activeBranch: String(row.active_branch), createdAt: String(row.created_at) }; }
   #work(row: Record<string, unknown>): Work { return { id: String(row.id), ownerUserId: String(row.owner_user_id), appId: "certreporter", workType: "report-authoring", entityId: String(row.entity_id), status: row.status === "completed" ? "completed" : "active", createdAt: String(row.created_at), updatedAt: String(row.updated_at) }; }
-  #proposal(row: Record<string, unknown>): ProposalRecord { return { id: String(row.id), reflectionId: String(row.reflection_id), workId: String(row.work_id), ownerUserId: String(row.owner_user_id), baseRevision: String(row.base_revision), branchRef: String(row.branch_ref), worktreePath: String(row.worktree_path), status: String(row.status) }; }
+  #proposal(row: Record<string, unknown>): ProposalRecord { return { id: String(row.id), ...(row.reflection_id == null ? {} : { reflectionId: String(row.reflection_id) }), ...(row.work_id == null ? {} : { workId: String(row.work_id) }), ownerUserId: String(row.owner_user_id), baseRevision: String(row.base_revision), branchRef: String(row.branch_ref), worktreePath: String(row.worktree_path), status: String(row.status), source: String(row.source), reason: String(row.reason), evidence: String(row.evidence), ...(row.reviewed_revision == null ? {} : { reviewedRevision: String(row.reviewed_revision) }) }; }
 }

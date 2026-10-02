@@ -30,7 +30,7 @@ async function fixture() {
         { id: "report.update-master", kind: "command", title: "Update", description: "", inputSchema: {}, outputSchema: {} },
       ] }); return;
     }
-    if (req.method === "GET" && path === "/airic/v1/openapi") { send(res, 200, { openapi: "3.1.0", paths: { "/airic/v1/commands/report.update-master": { post: { operationId: "report.update-master" } } } }); return; }
+    if (req.method === "GET" && path === "/airic/v1/openapi") { send(res, 200, { openapi: "3.1.0", paths: { "/airic/v1/queries/report.context": { post: { operationId: "report.context" } }, "/airic/v1/commands/report.update-master": { post: { operationId: "report.update-master" } } } }); return; }
     if (req.method === "POST" && path === "/airic/v1/queries/report.context") {
       const request = await body(req); const input = request.input as Record<string, unknown>;
       if (request.expectedDomainRelease !== "certreporter/v1" || input?.reportId !== REPORT) { send(res, 403, { error: "ReportNotAccessible" }); return; }
@@ -73,7 +73,10 @@ test("CertReporter contract: identity, catalog, OpenAPI and authoritative report
   const app = await fixture();
   try {
     assert.equal((await app.client.identity(TOKEN)).email, "user@example.com");
-    assert.equal((await app.client.catalog(TOKEN)).digest, "catalog-digest-1");
+    const catalog = await app.client.catalog(TOKEN);
+    assert.match(catalog.digest, /^[a-f0-9]{64}$/);
+    assert.equal(catalog.digest, (await app.client.catalog(TOKEN)).digest);
+    assert.notEqual(catalog.digest, "catalog-digest-1");
     assert.equal((await app.client.openApi(TOKEN)).openapi, "3.1.0");
     const selection = { scope: "report" };
     const context = await app.client.reportContext(TOKEN, REPORT, selection);
@@ -89,7 +92,7 @@ test("CertReporter contract: lost command response recovers by commandId without
   try {
     const command = { commandId: "lost-response", workId: "work-1", actionId: "action-1", expectedDomainRelease: "certreporter/v1", input: { reportId: REPORT, fields: { project_name: "Updated" }, expectedRevision: 3 } };
     await assert.rejects(() => app.client.command(TOKEN, "report.update-master", command));
-    assert.equal((await app.client.receipt(TOKEN, "lost-response")).status, "committed");
+    assert.equal((await app.client.receipt(TOKEN, "lost-response"))?.status, "committed");
     assert.equal(app.executions(), 1);
     app.revoke();
     await assert.rejects(() => app.client.receipt(TOKEN, "lost-response"), /401/);

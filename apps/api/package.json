@@ -11,8 +11,11 @@
   },
   "dependencies": {
     "@airic-forge/domain": "workspace:*",
+    "@earendil-works/pi-ai": "0.99.2",
+    "@earendil-works/pi-coding-agent": "0.99.2",
     "@fastify/cors": "^11.1.0",
     "@fastify/websocket": "^11.2.0",
+    "@sinclair/typebox": "0.34.47",
     "fastify": "^5.5.0",
     "yaml": "^2.8.1"
   },

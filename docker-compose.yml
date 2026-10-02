@@ -11,7 +11,12 @@ services:
       FORGE_WEB_DIST_DIR: /app/prototype/dist
       FORGE_CERTREPORTER_URL: ${FORGE_CERTREPORTER_URL:-http://host.docker.internal:8000}
       FORGE_ALLOWED_ORIGIN: ${FORGE_ALLOWED_ORIGIN:-http://localhost:5173}
+      FORGE_PUBLIC_URL: ${FORGE_PUBLIC_URL:-http://127.0.0.1:4175}
       FORGE_INITIAL_ADMIN_EMAILS: ${FORGE_INITIAL_ADMIN_EMAILS:-}
+      FORGE_MODEL_PROVIDER: ${FORGE_MODEL_PROVIDER:-${AIRIC_PROVIDER:-}}
+      FORGE_MODEL_ID: ${FORGE_MODEL_ID:-${AIRIC_MODEL:-}}
+      FORGE_MODEL_API_KEY: ${FORGE_MODEL_API_KEY:-${AIRIC_API_KEY:-}}
+      FORGE_MODEL_BASE_URL: ${FORGE_MODEL_BASE_URL:-${AIRIC_API_ENDPOINT:-}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

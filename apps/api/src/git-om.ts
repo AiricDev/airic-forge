@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { parse } from "yaml";
@@ -38,6 +38,19 @@ export class GitOperatingModel {
   listFiles(revision: string): string[] {
     return run(this.projectDir, ["ls-tree", "-r", "--name-only", revision, "work-definitions", "subject-knowledge"])
       .split("\n").filter((path) => /^(work-definitions\/[a-z0-9-]+\/(?:work\.yml|[a-z0-9-]+\.md)|subject-knowledge\/[a-z0-9-]+\.md)$/.test(path));
+  }
+
+  history(branch: string): Array<{ revision: string; subject: string; at: string }> {
+    return run(this.projectDir, ["log", "--first-parent", "--max-count=50", "--date=iso-strict", "--pretty=format:%H%x1f%s%x1f%aI", branch])
+      .split("\n").filter(Boolean).map((line) => {
+        const [revision, subject, at] = line.split("\x1f");
+        return { revision, subject, at };
+      });
+  }
+
+  containsRevision(branch: string, revision: string): boolean {
+    if (!/^[0-9a-f]{40}$/.test(revision)) return false;
+    return run(this.projectDir, ["rev-list", "--first-parent", branch]).split("\n").includes(revision);
   }
 
   workDefinition(revision: string, id: string): WorkDefinition {
@@ -105,6 +118,33 @@ export class GitOperatingModel {
     return result.stdout.split("\n").filter(Boolean).map((line) => line.slice(3));
   }
 
+  proposalChangedPaths(worktree: string, baseRevision: string): string[] {
+    const committed = run(worktree, ["diff", "--name-only", baseRevision]);
+    return [...new Set([...committed.split("\n").filter(Boolean), ...this.proposalChanges(worktree)])];
+  }
+
+  proposalConflicts(worktree: string): string[] {
+    return run(worktree, ["diff", "--name-only", "--diff-filter=U"]).split("\n").filter(Boolean);
+  }
+
+  proposalFile(worktree: string, path: string): string {
+    if (!isAllowedProposalPath(path)) throw new Error("ProposalPathNotAllowed");
+    const destination = resolve(worktree, path);
+    if (!destination.startsWith(`${resolve(worktree)}/`)) throw new Error("ProposalPathNotAllowed");
+    return readFileSync(destination, "utf8");
+  }
+
+  proposalDiff(worktree: string, baseRevision: string): string {
+    const tracked = run(worktree, ["diff", "--no-ext-diff", baseRevision, "--", "work-definitions", "subject-knowledge"]);
+    const untracked = run(worktree, ["ls-files", "--others", "--exclude-standard"]).split("\n").filter(Boolean);
+    const additions = untracked.map((path) => {
+      if (!isAllowedProposalPath(path)) return `Invalid path: ${path}`;
+      const content = this.proposalFile(worktree, path).split("\n").map((line) => `+${line}`).join("\n");
+      return `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n${content}`;
+    });
+    return [tracked, ...additions].filter(Boolean).join("\n");
+  }
+
   writeProposalFile(worktree: string, path: string, content: string): void {
     if (!isAllowedProposalPath(path)) throw new Error("ProposalPathNotAllowed");
     const destination = resolve(worktree, path);
@@ -117,11 +157,35 @@ export class GitOperatingModel {
     run(worktree, ["add", "."]); run(worktree, ["-c", "user.name=AiricForge", "-c", "user.email=forge@localhost", "commit", "-m", title]);
   }
 
+  rebaseProposal(worktree: string, oldBase: string, newBase: string): void {
+    const rebasePath = run(worktree, ["rev-parse", "--git-path", "rebase-merge"]);
+    const applyPath = run(worktree, ["rev-parse", "--git-path", "rebase-apply"]);
+    const inProgress = existsSync(resolve(worktree, rebasePath)) || existsSync(resolve(worktree, applyPath));
+    if (inProgress) {
+      const ontoPath = resolve(worktree, rebasePath, "onto");
+      if (existsSync(ontoPath) && readFileSync(ontoPath, "utf8").trim() !== newBase) throw new Error("ActiveRevisionChangedDuringRebase");
+      const conflicts = this.proposalConflicts(worktree);
+      for (const path of conflicts) {
+        if (!isAllowedProposalPath(path)) throw new Error("ProposalPathNotAllowed");
+        if (/^(<<<<<<< |=======\s*$|>>>>>>> )/m.test(this.proposalFile(worktree, path))) throw new Error(`ProposalRebaseConflict: resolve ${path} before continuing`);
+      }
+      if (this.proposalChanges(worktree).some((path) => !isAllowedProposalPath(path))) throw new Error("ProposalPathNotAllowed");
+      run(worktree, ["add", "-A"]);
+      const continued = spawnSync("git", ["-c", "user.name=AiricForge", "-c", "user.email=forge@localhost", "-c", "core.editor=true", "rebase", "--continue"], { cwd: worktree, encoding: "utf8", env: { ...process.env, GIT_EDITOR: "true" } });
+      if (continued.status !== 0) throw new Error(`ProposalRebaseConflict: ${continued.stderr.trim() || continued.stdout.trim()}`);
+      return;
+    }
+    if (this.proposalChanges(worktree).length) this.commitProposal(worktree, "Save Proposal before rebase");
+    const result = spawnSync("git", ["-c", "user.name=AiricForge", "-c", "user.email=forge@localhost", "rebase", "--onto", newBase, oldBase], { cwd: worktree, encoding: "utf8" });
+    if (result.status !== 0) throw new Error(`ProposalRebaseConflict: ${result.stderr.trim() || result.stdout.trim()}`);
+  }
+
   adoptProposal(userBranch: string, userWorktree: string, proposalBranch: string, baseRevision: string, trailers: Record<string, string>): string {
     const active = this.head(userBranch);
     if (active !== baseRevision) throw new Error("ActiveRevisionChanged");
     const message = ["Adopt AiricForge Proposal", "", ...Object.entries(trailers).map(([key, value]) => `${key}: ${value}`)];
-    run(userWorktree, ["merge", "--no-ff", proposalBranch, "-m", message.join("\n")]);
+    try { run(userWorktree, ["-c", "user.name=AiricForge", "-c", "user.email=forge@localhost", "merge", "--no-ff", proposalBranch, "-m", message.join("\n")]); }
+    catch (error) { spawnSync("git", ["merge", "--abort"], { cwd: userWorktree, encoding: "utf8" }); throw error; }
     return this.head(userBranch);
   }
 }
