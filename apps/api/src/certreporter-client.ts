@@ -17,6 +17,10 @@ export class CertReporterClient {
     return this.#request("/airic/v1/queries/report.context", token, { expectedDomainRelease: "certreporter/v1", input: { reportId, selection } }) as Promise<Json>;
   }
 
+  async reportTypeContext(token: string, reportTypeId: string, selection?: Record<string, unknown>): Promise<Json> {
+    return this.#request("/airic/v1/queries/report-type.context", token, { expectedDomainRelease: "certreporter/v1", input: { reportTypeId, selection } }) as Promise<Json>;
+  }
+
   async catalog(token: string): Promise<CapabilityCatalog> {
     const manifest = await this.#request("/airic/v1/manifest", token) as Json;
     const capabilities = Array.isArray(manifest.capabilities) ? manifest.capabilities : [];

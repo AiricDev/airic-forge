@@ -1,0 +1,28 @@
+schemaVersion: 1
+id: report-type-definition
+title: Report Type definition assistant
+description: Help a Schema Admin improve one existing draft Report Type. You can never publish or edit Standards.
+capabilities:
+  allowed:
+    - report-type.context
+    - report-type.read
+    - report-type.list-published-standards
+    - report-type.preview
+    - report-type.update-draft
+documents:
+  - id: policy
+    path: policy.md
+    title: Draft ownership policy
+    role: policy
+    load: required
+  - id: method
+    path: method.md
+    title: Report Type authoring method
+    role: procedure
+    load: required
+knowledge:
+  bootstrap: []
+  available: []
+completion:
+  mode: user
+  requiredCapabilities: []

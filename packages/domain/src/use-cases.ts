@@ -1,38 +1,40 @@
 import { isAllowedProposalPath, validateWorkDefinition } from "./operating-model.js";
-import type { AccountPort, AgentRunnerPort, AppSessionPort, CatalogPort, CertReporterPort, OperatingModelPort, PasswordCodecPort, PasswordSetupPort, ProposalRecord, ReflectionAgentPort, ReflectionLens, ReflectionRecord, SessionGrant, SystemPort, TrajectoryPort, WorkPort, WorkAgentTool } from "./ports.js";
+import type { AccountPort, AgentRunnerPort, AppSessionPort, CatalogPort, CertReporterPort, EvidenceExtractorPort, EvidenceSessionPort, OperatingModelPort, PasswordCodecPort, PasswordSetupPort, ProposalRecord, ReflectionAgentPort, ReflectionLens, ReflectionRecord, SessionGrant, SystemPort, TrajectoryPort, WorkPort, WorkAgentTool } from "./ports.js";
 
 const lenses = new Set(["domain-knowledge", "delegation-gap", "api-suggestion"]);
 
 export class ForgeUseCases {
   private readonly runningWorks = new Set<string>();
   private readonly runningReflections = new Set<string>();
-  constructor(private readonly ports: { accounts: AccountPort; works: WorkPort; om: OperatingModelPort; certReporter: CertReporterPort; catalogs: CatalogPort; agents: AgentRunnerPort; reflectionAgent?: ReflectionAgentPort; sessions: AppSessionPort; passwordSetups: PasswordSetupPort; passwordCodec: PasswordCodecPort; trajectories: TrajectoryPort; system: SystemPort; initialAdminEmails: Set<string>; }) {}
+  constructor(private readonly ports: { accounts: AccountPort; works: WorkPort; om: OperatingModelPort; certReporter: CertReporterPort; catalogs: CatalogPort; agents: AgentRunnerPort; reflectionAgent?: ReflectionAgentPort; sessions: AppSessionPort; evidenceExtractor?: EvidenceExtractorPort; evidenceSessions?: EvidenceSessionPort; passwordSetups: PasswordSetupPort; passwordCodec: PasswordCodecPort; trajectories: TrajectoryPort; system: SystemPort; initialAdminEmails: Set<string>; }) {}
 
-  async bootstrap(input: { token: string; reportId: string; selection?: Record<string, unknown> }) {
+  async bootstrap(input: { token: string; reportId?: string; entityId?: string; workType?: "report-authoring" | "report-type-definition"; selection?: Record<string, unknown> }) {
+    const workType = input.workType ?? "report-authoring";
+    const entityId = input.entityId ?? input.reportId;
+    if (!entityId || !["report-authoring", "report-type-definition"].includes(workType)) throw new Error("UnsupportedAppContext");
     const identity = await this.ports.certReporter.identity(input.token);
     const email = identity.email.trim().toLowerCase();
-    const context = await this.ports.certReporter.reportContext(input.token, input.reportId, input.selection);
-    const resource = context.resource as Record<string, unknown> | undefined;
-    if (resource?.namespace !== "certreporter" || resource.resourceType !== "report" || resource.resourceId !== input.reportId) throw new Error("InvalidReportContext");
+    const context = await this.authoritativeContext(input.token, workType, entityId, input.selection);
+    this.assertContextTarget(context, workType, entityId);
     const linkedUserId = await this.ports.accounts.linkedUserId(identity.appId, identity.appUserId);
     const matchedUser = await this.ports.accounts.userByEmail(email);
     if (linkedUserId && matchedUser?.id !== linkedUserId) throw new Error("AppIdentityEmailConflict");
     const user = await this.ports.accounts.ensureUser(email, this.ports.initialAdminEmails.has(email));
     const branch = await this.ports.om.ensureUserBranch(user.id);
     await this.ports.accounts.recordAppIdentity(identity.appId, identity.appUserId, user.id, email);
-    const work = await this.ports.works.activeWork(user.id, identity.appId, "report-authoring", input.reportId)
-      ?? await this.ports.works.createWork(user.id, identity.appId, "report-authoring", input.reportId);
+    const work = await this.ports.works.activeWork(user.id, identity.appId, workType, entityId)
+      ?? await this.ports.works.createWork(user.id, identity.appId, workType, entityId);
     const session = await this.ports.works.createOrTouchSession(work.id);
     const ticket = this.ports.system.id("acp");
     const expiresAt = new Date(Date.parse(this.ports.system.now()) + 5 * 60_000).toISOString();
-    await this.ports.sessions.put({ ticket, expiresAt, forgeUserId: user.id, workId: work.id, sessionId: session.id, appToken: input.token, reportId: input.reportId, selection: input.selection });
+    await this.ports.sessions.put({ ticket, expiresAt, forgeUserId: user.id, workId: work.id, sessionId: session.id, appToken: input.token, reportId: workType === "report-authoring" ? entityId : "", workType, entityId, selection: input.selection });
     const passwordSetupTicket = user.passwordConfigured ? undefined : await this.ports.passwordSetups.issue(user.id, expiresAt);
     return { user, work, session, ticket, expiresAt, activeRevision: await this.ports.om.head(branch.branch), passwordSetupRequired: !user.passwordConfigured, passwordSetupTicket };
   }
 
   async appSession(ticket: string): Promise<SessionGrant> {
     const session = await this.ports.sessions.get(ticket);
-    if (!session || Date.parse(session.expiresAt) < Date.parse(this.ports.system.now())) { await this.ports.sessions.remove(ticket); throw new Error("AppSessionExpired"); }
+    if (!session || Date.parse(session.expiresAt) < Date.parse(this.ports.system.now())) { await this.ports.evidenceSessions?.clear(ticket); await this.ports.sessions.remove(ticket); throw new Error("AppSessionExpired"); }
     return session;
   }
 
@@ -42,7 +44,16 @@ export class ForgeUseCases {
     return session;
   }
 
-  async disconnectAcp(ticket: string): Promise<void> { await this.ports.sessions.remove(ticket); }
+  async disconnectAcp(ticket: string): Promise<void> { await this.ports.evidenceSessions?.clear(ticket); await this.ports.sessions.remove(ticket); }
+
+  async attachEvidence(ticket: string, filename: string, mediaType: string, content: Uint8Array) {
+    const session = await this.appSession(ticket);
+    await this.assertActiveWork(session);
+    if (!this.ports.evidenceExtractor || !this.ports.evidenceSessions) throw new Error("EvidenceNotConfigured");
+    const extracted = await this.ports.evidenceExtractor.extract(filename, mediaType, content);
+    await this.ports.evidenceSessions.put(ticket, extracted);
+    return { digest: extracted.digest, filename: extracted.filename, extraction: { characters: extracted.text.length, warnings: extracted.warnings } };
+  }
 
   async importCatalog(ticket: string) {
     const session = await this.appSession(ticket);
@@ -63,9 +74,11 @@ export class ForgeUseCases {
     return candidate;
   }
 
-  async startTurn(ticket: string, userMessage: string, onText?: (text: string) => void) {
+  async startTurn(ticket: string, userMessage: string, onText?: (text: string) => void, evidenceDigests: string[] = []) {
     const session = await this.appSession(ticket);
     await this.assertActiveWork(session);
+    const workType = session.workType ?? "report-authoring";
+    const entityId = session.entityId ?? session.reportId;
     if (this.runningWorks.has(session.workId)) throw new Error("WorkTurnAlreadyRunning");
     this.runningWorks.add(session.workId);
     try {
@@ -73,12 +86,12 @@ export class ForgeUseCases {
     if (!userId) throw new Error("WorkNotFound");
     const revision = await this.ports.om.head(`users/${userId}`);
     const [catalog, currentCatalog, definition, context] = await Promise.all([
-      this.ports.catalogs.accepted("certreporter"), this.ports.certReporter.catalog(session.appToken), this.ports.om.workDefinition(revision, "report-authoring"), this.ports.certReporter.reportContext(session.appToken, session.reportId, session.selection),
+      this.ports.catalogs.accepted("certreporter"), this.ports.certReporter.catalog(session.appToken), this.ports.om.workDefinition(revision, workType), this.authoritativeContext(session.appToken, workType, entityId, session.selection),
     ]);
     if (!catalog) throw new Error("CapabilityCatalogNotAccepted");
     if (catalog.digest !== currentCatalog.digest) throw new Error("CapabilityCatalogChanged");
-    const resource = context.resource as Record<string, unknown> | undefined;
-    if (resource?.namespace !== "certreporter" || resource.resourceType !== "report" || resource.resourceId !== session.reportId) throw new Error("InvalidReportContext");
+    this.assertContextTarget(context, workType, entityId);
+    const resource = context.resource as Record<string, unknown>;
     const issues = validateWorkDefinition(definition, new Set(catalog.capabilities.map((capability) => capability.id)), await this.ports.om.knownKnowledge(revision));
     if (issues.length) throw new Error(`InvalidOperatingModel: ${issues.map((issue) => `${issue.path} ${issue.message}`).join("; ")}`);
     const documents = await Promise.all([
@@ -88,18 +101,24 @@ export class ForgeUseCases {
     const turn = await this.ports.works.nextTurn(session.workId, revision, catalog.digest, this.ports.system.digest(context));
     await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId, turnId: turn.id, type: "turn.started", at: turn.startedAt, payload: { omRevision: revision, catalogDigest: catalog.digest, userMessage } });
     await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId, turnId: turn.id, type: "context.assembled", at: this.ports.system.now(), payload: { contextDigest: this.ports.system.digest(context), documents: documents.map(({ content: _, ...provenance }) => provenance) } });
-    let unresolvedCommand = this.unresolvedCommands(await this.ports.trajectories.read(session.workId)).length > 0;
-    const tools: WorkAgentTool[] = catalog.capabilities.filter((capability) => definition.capabilities.allowed.includes(capability.id)).map((capability) => ({
+    const priorEvents = await this.ports.trajectories.read(session.workId);
+    let unresolvedCommand = this.unresolvedCommands(priorEvents).length > 0;
+    const conversation = priorEvents.filter((event) => event.turnId !== turn.id && (event.type === "turn.started" || event.type === "turn.completed"))
+      .slice(-12).map((event) => ({ role: event.type === "turn.started" ? "user" as const : "agent" as const, text: String(event.type === "turn.started" ? event.payload.userMessage ?? "" : event.payload.text ?? "") }));
+    const allowedPrefix = workType === "report-authoring" ? "report." : "report-type.";
+    const tools: WorkAgentTool[] = catalog.capabilities.filter((capability) => capability.id.startsWith(allowedPrefix) && definition.capabilities.allowed.includes(capability.id)).map((capability) => ({
       capability,
       invoke: async (input) => {
-        if (input.reportId !== session.reportId) throw new Error("CommandTargetMismatch");
+        if (capability.id !== "report-type.list-published-standards" && input[workType === "report-authoring" ? "reportId" : "reportTypeId"] !== entityId) throw new Error("CommandTargetMismatch");
         if (capability.kind === "query") return this.ports.certReporter.query(session.appToken, capability.id, input);
         if (unresolvedCommand) throw new Error("UnresolvedCommandBlocksFurtherWrites");
-        const expectedRevision = Number(resource.revision);
-        if (!Number.isInteger(expectedRevision) || input.expectedRevision !== expectedRevision) throw new Error("ExpectedRevisionMismatch");
+        const expectedRevision = workType === "report-authoring" ? Number(resource.revision) : undefined;
+        const expectedContentDigest = workType === "report-type-definition" ? String(resource.contentDigest ?? "") : undefined;
+        if (workType === "report-authoring" && (!Number.isInteger(expectedRevision) || input.expectedRevision !== expectedRevision)) throw new Error("ExpectedRevisionMismatch");
+        if (workType === "report-type-definition" && (!expectedContentDigest || input.expectedContentDigest !== expectedContentDigest)) throw new Error("ExpectedContentDigestMismatch");
         const actionId = this.ports.system.id("act");
         const commandId = this.ports.system.id("cmd");
-        await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId, turnId: turn.id, type: "action", at: this.ports.system.now(), payload: { actionId, commandId, capabilityId: capability.id, status: "pending", reportId: session.reportId, expectedRevision } });
+        await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId, turnId: turn.id, type: "action", at: this.ports.system.now(), payload: { actionId, commandId, capabilityId: capability.id, status: "pending", entityId, ...(expectedRevision === undefined ? { expectedContentDigest } : { expectedRevision }) } });
         let outcome = await this.ports.certReporter.submitCommand(session.appToken, capability.id, { commandId, actionId, workId: session.workId, expectedDomainRelease: catalog.domainRelease, input });
         if (outcome.status === "unknown") {
           try {
@@ -113,11 +132,15 @@ export class ForgeUseCases {
       },
     }));
     try {
+      if (evidenceDigests.length > 3 || new Set(evidenceDigests).size !== evidenceDigests.length) throw new Error("InvalidEvidenceSelection");
+      const evidence = evidenceDigests.length ? await this.ports.evidenceSessions?.take(ticket, evidenceDigests) : [];
+      if (evidenceDigests.length && (!evidence || evidence.length !== evidenceDigests.length)) throw new Error("EvidenceNotAvailable");
+      for (const item of evidence ?? []) await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId, turnId: turn.id, type: "message", at: this.ports.system.now(), payload: { evidence: { filename: item.filename, digest: item.digest, characters: item.text.length, warnings: item.warnings } } });
       const available = new Map([
         ...definition.documents.filter((document) => document.load === "on-demand").map((document) => [document.id, `work-definitions/${definition.id}/${document.path}`] as const),
         ...definition.knowledge.available.map((id) => [id, `subject-knowledge/${id}.md`] as const),
       ]);
-      const result = await this.ports.agents.runWork({ sessionId: session.sessionId, userMessage, context, documents: documents.map(({ id, content }) => ({ id, content })), availableDocumentIds: [...available.keys()], loadDocument: async (id) => {
+      const result = await this.ports.agents.runWork({ sessionId: session.sessionId, userMessage, conversation, context, documents: documents.map(({ id, content }) => ({ id, content })), evidence: (evidence ?? []).map(({ filename, digest, text }) => ({ filename, digest, text })), availableDocumentIds: [...available.keys()], loadDocument: async (id) => {
         const path = available.get(id);
         if (!path) throw new Error("DocumentNotAvailable");
         const content = await this.ports.om.document(revision, path);
@@ -197,15 +220,17 @@ export class ForgeUseCases {
       }
       if (!this.ports.reflectionAgent) throw new Error("ReflectionAgentNotConfigured");
       const existing = await this.ports.works.proposalForReflection(reflectionId);
+      const sourceWork = await this.ports.works.work(reflection.workId);
+      if (!sourceWork) throw new Error("WorkNotFound");
       const files = await this.ports.om.listFiles(reflection.omRevision);
-      const relevant = files.filter((path) => path.startsWith("work-definitions/report-authoring/") || path.startsWith("subject-knowledge/"));
+      const relevant = files.filter((path) => path.startsWith(`work-definitions/${sourceWork.workType}/`) || path.startsWith("subject-knowledge/"));
       const documents = await Promise.all(relevant.map(async (path) => ({ path, content: await this.ports.om.document(reflection.omRevision, path) })));
       const lens: ReflectionLens = { id: reflection.lensId as ReflectionLens["id"], version: reflection.lensVersion, enabled: true, prompt: reflection.lensPrompt };
       const result = await this.ports.reflectionAgent.analyze({ reflectionId, lens, question: message.trim(), messages: await this.ports.works.reflectionMessages(reflectionId), evidence: selected as NonNullable<typeof selected[number]>[], omRevision: reflection.omRevision, documents });
       if (!result.analysis.trim() || !Array.isArray(result.citedEventIds) || result.citedEventIds.some((id) => !reflection.evidenceEventIds.includes(id))) throw new Error("ReflectionEvidenceMismatch");
       if (result.outcome !== "analysis" && (!result.attribution.trim() || !result.citedEventIds.length)) throw new Error("ReflectionAttributionRequired");
       if (result.outcome === "proposal") {
-        if (lens.id === "api-suggestion" || !result.edits?.length || result.edits.some((edit) => !isAllowedProposalPath(edit.path) || (lens.id === "domain-knowledge" ? !edit.path.startsWith("subject-knowledge/") : !edit.path.startsWith("work-definitions/")))) throw new Error("InvalidReflectionProposal");
+        if (lens.id === "api-suggestion" || !result.edits?.length || result.edits.some((edit) => !isAllowedProposalPath(edit.path) || (lens.id === "domain-knowledge" ? !edit.path.startsWith("subject-knowledge/") : !edit.path.startsWith(`work-definitions/${sourceWork.workType}/`)))) throw new Error("InvalidReflectionProposal");
         if (existing?.status === "adopted") throw new Error("ReflectionProposalAlreadyAdopted");
         let proposal = existing;
         if (!proposal) {
@@ -214,7 +239,7 @@ export class ForgeUseCases {
           proposal = await this.ports.works.createProposal({ id: proposalId, reflectionId, workId: reflection.workId, ownerUserId: actorUserId, baseRevision: reflection.omRevision, branchRef: proposalGit.branch, worktreePath: proposalGit.worktree, status: "open", source: `reflection:${reflectionId}`, reason: result.attribution, evidence: result.citedEventIds.join(",") });
         }
         for (const edit of result.edits) await this.ports.om.writeProposalFile(proposal.worktreePath, edit.path, edit.content);
-        if (lens.id === "domain-knowledge") await this.ports.om.makeKnowledgeAvailable(proposal.worktreePath, "report-authoring", result.edits.map((edit) => edit.path.split("/").pop()!.replace(/\.md$/, "")));
+        if (lens.id === "domain-knowledge") await this.ports.om.makeKnowledgeAvailable(proposal.worktreePath, sourceWork.workType, result.edits.map((edit) => edit.path.split("/").pop()!.replace(/\.md$/, "")));
         await this.ports.works.setProposalReview(proposal.id, undefined);
       }
       if (result.outcome === "api-suggestion" && (lens.id !== "api-suggestion" || !result.suggestionMarkdown?.trim())) throw new Error("InvalidApiSuggestion");
@@ -424,8 +449,21 @@ export class ForgeUseCases {
   }
   private async ownedProposal(session: SessionGrant, proposalId: string): Promise<ProposalRecord> { const proposal = await this.ports.works.proposal(proposalId); if (!proposal || proposal.ownerUserId !== session.forgeUserId || proposal.workId !== session.workId || proposal.status !== "open") throw new Error("ProposalNotOwned"); return proposal; }
   private async assertActiveWork(session: SessionGrant): Promise<void> {
-    const work = await this.ports.works.activeWork(session.forgeUserId, "certreporter", "report-authoring", session.reportId);
+    const work = await this.ports.works.activeWork(session.forgeUserId, "certreporter", session.workType ?? "report-authoring", session.entityId ?? session.reportId);
     if (work?.id !== session.workId) throw new Error("WorkCompleted");
+  }
+  private async authoritativeContext(token: string, workType: string, entityId: string, selection?: Record<string, unknown>) {
+    if (workType === "report-type-definition") {
+      if (!this.ports.certReporter.reportTypeContext) throw new Error("ReportTypeContextUnavailable");
+      return this.ports.certReporter.reportTypeContext(token, entityId, selection);
+    }
+    return this.ports.certReporter.reportContext(token, entityId, selection);
+  }
+  private assertContextTarget(context: Record<string, unknown>, workType: string, entityId: string): void {
+    const resource = context.resource as Record<string, unknown> | undefined;
+    if (workType === "report-type-definition") {
+      if (resource?.type !== "report-type" || resource.id !== entityId) throw new Error("InvalidReportTypeContext");
+    } else if (resource?.namespace !== "certreporter" || resource.resourceType !== "report" || resource.resourceId !== entityId) throw new Error("InvalidReportContext");
   }
   private async authorizedOmOwner(actorUserId: string, ownerUserId: string) {
     const actor = await this.ports.accounts.userById(actorUserId);

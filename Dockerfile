@@ -15,7 +15,7 @@ RUN pnpm --filter @airic-forge/domain build && pnpm --filter @airic-forge/api bu
 FROM node:24-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates pandoc poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/node_modules /app/node_modules
 COPY --from=build /app/apps/api/node_modules /app/apps/api/node_modules
@@ -25,5 +25,6 @@ COPY --from=build /app/apps/api/dist /app/apps/api/dist
 COPY --from=build /app/apps/api/package.json /app/apps/api/package.json
 COPY --from=build /app/prototype/dist /app/prototype/dist
 COPY --from=build /app/seed /app/seed
+COPY scripts/migrate-report-type-om.mjs /app/scripts/migrate-report-type-om.mjs
 EXPOSE 4175
 CMD ["node", "apps/api/dist/server.js"]

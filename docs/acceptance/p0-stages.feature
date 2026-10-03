@@ -116,6 +116,29 @@ Feature: 阶段 4 基于轨迹的 Reflection
 
 Feature: 阶段 5 P0 交付与恢复
 
+  Scenario: Report Type 草稿由 Forge 持续协助
+    Given Schema Admin 可编辑一个 Draft Report Type
+    When 从该 Report Type 启动 report-type-definition Work 并请求修改
+    Then Forge 以 CertReporter 的 report-type.context 核验目标与权限
+    And Agent 只能使用该 Work Definition 允许的 report-type 能力
+    And 更新草稿须携带当前 contentDigest 并取得 CertReporter 命令回执
+    And 发布与创建新版本仍由用户操作
+
+  Scenario: Report Type 并发修改不能被 Agent 覆盖
+    Given Report Type 的 contentDigest 在 Turn 开始后变化
+    When Agent 提交旧 digest 的更新命令
+    Then CertReporter 拒绝该命令且 Forge 保存拒绝回执
+    And 用户可在下一 Turn 读取新草稿后重试
+
+  Scenario: 附件仅作为当前 Turn 的可读证据
+    Given 用户可访问一个 Report 或 Report Type Work
+    When 用户上传有可提取文字的 PDF、DOCX 或 TXT 并随下一消息发送
+    Then Agent 可在该 Turn 阅读受大小限制的提取文字
+    And 附件轨迹字段只记录文件名、摘要和提取状态，不保存原始文件或提取全文
+    And 下一 Turn 不会自动复用该附件
+    When 文件没有可提取文字或类型不受支持
+    Then 上传被拒绝且不会启动 Turn
+
   Scenario: 三份持久数据协同恢复
     Given CertReporter 与 Forge 已形成 Report 回执、Work 轨迹、个人 HEAD 和未完成 Proposal
     When 按恢复点备份并还原 Forge project、Forge data 和 CertReporter 数据

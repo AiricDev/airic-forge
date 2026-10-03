@@ -22,7 +22,6 @@ services:
       DJANGO_MEDIA_ROOT: /data/media
       PORT: "3000"
       FORGE_ORIGIN: http://airic-forge:4175
-      CERTREPORTER_AIRIC_ENABLED: "0"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

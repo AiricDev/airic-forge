@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-type BootstrapBody = { appId: "certreporter"; workType: "report-authoring"; entityId: string; selection?: Record<string, unknown> };
+type BootstrapBody = { appId: "certreporter"; workType: "report-authoring" | "report-type-definition"; entityId: string; selection?: Record<string, unknown> };
 type RpcRequest = { id?: string | number; method?: string; params?: Record<string, unknown> };
 
 const bearer = (value: unknown): string => {
@@ -17,9 +17,10 @@ const bearer = (value: unknown): string => {
 };
 
 export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: true, bodyLimit: 9 * 1024 * 1024 });
   void app.register(cors, { origin: runtime.config.allowedOrigin, credentials: true });
   void app.register(websocket);
+  app.addContentTypeParser(/^(application\/pdf|application\/octet-stream|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document|text\/plain)$/i, { parseAs: "buffer" }, (_request, body, done) => done(null, body));
 
   app.get("/health", async () => ({ status: "ok", service: "airic-forge" }));
 
@@ -38,10 +39,19 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
   app.post<{ Body: BootstrapBody }>("/api/v1/app-sessions/bootstrap", async (request, reply) => {
     try {
       const body = request.body;
-      if (body.appId !== "certreporter" || body.workType !== "report-authoring" || !body.entityId) return reply.code(400).send({ error: "UnsupportedAppContext" });
-      const result = await runtime.useCases.bootstrap({ token: bearer(request.headers.authorization), reportId: body.entityId, selection: body.selection });
+      if (body.appId !== "certreporter" || !["report-authoring", "report-type-definition"].includes(body.workType) || !body.entityId) return reply.code(400).send({ error: "UnsupportedAppContext" });
+      const result = await runtime.useCases.bootstrap({ token: bearer(request.headers.authorization), entityId: body.entityId, workType: body.workType, selection: body.selection });
       return reply.code(201).send({ ...result, acpUrl: "/acp", workspaceUrl: runtime.config.publicUrl ?? "http://127.0.0.1:4175" });
     } catch (error) { return reply.code(401).send({ error: error instanceof Error ? error.message : "BootstrapFailed" }); }
+  });
+
+  app.put("/api/v1/app-sessions/evidence", async (request, reply) => {
+    try {
+      const encodedName = String(request.headers["x-forge-filename"] ?? "");
+      if (!encodedName || encodedName.length > 400 || !Buffer.isBuffer(request.body)) throw new Error("InvalidEvidenceUpload");
+      const filename = decodeURIComponent(encodedName);
+      return reply.code(201).send(await runtime.useCases.attachEvidence(String(request.headers["x-forge-ticket"] ?? ""), filename, String(request.headers["content-type"] ?? ""), request.body));
+    } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "EvidenceUploadFailed" }); }
   });
 
   app.post<{ Params: { ticket: string }; Body: { password: string } }>("/api/v1/app-sessions/:ticket/password", async (request, reply) => {
@@ -278,7 +288,9 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
         if (request.method === "session/prompt") {
           const message = String(request.params?.message ?? ""); if (!ticket || !message) throw new Error("InvalidPrompt");
           socket.send(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { phase: "running" } }));
-          const result = await runtime.useCases.startTurn(ticket, message, (text) => socket.send(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { phase: "text-delta", text } })));
+          const evidenceDigests = request.params?.evidenceDigests;
+          if (evidenceDigests !== undefined && (!Array.isArray(evidenceDigests) || evidenceDigests.some((value) => typeof value !== "string"))) throw new Error("InvalidEvidenceSelection");
+          const result = await runtime.useCases.startTurn(ticket, message, (text) => socket.send(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { phase: "text-delta", text } })), evidenceDigests as string[] | undefined);
           socket.send(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { phase: "completed", text: result.reply, turn: result.turn } }));
           socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, result })); return;
         }

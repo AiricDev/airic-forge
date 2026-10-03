@@ -15,8 +15,8 @@ import { systemPort } from "./system-port.js";
 test("personal Proposals keep active HEAD stable until reviewed adoption; stale peer rebases and next Turn uses new HEAD", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-three-"));
   const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/project"), webDistDir: join(root, "web"), certReporterUrl: "http://127.0.0.1:1", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
-  const ids = ["report.context", "report.read", "report.gaps", "report.update-master", "report.update-data"];
-  const catalog: CapabilityCatalog = { id: "accepted", appId: "certreporter", domainRelease: "certreporter/v1", digest: "digest", acceptedAt: "", capabilities: ids.map((id) => ({ id, kind: id.startsWith("report.update") ? "command" : "query", title: id, description: "", inputSchema: {}, outputSchema: {} })) };
+  const ids = ["report.context", "report.read", "report.gaps", "report.update-master", "report.update-data", "report-type.context", "report-type.read", "report-type.list-published-standards", "report-type.preview", "report-type.update-draft"];
+  const catalog: CapabilityCatalog = { id: "accepted", appId: "certreporter", domainRelease: "certreporter/v1", digest: "digest", acceptedAt: "", capabilities: ids.map((id) => ({ id, kind: id.startsWith("report.update") || id === "report-type.update-draft" ? "command" : "query", title: id, description: "", inputSchema: {}, outputSchema: {} })) };
   const app: CertReporterPort = {
     identity: async () => ({ appId: "certreporter", appUserId: "author", email: "author@example.com", displayName: "Author" }),
     catalog: async () => catalog, openApi: async () => ({}),

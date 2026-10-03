@@ -13,6 +13,8 @@ export interface SessionGrant {
   sessionId: string;
   appToken: string;
   reportId: string;
+  workType?: "report-authoring" | "report-type-definition";
+  entityId?: string;
   selection?: Record<string, unknown>;
 }
 
@@ -97,9 +99,18 @@ export interface CertReporterPort {
   catalog(token: string): Promise<CapabilityCatalog>;
   openApi(token: string): Promise<Record<string, unknown>>;
   reportContext(token: string, reportId: string, selection?: Record<string, unknown>): Promise<Record<string, unknown>>;
+  reportTypeContext?(token: string, reportTypeId: string, selection?: Record<string, unknown>): Promise<Record<string, unknown>>;
   query(token: string, capabilityId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
   submitCommand(token: string, capabilityId: string, body: Record<string, unknown>): Promise<{ status: "committed" | "rejected" | "unknown"; receipt?: Record<string, unknown>; reason?: string }>;
   receipt(token: string, commandId: string): Promise<Record<string, unknown> | undefined>;
+}
+
+export interface ExtractedEvidence { filename: string; digest: string; text: string; warnings: string[]; }
+export interface EvidenceExtractorPort { extract(filename: string, mediaType: string, content: Uint8Array): Promise<ExtractedEvidence>; }
+export interface EvidenceSessionPort {
+  put(ticket: string, evidence: ExtractedEvidence): MaybePromise<void>;
+  take(ticket: string, digests: string[]): MaybePromise<ExtractedEvidence[]>;
+  clear(ticket: string): MaybePromise<void>;
 }
 
 export interface CatalogPort {
@@ -122,6 +133,8 @@ export interface AgentRunnerPort {
     documents: Array<{ id: string; content: string }>;
     availableDocumentIds: string[];
     loadDocument(id: string): Promise<string>;
+    evidence?: Array<{ filename: string; digest: string; text: string }>;
+    conversation?: Array<{ role: "user" | "agent"; text: string }>;
     tools: WorkAgentTool[];
     onText?: (text: string) => void;
   }): Promise<{ text: string }>;
