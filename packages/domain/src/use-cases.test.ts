@@ -65,6 +65,39 @@ test("a Work ticket cannot complete a different Work", async () => {
   assert.equal(completed, false);
 });
 
+test("opening a Work Reflection twice returns one conversation and one introduction", async () => {
+  const records: Array<{ id: string; workId: string; ownerUserId: string }> = [];
+  const messages: Array<{ id: string; reflectionId: string; role: "agent" | "user"; content: string; at: string }> = [];
+  const useCases = new ForgeUseCases({
+    works: {
+      work: () => ({ id: "work-1", ownerUserId: "owner" }),
+      reflectionsForWork: () => [...records].reverse(),
+      openReflection: (input: { workId: string; ownerUserId: string }, introduction: string) => {
+        if (!records.length) {
+          records.push({ id: "reflection-1", workId: input.workId, ownerUserId: input.ownerUserId });
+          messages.push({ id: "intro", reflectionId: records[0].id, role: "agent", content: introduction, at: "now" });
+        }
+        return records[0];
+      },
+      reflection: (id: string) => records.find((record) => record.id === id),
+      reflectionMessages: () => messages,
+      appendReflectionMessage: (id: string, role: "agent" | "user", content: string) => { messages.push({ id: `message-${messages.length}`, reflectionId: id, role, content, at: "now" }); },
+      proposalForReflection: () => undefined,
+    } as never,
+    om: { head: () => "revision-1" } as never,
+    accounts: { userById: (id: string) => id === "owner" ? { id, role: "user" } : undefined } as never, catalogs: {} as never, certReporter: {} as never, agents: {} as never, sessions: {} as never,
+    passwordSetups: {} as never, passwordCodec: {} as never, trajectories: {} as never,
+    system: { id: () => "id", digest: () => "digest", now: () => "now" }, initialAdminEmails: new Set(),
+  });
+  const first = await useCases.openWorkReflection("owner", "work-1");
+  const second = await useCases.openWorkReflection("owner", "work-1");
+  assert.equal(first.reflection.id, second.reflection.id);
+  assert.equal(records.length, 1);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.role, "agent");
+  await assert.rejects(() => useCases.openWorkReflection("other", "work-1"), /WorkNotOwned/);
+});
+
 test("only an admin can import and accept a catalog whose capabilities have OpenAPI paths", async () => {
   const candidate = { id: "catalog-1", appId: "certreporter", domainRelease: "certreporter/v1", digest: "digest-1", acceptedAt: "", capabilities: [
     { id: "report.context", kind: "query" as const, title: "Context", description: "", inputSchema: {}, outputSchema: {} },
@@ -76,7 +109,7 @@ test("only an admin can import and accept a catalog whose capabilities have Open
     sessions: { get: (ticket) => grant(ticket), claim: () => undefined, put: () => {}, remove: () => {} },
     accounts: { userById: (id: string) => ({ id, email: `${id}@example.com`, role: id === "admin" ? "admin" : "user", activeBranch: `users/${id}`, createdAt: "2026-10-02T00:00:00.000Z", passwordConfigured: true }) } as never,
     certReporter: { catalog: async () => candidate, openApi: async () => ({ paths: { "/airic/v1/queries/report.context": {}, "/airic/v1/commands/report.update-master": {} } }) } as never,
-    catalogs: { saveCandidate: () => { imported = true; }, candidate: () => imported ? candidate : undefined, accept: () => { accepted = true; }, accepted: () => undefined },
+    catalogs: { saveCandidate: () => { imported = true; }, candidate: () => imported ? candidate : undefined, candidates: () => imported ? [candidate] : [], accept: () => { accepted = true; }, accepted: () => undefined },
     works: {} as never, om: {} as never, agents: {} as never, passwordSetups: {} as never, passwordCodec: {} as never, trajectories: {} as never,
     system: { id: () => "id", digest: () => "digest", now: () => "2026-10-02T00:00:00.000Z" }, initialAdminEmails: new Set(),
   });
@@ -86,6 +119,14 @@ test("only an admin can import and accept a catalog whose capabilities have Open
   assert.equal(imported, true);
   await useCases.acceptCatalog("admin", "digest-1");
   assert.equal(accepted, true);
+  const overview = await useCases.catalogOverview("admin");
+  assert.equal(overview.accepted, null);
+  assert.equal(overview.candidates[0]?.digest, "digest-1");
+  await assert.rejects(() => useCases.catalogOverview("user"), /Forbidden/);
+  accepted = false;
+  await useCases.acceptCatalogFromWorkspace("admin", "digest-1");
+  assert.equal(accepted, true);
+  await assert.rejects(() => useCases.acceptCatalogFromWorkspace("user", "digest-1"), /Forbidden/);
 });
 
 test("a Work Turn exposes only accepted and allowed tools, records an unknown command, and reconciles without replay", async () => {

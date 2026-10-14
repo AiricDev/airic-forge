@@ -249,6 +249,8 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 ### **FR-10 Work、Session 与轨迹**
 
 * 用户可在 Airic Web 工作台查看自己有权访问的 Work、Session、对话、Turn、动作、命令回执、错误和上下文来源。
+* Work 以服务端分页列表呈现；每个 Work 有可直接打开的详情地址，集中展示轨迹、Reflection 和由该 Work 形成的 Proposal。
+* Reflection 以连续聊天形式呈现；Agent 回复所引用的轨迹事件提供可复制的链接，打开后定位并突出显示 Work 对话中的原始事件，包括较早的 Turn，用户可返回 Reflection。
 * App 中的 Copilot 与 Airic Web 工作台应可定位至同一 Work 和 Session。
 * 用户可按 Turn 查看所用 OM 版本、按 Action 查看 App 命令结果、按文档查看上下文来源及版本。
 * 管理员可查看所有用户的 Work、Session 与轨迹。
@@ -256,8 +258,9 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 
 ### **FR-11 人工触发的 Reflection**
 
-* 用户可选择有权读取的 Work、Turn 或 Action 轨迹，指定分析问题后主动发起 Reflection。
-* Reflection可以选择不同的lens进行不同目的的反思，lens的管理由管理员控制。
+* 用户在有权访问的 Work 中打开或恢复唯一的连续 Reflection Agent Session；首次打开显示 Agent 引导消息，后续消息延续该会话。迁移前同一 Work 已有的多段 Reflection 保留为历史记录。
+* Work trajectory 是该会话可按需、分页读取的只读资源；Agent 引用的事件必须是实际读取且属于该 Work 的事件。
+* Lens 是会话内的 slash command，而非创建 Reflection 的前置选项；管理员管理三种内置 lens 的启停与版本化提示。
 * 首版 Reflection 支持三种lens：domain knowledge，delegation gap，与 API Suggestion。
   * Domain knowledge 收集这次work中需要记下的领域知识，存入OM的SK中
   * Delegation gap 回答“那些地方阻碍了agent更加自动的完成这个任务，记住什么规则就可以减少对人的依赖”。
@@ -274,7 +277,8 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 
 ### **FR-13 无代码工作台**
 
-* 普通用户的主要入口包括个人 OM（包含变更历史）、Work Session、Reflections（包含Proposal以及是否被采纳）。
+* 普通用户的主要入口包括 OM、Work（包含其 Reflection）和 Proposal（包含差异、rebase、校验与采纳）。
+* 用户直接在个人 OM 文件中编辑并保存私有草稿；草稿不创建 Proposal，也不改变 active HEAD。Work Reflection 在有轨迹证据时才形成 Proposal。
 * 管理员工作台提供用户与资源查看、组织内容维护、贡献审核、能力目录接受及实例治理入口。
 * 工作台应支持 Work Definition 与知识文档编辑、差异查看、Proposal 来源查看、检查结果查看、一次确认采纳和版本历史查看。
 * 工作台应支持个人贡献、组织版本浏览、组织更新合入和冲突处理。
@@ -305,7 +309,7 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 1. 用户在 Airic Web 工作台打开个人 OM。
 2. 用户可以创建或编辑 Work Definition、Subject Knowledge 或其他 OM 文档内容。
 3. 当前的 HEAD 版本为 active Operating Model；未提交改动不会进入运行时。
-4. Reflection Proposal 在独立 worktree 中维护，用户可以并行维护多个 Proposal。
+4. 用户从个人 OM 开始编辑时，系统保存独立私有草稿；Reflection 可参考与其固定 OM 修订一致的草稿，并在有 Work 轨迹证据时创建独立 Proposal worktree。用户可以并行维护多个 Proposal。
 5. 若检测到 `main` 存在尚未同步的上游改动，Airic 提醒用户可进行 rebase。
 6. 用户选择 rebase 时，Airic 执行 rebase；如存在冲突，用户手工处理冲突后形成更新后的 Proposal。
 7. 新版本从后续 Turn 开始生效；已经开始的 Turn 保持原 OM 上下文与版本归因不变。
@@ -324,9 +328,9 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 ### **8.4 基于轨迹发起 Reflection**
 
 
- 1. 用户在 Airic Web 工作台选择自己有权访问的 Work Session 轨迹。
- 2. 用户选择 Reflection lens，并指定希望分析的问题。
-3. Airic 基于所选轨迹和 lens 生成 Reflection 结果。需要修改 OM 时，Proposal 在独立 worktree 中保存，并在 Reflection 界面总结修改理由、来源和基准版本。
+ 1. 用户在 Airic Web 工作台打开有权访问的 Work，打开或恢复该 Work 的持续 Reflection 会话。
+ 2. Agent 按需读取该 Work 的 trajectory；用户可通过 `/domain-knowledge`、`/delegation-gap` 或 `/api-suggestion` 调用 lens，普通消息用于继续讨论。
+3. Reflection 作为来源 Work 的会话记录保存。需要修改 OM 时，会话在独立 Proposal worktree 形成文件差异，并维护一份统一的变更说明；用户从 Proposal 查看说明、来源、基准版本和差异。
 4. 同一用户可以并行维护多个 Proposal；每一个 Reflection 最多形成一个 Proposal。
  5. Domain Knowledge lens 提取本次工作中可复用的领域知识，并生成写入 Subject Knowledge 的 Proposal。
  6. Delegation Gap lens 分析阻碍 Agent 更自动完成任务的环节，并提出可减少人工依赖的规则或工作方法 Proposal。
@@ -414,10 +418,10 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 | P0-09 | 页面切换、Token 撤销或跨业务目标调用 | 已发出的命令保持原目标；撤销后不能继续执行业务操作；App 拒绝越权目标；界面不会将上下文文本当作授权 |
 | P0-10 | 命令已执行但响应丢失 | 保持结果未知状态并查询原命令；恢复已有回执，不因重复发起操作产生第二次业务效果 |
 | P0-11 | 两个用户维护各自的 OM | 个人 branch、worktree、资源归属和 active 版本相互独立；修改一个用户的 OM 不改变另一个用户的运行版本 |
-| P0-12 | 编辑个人文档、保存草稿或提交外部修改 | Proposal 保留来源和基准且不覆盖其他 worktree；草稿与未提交 Proposal 不进入执行上下文；个人 active 分支的普通 Git 提交从下一 Turn 生效 |
+| P0-12 | 编辑个人文档、保存草稿或提交外部修改 | 保存草稿不创建 Proposal 或改变 HEAD；Reflection Proposal 保留来源和基准且不覆盖其他 worktree；草稿与未提交 Proposal 不进入执行上下文；个人 active 分支的普通 Git 提交从下一 Turn 生效 |
 | P0-13 | 用户审核并采纳个人 Proposal | 可查看、修改差异，检查结构、能力引用、路径和依赖；本人一次确认后生成提交，提交说明含修改理由、来源和基准；无需管理员审批或独立激活 |
 | P0-15 | 并发启动 Reflection | 每个 Proposal 使用独立 worktree；两个同时发起的请求不能混写文件，且采纳只能在 Proposal 基准仍等于 active HEAD 时成功 |
-| P0-16 | 使用三种 Reflection lens | 普通用户可选择 lens，管理员控制 lens 管理；Domain Knowledge 形成 SK 候选，Delegation Gap 形成规则或方法候选，API Suggestion 可只产生人可阅读的能力建议 |
+| P0-16 | 使用三种 Reflection lens | 普通用户在连续会话中用 slash command 调用 lens，管理员控制 lens 管理；Domain Knowledge 形成 SK 候选，Delegation Gap 形成规则或方法候选，API Suggestion 可只产生人可阅读的能力建议 |
 | P0-17 | Reflection 证据不足或只产生 API 建议 | 可以没有 OM Proposal；界面仍保存本次分析结果与来源，不为凑齐结果制造提交；API 建议不改变工具目录 |
 | P0-18 | 用户在运行中采纳新 OM，或新增 WD | 当前 Turn 保持原快照，后续 Turn 使用更新后的 active 版本；新 WD 无需重启即可发现；轨迹保留每轮实际版本 |
 | P0-19 | 查看 Work、Session 和来源 | App Copilot 与 Airic Web 可定位到同一工作和会话；可按 Turn 查看 OM 版本、按 Action 查看回执、按文档查看上下文来源 |

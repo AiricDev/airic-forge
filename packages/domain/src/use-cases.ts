@@ -1,12 +1,12 @@
 import { isAllowedProposalPath, validateWorkDefinition } from "./operating-model.js";
-import type { AccountPort, AgentRunnerPort, AppSessionPort, CatalogPort, CertReporterPort, EvidenceExtractorPort, EvidenceSessionPort, OperatingModelPort, PasswordCodecPort, PasswordSetupPort, ProposalRecord, ReflectionAgentPort, ReflectionLens, ReflectionRecord, SessionGrant, SystemPort, TrajectoryPort, WorkPort, WorkAgentTool } from "./ports.js";
+import type { AccountPort, AgentRunnerPort, AppSessionPort, CatalogPort, CertReporterPort, EvidenceExtractorPort, EvidenceSessionPort, MeasurementPort, OmDraftPort, OperatingModelPort, OrganizationContributionPort, PasswordCodecPort, PasswordSetupPort, ProposalListFilters, ProposalRecord, ReflectionAgentPort, ReflectionLens, ReflectionRecord, SessionGrant, SystemPort, TrajectoryPort, WorkFeedbackKind, WorkListFilters, WorkPort, WorkAgentTool } from "./ports.js";
 
 const lenses = new Set(["domain-knowledge", "delegation-gap", "api-suggestion"]);
 
 export class ForgeUseCases {
   private readonly runningWorks = new Set<string>();
   private readonly runningReflections = new Set<string>();
-  constructor(private readonly ports: { accounts: AccountPort; works: WorkPort; om: OperatingModelPort; certReporter: CertReporterPort; catalogs: CatalogPort; agents: AgentRunnerPort; reflectionAgent?: ReflectionAgentPort; sessions: AppSessionPort; evidenceExtractor?: EvidenceExtractorPort; evidenceSessions?: EvidenceSessionPort; passwordSetups: PasswordSetupPort; passwordCodec: PasswordCodecPort; trajectories: TrajectoryPort; system: SystemPort; initialAdminEmails: Set<string>; }) {}
+  constructor(private readonly ports: { accounts: AccountPort; works: WorkPort; om: OperatingModelPort; omDrafts?: OmDraftPort; organization?: OrganizationContributionPort; measurements?: MeasurementPort; certReporter: CertReporterPort; catalogs: CatalogPort; agents: AgentRunnerPort; reflectionAgent?: ReflectionAgentPort; sessions: AppSessionPort; evidenceExtractor?: EvidenceExtractorPort; evidenceSessions?: EvidenceSessionPort; passwordSetups: PasswordSetupPort; passwordCodec: PasswordCodecPort; trajectories: TrajectoryPort; system: SystemPort; initialAdminEmails: Set<string>; }) {}
 
   async bootstrap(input: { token: string; reportId?: string; entityId?: string; workType?: "report-authoring" | "report-type-definition"; selection?: Record<string, unknown> }) {
     const workType = input.workType ?? "report-authoring";
@@ -71,6 +71,20 @@ export class ForgeUseCases {
     const candidate = await this.ports.catalogs.candidate("certreporter", digest);
     if (!candidate) throw new Error("CatalogCandidateNotFound");
     await this.ports.catalogs.accept("certreporter", digest, session.forgeUserId);
+    return candidate;
+  }
+
+  async catalogOverview(actorUserId: string) {
+    await this.requireAdmin(actorUserId);
+    const [accepted, candidates] = await Promise.all([this.ports.catalogs.accepted("certreporter"), this.ports.catalogs.candidates("certreporter")]);
+    return { accepted: accepted ?? null, candidates: candidates.filter((candidate) => candidate.digest !== accepted?.digest) };
+  }
+
+  async acceptCatalogFromWorkspace(actorUserId: string, digest: string) {
+    await this.requireAdmin(actorUserId);
+    const candidate = await this.ports.catalogs.candidate("certreporter", digest);
+    if (!candidate) throw new Error("CatalogCandidateNotFound");
+    await this.ports.catalogs.accept("certreporter", digest, actorUserId);
     return candidate;
   }
 
@@ -185,66 +199,113 @@ export class ForgeUseCases {
     return { reflection, messages, proposal };
   }
 
-  async startReflection(actorUserId: string, workId: string, lensId: string, question: string, evidenceEventIds: string[]) {
+  async openWorkReflection(actorUserId: string, workId: string) {
     const work = await this.ports.works.work(workId);
     if (!work || work.ownerUserId !== actorUserId) throw new Error("WorkNotOwned");
-    const lens = await this.ports.works.lens(lensId);
-    if (!lens || !lenses.has(lensId)) throw new Error("UnknownReflectionLens");
-    if (!lens.enabled) throw new Error("ReflectionLensDisabled");
-    if (!question.trim() || question.length > 4000) throw new Error("ReflectionQuestionRequired");
-    if (!Array.isArray(evidenceEventIds) || evidenceEventIds.length > 20 || new Set(evidenceEventIds).size !== evidenceEventIds.length) throw new Error("InvalidReflectionEvidence");
-    const events = await this.ports.trajectories.read(workId);
-    if (evidenceEventIds.some((id) => !events.some((event) => event.id === id))) throw new Error("ReflectionEvidenceMismatch");
-    if (JSON.stringify(events.filter((event) => evidenceEventIds.includes(event.id))).length > 100_000) throw new Error("ReflectionEvidenceTooLarge");
+    const existing = (await this.ports.works.reflectionsForWork(workId)).at(-1);
+    if (existing) return this.reflectionDetail(actorUserId, existing.id);
     const omRevision = await this.ports.om.head(`users/${actorUserId}`);
-    const reflection = await this.ports.works.createReflection({ workId, ownerUserId: actorUserId, lensId, lensVersion: lens.version, lensPrompt: lens.prompt, question: question.trim(), evidenceEventIds, omRevision });
-    return this.continueReflection(actorUserId, reflection.id, question);
+    const reflection = await this.ports.works.openReflection({ workId, ownerUserId: actorUserId, lensId: "conversation", lensVersion: 0, lensPrompt: "", question: "", evidenceEventIds: [], omRevision }, `我们可以回顾这个 Work（${work.id}）。我可以按需读取它的轨迹；你可以直接提问，或使用 lens 命令分析可改进之处。`);
+    return this.reflectionDetail(actorUserId, reflection.id);
+  }
+
+  async startReflectionConversation(actorUserId: string, workId: string, message: string) {
+    const work = await this.ports.works.work(workId);
+    if (!work || work.ownerUserId !== actorUserId) throw new Error("WorkNotOwned");
+    if (!message.trim() || message.length > 4000) throw new Error("ReflectionMessageRequired");
+    await this.reflectionCommand(message);
+    const detail = await this.openWorkReflection(actorUserId, workId);
+    return this.continueReflection(actorUserId, detail.reflection.id, message);
+  }
+
+  private async reflectionCommand(message: string): Promise<ReflectionLens | undefined> {
+    const command = /^\/([^\s]+)(?:\s|$)/.exec(message.trim());
+    if (!command) return undefined;
+    const lensId = command[1] === "lens" ? message.trim().split(/\s+/)[1] : command[1];
+    if (!lensId || !lenses.has(lensId)) throw new Error("UnknownReflectionLens");
+    const lens = await this.ports.works.lens(lensId);
+    if (!lens) throw new Error("UnknownReflectionLens");
+    if (!lens.enabled) throw new Error("ReflectionLensDisabled");
+    return lens;
   }
 
   async continueReflection(actorUserId: string, reflectionId: string, message: string) {
     const reflection = await this.readableReflection(actorUserId, reflectionId);
     if (reflection.ownerUserId !== actorUserId) throw new Error("ReflectionNotOwned");
+    if (reflection.status === "abandoned" || reflection.status === "completed") throw new Error("ReflectionClosed");
     if (!message.trim() || message.length > 4000) throw new Error("ReflectionMessageRequired");
+    const conversational = reflection.lensId === "conversation" || (await this.ports.works.reflectionMessages(reflectionId)).some((item) => item.role === "user" && /^\/(?:lens\s+)?(?:domain-knowledge|delegation-gap|api-suggestion)(?:\s|$)/.test(item.content));
+    const invokedLens = conversational ? await this.reflectionCommand(message) : undefined;
     if (this.runningReflections.has(reflectionId)) throw new Error("ReflectionAlreadyRunning");
     this.runningReflections.add(reflectionId);
     try {
       await this.ports.works.appendReflectionMessage(reflectionId, "user", message.trim());
       const events = await this.ports.trajectories.read(reflection.workId);
-      const selected = reflection.evidenceEventIds.map((id) => events.find((event) => event.id === id));
+      const selected = conversational ? [] : reflection.evidenceEventIds.map((id) => events.find((event) => event.id === id));
       if (selected.some((event) => !event)) throw new Error("ReflectionEvidenceMismatch");
-      if (selected.length === 0) {
+      if (!conversational && selected.length === 0) {
         const analysis = "未选择 Work 轨迹证据。请从该 Work 选择事件后重新发起 Reflection；当前分析已保存，未创建 Proposal。";
         await this.ports.works.appendReflectionMessage(reflectionId, "agent", analysis);
         await this.ports.works.setReflectionResult(reflectionId, { status: "insufficient_evidence", outcome: "analysis", analysis, attribution: "无来源事件" });
         return this.reflectionDetail(actorUserId, reflectionId);
       }
       if (!this.ports.reflectionAgent) throw new Error("ReflectionAgentNotConfigured");
-      const existing = await this.ports.works.proposalForReflection(reflectionId);
+      let proposal = await this.ports.works.proposalForReflection(reflectionId);
       const sourceWork = await this.ports.works.work(reflection.workId);
       if (!sourceWork) throw new Error("WorkNotFound");
       const files = await this.ports.om.listFiles(reflection.omRevision);
       const relevant = files.filter((path) => path.startsWith(`work-definitions/${sourceWork.workType}/`) || path.startsWith("subject-knowledge/"));
       const documents = await Promise.all(relevant.map(async (path) => ({ path, content: await this.ports.om.document(reflection.omRevision, path) })));
-      const lens: ReflectionLens = { id: reflection.lensId as ReflectionLens["id"], version: reflection.lensVersion, enabled: true, prompt: reflection.lensPrompt };
-      const result = await this.ports.reflectionAgent.analyze({ reflectionId, lens, question: message.trim(), messages: await this.ports.works.reflectionMessages(reflectionId), evidence: selected as NonNullable<typeof selected[number]>[], omRevision: reflection.omRevision, documents });
-      if (!result.analysis.trim() || !Array.isArray(result.citedEventIds) || result.citedEventIds.some((id) => !reflection.evidenceEventIds.includes(id))) throw new Error("ReflectionEvidenceMismatch");
-      if (result.outcome !== "analysis" && (!result.attribution.trim() || !result.citedEventIds.length)) throw new Error("ReflectionAttributionRequired");
-      if (result.outcome === "proposal") {
-        if (lens.id === "api-suggestion" || !result.edits?.length || result.edits.some((edit) => !isAllowedProposalPath(edit.path) || (lens.id === "domain-knowledge" ? !edit.path.startsWith("subject-knowledge/") : !edit.path.startsWith(`work-definitions/${sourceWork.workType}/`)))) throw new Error("InvalidReflectionProposal");
-        if (existing?.status === "adopted") throw new Error("ReflectionProposalAlreadyAdopted");
-        let proposal = existing;
+      const lens: ReflectionLens = conversational ? invokedLens ?? { id: "conversation", version: 0, enabled: true, prompt: "Discuss the user's Work and answer without proposing an OM change unless a lens command is invoked." } : { id: reflection.lensId as ReflectionLens["id"], version: reflection.lensVersion, enabled: true, prompt: reflection.lensPrompt };
+      const disclosed = new Set((selected as NonNullable<typeof selected[number]>[]).map((event) => event.id));
+      const readTrajectory = async (offset: number, limit: number) => {
+        if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 20) throw new Error("InvalidTrajectoryPage");
+        const page = events.slice(offset, offset + limit);
+        if (JSON.stringify(page).length > 100_000) throw new Error("ReflectionEvidenceTooLarge");
+        for (const event of page) disclosed.add(event.id);
+        return page;
+      };
+      const allowedPath = (path: string) => isAllowedProposalPath(path) && (lens.id === "domain-knowledge" ? path.startsWith("subject-knowledge/") : lens.id === "delegation-gap" && path.startsWith(`work-definitions/${sourceWork.workType}/`));
+      const readProposalFile = async (path: string) => {
+        if (!allowedPath(path)) throw new Error("InvalidReflectionProposal");
+        return proposal ? this.ports.om.proposalFile(proposal.worktreePath, path) : this.ports.om.document(reflection.omRevision, path);
+      };
+      const writeProposalFile = async (path: string, content: string, citedEventIds: string[], proposalMessage: string) => {
+        if (!allowedPath(path) || !content.trim() || content.length > 100_000 || !proposalMessage.trim() || proposalMessage.length > 1000) throw new Error("InvalidReflectionProposal");
+        if (!Array.isArray(citedEventIds) || !citedEventIds.length || citedEventIds.some((id) => !disclosed.has(id))) throw new Error("ReflectionEvidenceMismatch");
+        if (proposal?.status === "adopted") throw new Error("ReflectionProposalAlreadyAdopted");
         if (!proposal) {
           const proposalId = this.ports.system.id("prp");
           const proposalGit = await this.ports.om.createProposal(actorUserId, proposalId, reflection.omRevision);
-          proposal = await this.ports.works.createProposal({ id: proposalId, reflectionId, workId: reflection.workId, ownerUserId: actorUserId, baseRevision: reflection.omRevision, branchRef: proposalGit.branch, worktreePath: proposalGit.worktree, status: "open", source: `reflection:${reflectionId}`, reason: result.attribution, evidence: result.citedEventIds.join(",") });
+          proposal = await this.ports.works.createProposal({ id: proposalId, reflectionId, workId: reflection.workId, ownerUserId: actorUserId, baseRevision: reflection.omRevision, branchRef: proposalGit.branch, worktreePath: proposalGit.worktree, status: "open", source: `reflection:${reflectionId}`, reason: proposalMessage.trim(), evidence: citedEventIds.join(",") });
         }
-        for (const edit of result.edits) await this.ports.om.writeProposalFile(proposal.worktreePath, edit.path, edit.content);
-        if (lens.id === "domain-knowledge") await this.ports.om.makeKnowledgeAvailable(proposal.worktreePath, sourceWork.workType, result.edits.map((edit) => edit.path.split("/").pop()!.replace(/\.md$/, "")));
+        await this.ports.om.writeProposalFile(proposal.worktreePath, path, content);
+        if (lens.id === "domain-knowledge") await this.ports.om.makeKnowledgeAvailable(proposal.worktreePath, sourceWork.workType, [path.split("/").pop()!.replace(/\.md$/, "")]);
+        await this.ports.works.setProposalMessage(proposal.id, proposalMessage.trim(), citedEventIds.join(","));
+        proposal = { ...proposal, reason: proposalMessage.trim(), evidence: citedEventIds.join(",") };
         await this.ports.works.setProposalReview(proposal.id, undefined);
+      };
+      const privateDrafts = this.ports.omDrafts && ["domain-knowledge", "delegation-gap"].includes(lens.id)
+        ? (await this.ports.omDrafts.draftsForUser(actorUserId)).filter((draft) => draft.baseRevision === reflection.omRevision && allowedPath(draft.path)).map(({ path, content, baseRevision }) => ({ path, content, baseRevision }))
+        : [];
+      const result = await this.ports.reflectionAgent.analyze({ reflectionId, lens, question: message.trim(), messages: await this.ports.works.reflectionMessages(reflectionId), evidence: selected as NonNullable<typeof selected[number]>[], ...(conversational ? { readTrajectory } : {}), ...(["domain-knowledge", "delegation-gap"].includes(lens.id) ? { readProposalFile, writeProposalFile } : {}), omRevision: reflection.omRevision, documents, privateDrafts });
+      if (!result.analysis.trim() || !Array.isArray(result.citedEventIds) || result.citedEventIds.some((id) => !disclosed.has(id))) throw new Error("ReflectionEvidenceMismatch");
+      if (lens.id === "conversation" && result.outcome !== "analysis") throw new Error("ReflectionLensRequired");
+      if (result.outcome !== "analysis" && (!result.attribution.trim() || !result.citedEventIds.length)) throw new Error("ReflectionAttributionRequired");
+      if (result.outcome === "proposal") {
+        if (lens.id === "api-suggestion" || (result.edits?.length && result.edits.some((edit) => !allowedPath(edit.path))) || (!result.edits?.length && !proposal)) throw new Error("InvalidReflectionProposal");
+        for (const edit of result.edits ?? []) await writeProposalFile(edit.path, edit.content, result.citedEventIds, result.proposalMessage?.trim() || result.attribution);
+        if (!proposal) throw new Error("InvalidReflectionProposal");
+        const unifiedMessage = result.proposalMessage?.trim() || proposal.reason || result.attribution;
+        if (unifiedMessage !== proposal.reason || result.citedEventIds.join(",") !== proposal.evidence) {
+          await this.ports.works.setProposalMessage(proposal.id, unifiedMessage, result.citedEventIds.join(","));
+          await this.ports.works.setProposalReview(proposal.id, undefined);
+        }
       }
       if (result.outcome === "api-suggestion" && (lens.id !== "api-suggestion" || !result.suggestionMarkdown?.trim())) throw new Error("InvalidApiSuggestion");
-      await this.ports.works.appendReflectionMessage(reflectionId, "agent", result.analysis);
-      await this.ports.works.setReflectionResult(reflectionId, { status: "completed", outcome: result.outcome, analysis: result.analysis, attribution: result.attribution, ...(result.outcome === "api-suggestion" ? { suggestionMarkdown: result.suggestionMarkdown } : {}) });
+      await this.ports.works.appendReflectionMessage(reflectionId, "agent", result.analysis, { lensId: lens.id, lensVersion: lens.version, citedEventIds: result.citedEventIds });
+      if (conversational && invokedLens) await this.ports.works.setReflectionContext(reflectionId, invokedLens, result.citedEventIds);
+      await this.ports.works.setReflectionResult(reflectionId, { status: conversational ? "active" : "completed", outcome: result.outcome, analysis: result.analysis, attribution: result.attribution, ...(result.outcome === "api-suggestion" ? { suggestionMarkdown: result.suggestionMarkdown } : {}) });
       return this.reflectionDetail(actorUserId, reflectionId);
     } catch (error) {
       await this.ports.works.setReflectionResult(reflectionId, { status: "failed" });
@@ -254,7 +315,7 @@ export class ForgeUseCases {
 
   async reflectionSuggestion(actorUserId: string, reflectionId: string) {
     const reflection = await this.readableReflection(actorUserId, reflectionId);
-    if (reflection.outcome !== "api-suggestion" || !reflection.suggestionMarkdown) throw new Error("ApiSuggestionNotFound");
+    if (!reflection.suggestionMarkdown) throw new Error("ApiSuggestionNotFound");
     return reflection.suggestionMarkdown;
   }
 
@@ -270,20 +331,162 @@ export class ForgeUseCases {
     return this.adoptReviewedProposal(proposal, title, proposal.reviewedRevision);
   }
 
-  async createPersonalProposal(actorUserId: string, source: string, reason: string, evidence: string) {
-    if (!source.trim() || !reason.trim()) throw new Error("ProposalSourceAndReasonRequired");
+  async organizationOm(actorUserId: string, requestedRevision?: string) {
+    if (!await this.ports.accounts.userById(actorUserId)) throw new Error("Unauthorized");
+    const activeRevision = await this.ports.om.head("main");
+    if (requestedRevision && !await this.ports.om.containsRevision("main", requestedRevision)) throw new Error("OmRevisionNotReachable");
+    const revision = requestedRevision || activeRevision;
+    const actor = await this.ports.accounts.userById(actorUserId);
+    let syncAvailable = false;
+    if (actor) {
+      try { syncAvailable = !await this.ports.om.includesRevision(actor.activeBranch, activeRevision); }
+      catch { syncAvailable = false; }
+    }
+    return { branch: "main", activeRevision, revision, files: await this.ports.om.listFiles(revision), syncAvailable };
+  }
+
+  async organizationOmHistory(actorUserId: string) {
+    if (!await this.ports.accounts.userById(actorUserId)) throw new Error("Unauthorized");
+    return this.ports.om.history("main");
+  }
+
+  async organizationOmFile(actorUserId: string, path: string, revision?: string) {
+    if (!isAllowedProposalPath(path)) throw new Error("InvalidOmPath");
+    const snapshot = await this.organizationOm(actorUserId, revision);
+    if (!snapshot.files.includes(path)) throw new Error("OmFileNotFound");
+    return { path, revision: snapshot.revision, content: await this.ports.om.document(snapshot.revision, path) };
+  }
+
+  async organizationOmManifest(actorUserId: string, path: string, revision?: string) {
+    const snapshot = await this.organizationOm(actorUserId, revision);
+    return this.omManifest(snapshot, path);
+  }
+
+  async addWorkFeedback(actorUserId: string, workId: string, kind: WorkFeedbackKind, note: string) {
+    const work = await this.ports.works.work(workId);
+    if (!work) throw new Error("WorkNotFound");
+    if (work.ownerUserId !== actorUserId) throw new Error("Forbidden");
+    if (!["required-human-decision", "avoidable-correction", "knowledge-helpful", "work-outcome-correct", "work-outcome-incorrect"].includes(kind) || !note.trim()) throw new Error("InvalidWorkFeedback");
+    const feedback = { id: this.ports.system.id("fbk"), workId, ownerUserId: actorUserId, kind, note: note.trim(), at: this.ports.system.now() };
+    await this.measurementPort().recordFeedback(feedback);
+    return feedback;
+  }
+
+  async workFeedback(actorUserId: string, workId: string) {
+    const work = await this.ports.works.work(workId);
+    if (!work) throw new Error("WorkNotFound");
+    await this.authorizedOmOwner(actorUserId, work.ownerUserId);
+    return this.measurementPort().feedbackForWork(workId);
+  }
+
+  async measurementBaseline(actorUserId: string) {
+    await this.requireAdmin(actorUserId);
+    const [activity, feedback] = await Promise.all([this.measurementPort().activityCounts(), this.measurementPort().feedbackCounts()]);
+    return { activity, feedback, interpretation: "活动数量不能证明能力改善。反馈来自用户自报；制定目标前需要按工作类型、任务难度、能力目录和模型配置选取可比样本。" };
+  }
+
+  async compareOrganizationSource(actorUserId: string, authorUserId: string) {
+    await this.requireAdmin(actorUserId);
+    const author = await this.ports.accounts.userById(authorUserId);
+    if (!author) throw new Error("UserNotFound");
+    const sourceRevision = await this.ports.om.head(author.activeBranch);
+    const mainRevision = await this.ports.om.head("main");
+    return { author: { id: author.id, email: author.email }, sourceRevision, mainRevision, ...await this.ports.om.divergence(sourceRevision, mainRevision) };
+  }
+
+  async createOrganizationContribution(actorUserId: string, authorUserId: string, reason: string, evidence: string) {
+    await this.requireAdmin(actorUserId);
+    if (!reason.trim()) throw new Error("ContributionReasonRequired");
+    const comparison = await this.compareOrganizationSource(actorUserId, authorUserId);
+    if (!comparison.changedPaths.length) throw new Error("NoOrganizationChanges");
+    const organization = this.organizationPort();
+    const record = { id: this.ports.system.id("con"), authorUserId, sourceRevision: comparison.sourceRevision, baseMainRevision: comparison.mainRevision, reason: reason.trim(), evidence: evidence.trim(), status: "open" as const, selectedPaths: [], createdAt: this.ports.system.now() };
+    await this.ports.om.pinContributionSource(record.id, record.sourceRevision);
+    await organization.createContribution(record);
+    return record;
+  }
+
+  async organizationContributions(actorUserId: string) {
+    await this.requireAdmin(actorUserId);
+    const records = await this.organizationPort().contributions();
+    return Promise.all(records.map(async (record) => ({ ...record, authorEmail: (await this.ports.accounts.userById(record.authorUserId))?.email ?? record.authorUserId })));
+  }
+
+  async organizationContribution(actorUserId: string, id: string) {
+    await this.requireAdmin(actorUserId);
+    const record = await this.organizationPort().contribution(id);
+    if (!record) throw new Error("ContributionNotFound");
+    const comparison = await this.ports.om.divergence(record.sourceRevision, await this.ports.om.head("main"));
+    const candidateDiff = record.candidateWorktree ? await this.ports.om.proposalDiff(record.candidateWorktree, record.baseMainRevision) : undefined;
+    return { record, authorEmail: (await this.ports.accounts.userById(record.authorUserId))?.email ?? record.authorUserId, ...comparison, candidateDiff };
+  }
+
+  async reviewOrganizationContribution(actorUserId: string, id: string, selectedPaths: string[]) {
+    await this.requireAdmin(actorUserId);
+    const organization = this.organizationPort();
+    const record = await organization.contribution(id);
+    if (!record || record.status === "accepted") throw new Error("ContributionNotOpen");
+    const mainRevision = await this.ports.om.head("main");
+    if (record.status === "reviewed" || record.baseMainRevision !== mainRevision) throw new Error("OrganizationReviewStale: create a new contribution");
+    const comparison = await this.ports.om.divergence(record.sourceRevision, mainRevision);
+    if (!selectedPaths.length || new Set(selectedPaths).size !== selectedPaths.length || selectedPaths.some((path) => !isAllowedProposalPath(path) || !comparison.changedPaths.includes(path))) throw new Error("InvalidContributionSelection");
+    const trailer = (value: string) => value.replace(/\s+/g, " ").trim().slice(0, 500);
+    const message = ["Accept selected organization OM contribution", "", `AiricForge-Contribution: ${record.id}`, `AiricForge-Author: ${record.authorUserId}`, `AiricForge-Source-Revision: ${record.sourceRevision}`, `AiricForge-Reason: ${trailer(record.reason)}`, `AiricForge-Base: ${mainRevision}`].join("\n");
+    const candidate = await this.ports.om.prepareContribution(id, record.sourceRevision, comparison.baseRevision, mainRevision, selectedPaths, message);
+    await this.validateProposalCandidate(candidate.revision);
+    await organization.reviewContribution(id, selectedPaths, candidate.branch, candidate.worktree, candidate.revision, mainRevision);
+    return { ...record, status: "reviewed" as const, selectedPaths, candidateBranch: candidate.branch, reviewedRevision: candidate.revision };
+  }
+
+  async acceptOrganizationContribution(actorUserId: string, id: string, reviewedRevision: string) {
+    await this.requireAdmin(actorUserId);
+    const organization = this.organizationPort();
+    const record = await organization.contribution(id);
+    if (!record || !record.candidateBranch || record.reviewedRevision !== reviewedRevision) throw new Error("ContributionReviewRequired");
+    if (record.status === "accepted" && record.acceptedRevision === reviewedRevision) return { revision: reviewedRevision };
+    if (record.status !== "reviewed") throw new Error("ContributionReviewRequired");
+    const activeMain = await this.ports.om.head("main");
+    if (activeMain === reviewedRevision) {
+      await organization.acceptContribution(id, reviewedRevision);
+      return { revision: reviewedRevision };
+    }
+    if (activeMain !== record.baseMainRevision) throw new Error("OrganizationReviewStale");
+    if (await this.ports.om.head(record.candidateBranch) !== reviewedRevision || (await this.ports.om.proposalChanges(record.candidateWorktree!)).length) throw new Error("ContributionChangedAfterReview");
+    await this.validateProposalCandidate(reviewedRevision);
+    const revision = await this.ports.om.acceptContribution(record.candidateBranch, record.baseMainRevision);
+    await organization.acceptContribution(id, revision);
+    return { revision };
+  }
+
+  async createOrganizationSync(actorUserId: string) {
     const user = await this.ports.accounts.userById(actorUserId);
     if (!user) throw new Error("Unauthorized");
     const workspace = await this.ports.om.ensureUserBranch(user.id);
     const baseRevision = await this.ports.om.head(workspace.branch);
+    const upstreamRevision = await this.ports.om.head("main");
+    if (baseRevision === upstreamRevision || await this.ports.om.includesRevision(workspace.branch, upstreamRevision)) throw new Error("OrganizationAlreadyCurrent");
     const id = this.ports.system.id("prp");
     const git = await this.ports.om.createProposal(user.id, id, baseRevision);
-    return this.ports.works.createProposal({ id, ownerUserId: user.id, baseRevision, branchRef: git.branch, worktreePath: git.worktree, status: "open", source: source.trim(), reason: reason.trim(), evidence: evidence.trim() });
+    const proposal = await this.ports.works.createProposal({ id, ownerUserId: user.id, baseRevision, branchRef: git.branch, worktreePath: git.worktree, status: "open", source: "organization-sync", reason: "Synchronize organization OM", evidence: "", upstreamRevision });
+    try { await this.ports.om.synchronizeProposal(git.worktree, baseRevision, upstreamRevision); }
+    catch (error) { if (!(error instanceof Error && error.message.startsWith("ProposalRebaseConflict"))) throw error; }
+    return this.personalProposal(actorUserId, proposal.id);
   }
 
   async personalProposals(actorUserId: string, ownerUserId: string) {
     await this.authorizedOmOwner(actorUserId, ownerUserId);
     return this.ports.works.proposalsForUser(ownerUserId);
+  }
+
+  async listProposals(actorUserId: string, filters: ProposalListFilters, page = 1) {
+    if (!Number.isSafeInteger(page) || page < 1 || page > 100_000) throw new Error("InvalidProposalPage");
+    if (filters.status && !["open", "adopted", "abandoned"].includes(filters.status)) throw new Error("InvalidProposalFilter");
+    if (filters.source && !["personal", "reflection", "organization-sync"].includes(filters.source)) throw new Error("InvalidProposalFilter");
+    if (filters.ownerUserId) await this.authorizedOmOwner(actorUserId, filters.ownerUserId);
+    else await this.requireAdmin(actorUserId);
+    const pageSize = 20;
+    const { proposals, total } = await this.ports.works.proposalsPage(filters, (page - 1) * pageSize, pageSize);
+    return { proposals, page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
   }
 
   async personalProposal(actorUserId: string, proposalId: string) {
@@ -307,6 +510,8 @@ export class ForgeUseCases {
   async reviewPersonalProposal(actorUserId: string, proposalId: string) {
     const proposal = await this.editableProposal(actorUserId, proposalId);
     if (await this.ports.om.head(`users/${actorUserId}`) !== proposal.baseRevision) throw new Error("ActiveRevisionChanged: rebase required");
+    if (proposal.upstreamRevision && await this.ports.om.head("main") !== proposal.upstreamRevision) throw new Error("OrganizationRevisionChanged: restart synchronization");
+    if ((await this.ports.om.proposalConflicts(proposal.worktreePath)).length) throw new Error("ProposalRebaseConflict");
     const changedPaths = await this.ports.om.proposalChangedPaths(proposal.worktreePath, proposal.baseRevision);
     if (!changedPaths.length) throw new Error("ProposalHasNoChanges");
     if (changedPaths.some((path) => !isAllowedProposalPath(path))) throw new Error("ProposalPathNotAllowed");
@@ -322,9 +527,22 @@ export class ForgeUseCases {
     return this.adoptReviewedProposal(proposal, title, reviewedRevision);
   }
 
+  async abandonPersonalProposal(actorUserId: string, proposalId: string) {
+    const proposal = await this.editableProposal(actorUserId, proposalId);
+    if (!proposal.reflectionId) throw new Error("OnlyReflectionProposalCanBeAbandoned");
+    await this.ports.works.abandonReflectionProposal(proposal.id, proposal.reflectionId, "Proposal 已放弃，未创建 OM commit。Reflection 对话保留为历史记录。");
+    return this.personalProposal(actorUserId, proposalId);
+  }
+
   async rebasePersonalProposal(actorUserId: string, proposalId: string) {
     const proposal = await this.editableProposal(actorUserId, proposalId);
     const activeRevision = await this.ports.om.head(`users/${actorUserId}`);
+    if (proposal.upstreamRevision) {
+      if (await this.ports.om.head("main") !== proposal.upstreamRevision || activeRevision !== proposal.baseRevision) throw new Error("OrganizationRevisionChanged: restart synchronization");
+      await this.ports.works.setProposalReview(proposalId, undefined);
+      await this.ports.om.synchronizeProposal(proposal.worktreePath, proposal.baseRevision, proposal.upstreamRevision);
+      return this.personalProposal(actorUserId, proposalId);
+    }
     if (activeRevision === proposal.baseRevision) return this.personalProposal(actorUserId, proposalId);
     await this.ports.works.setProposalReview(proposalId, undefined);
     await this.ports.om.rebaseProposal(proposal.worktreePath, proposal.baseRevision, activeRevision);
@@ -341,9 +559,18 @@ export class ForgeUseCases {
     if (actor?.role !== "admin") throw new Error("Forbidden");
     return this.ports.accounts.listUsers();
   }
-  async worksForUser(actorUserId: string, ownerUserId: string) {
-    await this.authorizedOmOwner(actorUserId, ownerUserId);
-    return this.ports.works.worksForUser(ownerUserId);
+  async worksForUser(actorUserId: string, ownerUserId: string, page = 1) {
+    return this.listWorks(actorUserId, { ownerUserId }, page);
+  }
+  async listWorks(actorUserId: string, filters: WorkListFilters, page = 1) {
+    if (!Number.isSafeInteger(page) || page < 1 || page > 100_000) throw new Error("InvalidWorkPage");
+    if (filters.workType && !["report-authoring", "report-type-definition"].includes(filters.workType)) throw new Error("InvalidWorkFilter");
+    if (filters.status && !["active", "completed"].includes(filters.status)) throw new Error("InvalidWorkFilter");
+    if (filters.ownerUserId) await this.authorizedOmOwner(actorUserId, filters.ownerUserId);
+    else await this.requireAdmin(actorUserId);
+    const pageSize = 20;
+    const { works, total } = await this.ports.works.worksPage(filters, (page - 1) * pageSize, pageSize);
+    return { works, page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
   }
   async workHistory(actorUserId: string, workId: string) {
     const work = await this.ports.works.work(workId);
@@ -351,6 +578,12 @@ export class ForgeUseCases {
     await this.authorizedOmOwner(actorUserId, work.ownerUserId);
     const [turns, events] = await Promise.all([this.ports.works.turnsForWork(workId), this.ports.trajectories.read(workId)]);
     return { work, turns, events };
+  }
+  async workProposals(actorUserId: string, workId: string) {
+    const work = await this.ports.works.work(workId);
+    if (!work) throw new Error("WorkNotFound");
+    await this.authorizedOmOwner(actorUserId, work.ownerUserId);
+    return this.ports.works.proposalsForWork(workId);
   }
   async personalOm(actorUserId: string, ownerUserId: string, requestedRevision?: string) {
     const owner = await this.authorizedOmOwner(actorUserId, ownerUserId);
@@ -368,6 +601,44 @@ export class ForgeUseCases {
     const snapshot = await this.personalOm(actorUserId, ownerUserId, revision);
     if (!snapshot.files.includes(path)) throw new Error("OmFileNotFound");
     return { path, revision: snapshot.revision, content: await this.ports.om.document(snapshot.revision, path) };
+  }
+
+  async personalOmManifest(actorUserId: string, ownerUserId: string, path: string, revision?: string) {
+    const snapshot = await this.personalOm(actorUserId, ownerUserId, revision);
+    return this.omManifest(snapshot, path);
+  }
+
+  async personalOmDrafts(actorUserId: string, ownerUserId: string) {
+    if (actorUserId !== ownerUserId) throw new Error("Forbidden");
+    await this.personalOm(actorUserId, ownerUserId);
+    if (!this.ports.omDrafts) throw new Error("OmDraftsUnavailable");
+    return this.ports.omDrafts.draftsForUser(ownerUserId);
+  }
+
+  async savePersonalOmDraft(actorUserId: string, ownerUserId: string, path: string, content: string, baseRevision: string) {
+    if (actorUserId !== ownerUserId) throw new Error("Forbidden");
+    if (!isAllowedProposalPath(path) || typeof content !== "string" || content.length > 100_000 || !content.trim()) throw new Error("InvalidOmDraft");
+    const snapshot = await this.personalOm(actorUserId, ownerUserId);
+    if (snapshot.activeRevision !== baseRevision) throw new Error("OmDraftBaseChanged");
+    if (!snapshot.files.includes(path)) throw new Error("OmFileNotFound");
+    if (!this.ports.omDrafts) throw new Error("OmDraftsUnavailable");
+    const draft = { ownerUserId, path, content, baseRevision, updatedAt: this.ports.system.now() };
+    await this.ports.omDrafts.saveDraft(draft);
+    return draft;
+  }
+
+  async discardPersonalOmDraft(actorUserId: string, ownerUserId: string, path: string) {
+    if (actorUserId !== ownerUserId) throw new Error("Forbidden");
+    await this.personalOm(actorUserId, ownerUserId);
+    if (!isAllowedProposalPath(path)) throw new Error("InvalidOmPath");
+    if (!this.ports.omDrafts) throw new Error("OmDraftsUnavailable");
+    await this.ports.omDrafts.discardDraft(ownerUserId, path);
+  }
+
+  private async omManifest(snapshot: { revision: string; files: string[] }, path: string) {
+    const match = /^work-definitions\/([a-z0-9-]+)\/work\.yml$/.exec(path);
+    if (!match || !snapshot.files.includes(path)) throw new Error("OmManifestNotFound");
+    return { path, revision: snapshot.revision, definition: await this.ports.om.workDefinition(snapshot.revision, match[1]) };
   }
   async trajectory(ticket: string, workId: string) { const session = await this.appSession(ticket); if (session.workId !== workId) throw new Error("WorkNotOwned"); return this.ports.trajectories.read(workId); }
   async recoverCommand(ticket: string, commandId: string) {
@@ -409,7 +680,8 @@ export class ForgeUseCases {
     if (issues.length) throw new Error(`InvalidOperatingModel: ${issues.map((issue) => `${issue.path} ${issue.message}`).join("; ")}`);
   }
   private async adoptReviewedProposal(proposal: ProposalRecord, title: string, reviewedRevision?: string) {
-    if (!title.trim()) throw new Error("ProposalTitleRequired");
+    const commitTitle = proposal.reflectionId ? proposal.reason.replace(/\s+/g, " ").trim().slice(0, 160) : title.trim();
+    if (!commitTitle) throw new Error("ProposalTitleRequired");
     if (!reviewedRevision || proposal.reviewedRevision !== reviewedRevision) throw new Error("ProposalReviewRequired");
     if (await this.ports.om.head(`users/${proposal.ownerUserId}`) !== proposal.baseRevision) throw new Error("ActiveRevisionChanged: rebase required");
     if (await this.ports.om.head(proposal.branchRef) !== reviewedRevision || (await this.ports.om.proposalChanges(proposal.worktreePath)).length) throw new Error("ProposalChangedAfterReview");
@@ -418,17 +690,20 @@ export class ForgeUseCases {
     await this.validateProposalCandidate(reviewedRevision);
     const userWorkspace = await this.ports.om.ensureUserBranch(proposal.ownerUserId);
     const trailer = (value: string) => value.replace(/\s+/g, " ").trim().slice(0, 500);
-    const revision = await this.ports.om.adoptProposal(userWorkspace.branch, userWorkspace.worktree, proposal.branchRef, proposal.baseRevision, {
+    const trailers = {
       "AiricForge-Proposal": proposal.id,
-      "AiricForge-Title": trailer(title),
+      "AiricForge-Title": trailer(commitTitle),
       ...(proposal.reflectionId ? { "AiricForge-Reflection": proposal.reflectionId } : {}),
       "AiricForge-Source": trailer(proposal.source),
       "AiricForge-Reason": trailer(proposal.reason),
       ...(proposal.evidence ? { "AiricForge-Evidence": trailer(proposal.evidence) } : {}),
       "AiricForge-Base": proposal.baseRevision,
-    });
+    };
+    const revision = proposal.upstreamRevision
+      ? await this.ports.om.adoptSynchronizedProposal(userWorkspace.branch, userWorkspace.worktree, proposal.branchRef, proposal.baseRevision, proposal.upstreamRevision, trailers)
+      : await this.ports.om.adoptProposal(userWorkspace.branch, userWorkspace.worktree, proposal.branchRef, proposal.baseRevision, trailers);
     await this.ports.works.adoptProposal(proposal.id);
-    return { revision, title: title.trim() };
+    return { revision, title: commitTitle };
   }
   private async readableProposal(actorUserId: string, proposalId: string): Promise<ProposalRecord> {
     const proposal = await this.ports.works.proposal(proposalId);
@@ -473,5 +748,13 @@ export class ForgeUseCases {
   }
   private async requireAdmin(userId: string): Promise<void> {
     if ((await this.ports.accounts.userById(userId))?.role !== "admin") throw new Error("Forbidden");
+  }
+  private organizationPort(): OrganizationContributionPort {
+    if (!this.ports.organization) throw new Error("OrganizationNotConfigured");
+    return this.ports.organization;
+  }
+  private measurementPort(): MeasurementPort {
+    if (!this.ports.measurements) throw new Error("MeasurementsNotConfigured");
+    return this.ports.measurements;
   }
 }

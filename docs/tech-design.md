@@ -130,7 +130,7 @@ entrypoints/bootstrap 作为组合根，把 adapters 注入 use-cases，并启�
 | startWorkTurn | 解析 Work 上下文，锁定本轮 OM commit，驱动一轮执行 | WorkRepository、OperatingModelRepository、AgentRunnerPort、TrajectoryStore |
 | recordCommandResult | 以 App 回执确认动作结果并写入轨迹 | AppCommandPort、TrajectoryStore |
 | resolveUnknownCommand | 按幂等键查询原命令结果，恢复未知状态 | AppCommandPort、TrajectoryStore |
-| openOrCreateReflection | 保证 Work 与 Reflection 一对一，必要时创建候选分支 | WorkRepository、ProposalWorkspacePort |
+| openOrCreateReflection | 保证 Work 与 Reflection 一对一；首次消息开启会话，首次实际候选写入时才创建 Proposal 分支 | WorkRepository、ProposalWorkspacePort |
 | updateProposalFromReflection | 将对话结论持续写入 Proposal worktree | AgentRunnerPort、ProposalWorkspacePort |
 | adoptProposal | 在 active 分支创建 commit，更新 active OM | OperatingModelRepository、LockPort |
 | abandonProposal | 删除候选分支与 worktree，保留对话记录 | ProposalWorkspacePort |
@@ -139,19 +139,21 @@ entrypoints/bootstrap 作为组合根，把 adapters 注入 use-cases，并启�
 
 ### Agent 运行模型（pi-sdk）
 
+依赖基线（2026-10-14）：`@earendil-works/pi-ai` 与 `@earendil-works/pi-coding-agent` 同步精确锁定为 `1.2.0`，传递依赖由 `pnpm-lock.yaml` 固定。当前 SDK 会话显式关闭扩展发现，不自动启用 CLI 的 MCP、Codemode 或 tool search；这些能力需要经 adapter 显式接入并保持既有工具白名单。Pi Durable 暂未接入，评估与验证记录见 [Pi 1.x 升级评估](acceptance/pi-sdk-1x-upgrade.md)。
+
 两类 agent 共用 pi-sdk 的 `createAgentSession`，差异在 cwd、工具集与系统提示；两者都通过 `AgentRunnerPort` 暴露给 use-cases：
 
 | 维度 | Work Agent | Reflection Agent |
 | --- | --- | --- |
 | 触发 | App 内 Copilot 的用户消息 | Web 工作台中该 Work 的 Reflection 对话 |
-| cwd | 只读 OM 快照目录（按 Turn commit materialize） | 该 Proposal 的专属 worktree |
-| 工具 | 已接受目录中、且 `work.yml` 明确允许的 Command API | Proposal worktree 内的文件读写与 diff |
-| 输出 | 消息、tool call、命令回执引用 | 对话消息 + 持续更新的 Proposal 文件变更 |
+| cwd | 只读 OM 快照目录（按 Turn commit materialize） | `/data/reflection-sessions/{reflectionId}`；Proposal 文件经受限工具访问独立 worktree |
+| 工具 | 已接受目录中、且 `work.yml` 明确允许的 Command API | 当前 Work trajectory 的分页只读资源；指定 lens 下的候选文件读写工具 |
+| 输出 | 消息、tool call、命令回执引用 | 连续对话消息 + lens 版本与来源事件 + Proposal worktree 变更及统一说明 |
 | 业务副作用 | 有（经 App 校验） | 无；仅修改候选分支文件 |
 
 关键约束：Work Agent 不得写 `/project`；Reflection Agent 不得调用业务 Command API。两者的工具注册表在启动 session 时由 adapters 构造，不接受来自模型输出的工具扩展。
 
-会话持久化：pi-sdk 的会话历史以 JSONL 存储于 `/data/agent-sessions/`；产品级轨迹由 TrajectoryStore 单独写入轨迹文件，用于展示、权限过滤与 Reflection 证据检索。轨迹只记录可观察事件，不记录模型私有推理。
+会话持久化：Reflection 的 pi-sdk 会话历史以 JSONL 存储于 `/data/reflection-sessions/{reflectionId}/`；Work 的产品级轨迹由 TrajectoryStore 单独写入轨迹文件，用于展示、权限过滤与 Reflection 证据检索。轨迹只记录可观察事件，不记录模型私有推理。Reflection 的第一条用户消息创建会话；普通消息只讨论，三种 lens 由 slash command 调用。候选文件首次实际写入时才创建 Proposal worktree，避免仅讨论或 API Suggestion 产生空 Proposal。
 
 ## Data Model
 

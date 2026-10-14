@@ -24,10 +24,13 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
 
   app.get("/health", async () => ({ status: "ok", service: "airic-forge" }));
 
-  app.get("/", async (_request, reply) => {
+  const sendWorkspace = async (reply: import("fastify").FastifyReply) => {
     try { return reply.type("text/html; charset=utf-8").send(await readFile(join(runtime.config.webDistDir, "index.html"))); }
     catch { return reply.code(404).send({ error: "WebWorkspaceNotBuilt" }); }
-  });
+  };
+  app.get("/", async (_request, reply) => sendWorkspace(reply));
+  app.get("/works", async (_request, reply) => sendWorkspace(reply));
+  app.get<{ Params: { workId: string } }>("/works/:workId", async (_request, reply) => sendWorkspace(reply));
   app.get<{ Params: { file: string } }>("/assets/:file", async (request, reply) => {
     const file = request.params.file;
     if (!/^[a-zA-Z0-9_.-]+$/.test(file)) return reply.code(404).send({ error: "NotFound" });
@@ -71,19 +74,54 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "CatalogAcceptanceFailed" }); }
   });
 
+  app.get("/api/v1/catalog", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.catalogOverview(actorId)); }
+    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "Forbidden" }); }
+  });
+
+  app.post<{ Params: { digest: string } }>("/api/v1/catalog/:digest/accept-from-workspace", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.acceptCatalogFromWorkspace(actorId, request.params.digest)); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "CatalogCandidateNotFound" ? 404 : 403).send({ error: error instanceof Error ? error.message : "CatalogAcceptanceFailed" }); }
+  });
+
   app.post<{ Body: { email: string; password: string } }>("/api/v1/auth/login", async (request, reply) => {
     const user = await runtime.useCases.login(request.body.email, request.body.password);
     if (!user) return reply.code(401).send({ error: "InvalidCredentials" });
     const token = runtime.webSessions.issue(user.id);
     reply.header("Set-Cookie", sessionCookie(token, request.protocol === "https"));
-    return reply.send({ user });
+    const testIdentitySwitch = runtime.config.testIdentitySwitch && user.role === "admin"
+      ? { originalUserId: user.id, users: await runtime.useCases.listUsers(user.id) } : undefined;
+    return reply.send({ user, ...(testIdentitySwitch ? { testIdentitySwitch } : {}) });
   });
 
   app.get("/api/v1/auth/me", async (request, reply) => {
-    const userId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    const token = cookieToken(request.headers.cookie);
+    const userId = runtime.webSessions.userId(token);
     if (!userId) return reply.code(401).send({ error: "Unauthorized" });
     const user = await runtime.useCases.webUser(userId);
-    return user ? reply.send({ user }) : reply.code(401).send({ error: "Unauthorized" });
+    if (!user) return reply.code(401).send({ error: "Unauthorized" });
+    const originalUserId = runtime.webSessions.originalUserId(token);
+    const originalUser = originalUserId ? await runtime.useCases.webUser(originalUserId) : undefined;
+    const testIdentitySwitch = runtime.config.testIdentitySwitch && originalUser?.role === "admin"
+      ? { originalUserId, users: await runtime.useCases.listUsers(originalUser.id) } : undefined;
+    return reply.send({ user, ...(testIdentitySwitch ? { testIdentitySwitch } : {}) });
+  });
+
+  app.post<{ Body: { userId: string } }>("/api/v1/auth/test-identity", async (request, reply) => {
+    if (!runtime.config.testIdentitySwitch) return reply.code(404).send({ error: "NotFound" });
+    const token = cookieToken(request.headers.cookie);
+    const originalUserId = runtime.webSessions.originalUserId(token);
+    if (!originalUserId) return reply.code(401).send({ error: "Unauthorized" });
+    const originalUser = await runtime.useCases.webUser(originalUserId);
+    if (originalUser?.role !== "admin") return reply.code(403).send({ error: "Forbidden" });
+    const user = await runtime.useCases.webUser(request.body?.userId);
+    if (!user) return reply.code(404).send({ error: "UserNotFound" });
+    runtime.webSessions.switchUser(token, user.id);
+    return reply.send({ user });
   });
 
   app.get("/api/v1/users", async (request, reply) => {
@@ -93,11 +131,22 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     catch { return reply.code(403).send({ error: "Forbidden" }); }
   });
 
-  app.get<{ Params: { ownerId: string } }>("/api/v1/users/:ownerId/works", async (request, reply) => {
+  app.get<{ Params: { ownerId: string }; Querystring: { page?: string } }>("/api/v1/users/:ownerId/works", async (request, reply) => {
     const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
     if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
-    try { return reply.send({ works: await runtime.useCases.worksForUser(actorId, request.params.ownerId) }); }
+    const rawPage = request.query.page ?? "1";
+    if (!/^[1-9]\d{0,5}$/.test(rawPage) || Number(rawPage) > 100_000) return reply.code(400).send({ error: "InvalidWorkPage" });
+    try { return reply.send(await runtime.useCases.worksForUser(actorId, request.params.ownerId, Number(rawPage))); }
     catch { return reply.code(403).send({ error: "Forbidden" }); }
+  });
+
+  app.get<{ Querystring: { page?: string; ownerId?: string; workType?: string; status?: string } }>("/api/v1/works", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    const rawPage = request.query.page ?? "1";
+    if (!/^[1-9]\d{0,5}$/.test(rawPage) || Number(rawPage) > 100_000) return reply.code(400).send({ error: "InvalidWorkPage" });
+    try { return reply.send(await runtime.useCases.listWorks(actorId, { ...(request.query.ownerId ? { ownerUserId: request.query.ownerId } : {}), ...(request.query.workType ? { workType: request.query.workType as "report-authoring" | "report-type-definition" } : {}), ...(request.query.status ? { status: request.query.status as "active" | "completed" } : {}) }, Number(rawPage))); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 400).send({ error: error instanceof Error ? error.message : "WorkListFailed" }); }
   });
 
   app.get<{ Params: { workId: string } }>("/api/v1/works/:workId", async (request, reply) => {
@@ -105,6 +154,30 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
     try { return reply.send(await runtime.useCases.workHistory(actorId, request.params.workId)); }
     catch (error) { return reply.code(error instanceof Error && error.message === "WorkNotFound" ? 404 : 403).send({ error: error instanceof Error ? error.message : "Forbidden" }); }
+  });
+  app.get<{ Params: { workId: string } }>("/api/v1/works/:workId/proposals", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send({ proposals: await runtime.useCases.workProposals(actorId, request.params.workId) }); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "WorkNotFound" ? 404 : 403).send({ error: error instanceof Error ? error.message : "Forbidden" }); }
+  });
+  app.get<{ Params: { workId: string } }>("/api/v1/works/:workId/feedback", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send({ feedback: await runtime.useCases.workFeedback(actorId, request.params.workId) }); }
+    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "Forbidden" }); }
+  });
+  app.post<{ Params: { workId: string }; Body: { kind: "required-human-decision" | "avoidable-correction" | "knowledge-helpful" | "work-outcome-correct" | "work-outcome-incorrect"; note: string } }>("/api/v1/works/:workId/feedback", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.code(201).send(await runtime.useCases.addWorkFeedback(actorId, request.params.workId, request.body.kind, request.body.note)); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 400).send({ error: error instanceof Error ? error.message : "FeedbackRejected" }); }
+  });
+  app.get("/api/v1/measurements/baseline", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.measurementBaseline(actorId)); }
+    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "Forbidden" }); }
   });
 
   app.post<{ Params: { commandId: string } }>("/api/v1/commands/:commandId/recover", async (request, reply) => {
@@ -141,6 +214,98 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
     try { return reply.send(await runtime.useCases.personalOmFile(actorId, request.params.ownerId, request.query.path, request.query.revision)); }
     catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 404).send({ error: error instanceof Error ? error.message : "OmFileNotFound" }); }
+  });
+
+  app.get<{ Params: { ownerId: string }; Querystring: { path: string; revision?: string } }>("/api/v1/om/users/:ownerId/manifest", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.personalOmManifest(actorId, request.params.ownerId, request.query.path, request.query.revision)); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 404).send({ error: error instanceof Error ? error.message : "OmManifestNotFound" }); }
+  });
+
+  app.get<{ Params: { ownerId: string } }>("/api/v1/om/users/:ownerId/drafts", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send({ drafts: await runtime.useCases.personalOmDrafts(actorId, request.params.ownerId) }); }
+    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "Forbidden" }); }
+  });
+  app.put<{ Params: { ownerId: string }; Body: { path: string; content: string; baseRevision: string } }>("/api/v1/om/users/:ownerId/drafts", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.savePersonalOmDraft(actorId, request.params.ownerId, request.body.path, request.body.content, request.body.baseRevision)); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : error instanceof Error && error.message === "OmDraftBaseChanged" ? 409 : 400).send({ error: error instanceof Error ? error.message : "OmDraftSaveFailed" }); }
+  });
+  app.delete<{ Params: { ownerId: string }; Querystring: { path: string } }>("/api/v1/om/users/:ownerId/drafts", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { await runtime.useCases.discardPersonalOmDraft(actorId, request.params.ownerId, request.query.path); return reply.code(204).send(); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 400).send({ error: error instanceof Error ? error.message : "OmDraftDiscardFailed" }); }
+  });
+
+  app.get<{ Querystring: { revision?: string } }>("/api/v1/om/organization", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.organizationOm(actorId, request.query.revision)); }
+    catch (error) { return reply.code(404).send({ error: error instanceof Error ? error.message : "OmUnavailable" }); }
+  });
+  app.get("/api/v1/om/organization/history", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    return reply.send({ commits: await runtime.useCases.organizationOmHistory(actorId) });
+  });
+  app.get<{ Querystring: { path: string; revision?: string } }>("/api/v1/om/organization/file", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.organizationOmFile(actorId, request.query.path, request.query.revision)); }
+    catch (error) { return reply.code(404).send({ error: error instanceof Error ? error.message : "OmFileNotFound" }); }
+  });
+  app.get<{ Querystring: { path: string; revision?: string } }>("/api/v1/om/organization/manifest", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.organizationOmManifest(actorId, request.query.path, request.query.revision)); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 404).send({ error: error instanceof Error ? error.message : "OmManifestNotFound" }); }
+  });
+  app.get<{ Params: { userId: string } }>("/api/v1/organization/compare/:userId", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.compareOrganizationSource(actorId, request.params.userId)); }
+    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "Forbidden" }); }
+  });
+  app.get("/api/v1/organization/contributions", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send({ contributions: await runtime.useCases.organizationContributions(actorId) }); }
+    catch { return reply.code(403).send({ error: "Forbidden" }); }
+  });
+  app.post<{ Body: { authorUserId: string; reason: string; evidence?: string } }>("/api/v1/organization/contributions", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.code(201).send(await runtime.useCases.createOrganizationContribution(actorId, request.body.authorUserId, request.body.reason, request.body.evidence ?? "")); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 400).send({ error: error instanceof Error ? error.message : "ContributionCreationFailed" }); }
+  });
+  app.get<{ Params: { id: string } }>("/api/v1/organization/contributions/:id", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.organizationContribution(actorId, request.params.id)); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 404).send({ error: error instanceof Error ? error.message : "ContributionNotFound" }); }
+  });
+  app.post<{ Params: { id: string }; Body: { selectedPaths: string[] } }>("/api/v1/organization/contributions/:id/review", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.reviewOrganizationContribution(actorId, request.params.id, request.body.selectedPaths)); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 409).send({ error: error instanceof Error ? error.message : "ContributionReviewFailed" }); }
+  });
+  app.post<{ Params: { id: string }; Body: { reviewedRevision: string } }>("/api/v1/organization/contributions/:id/accept", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.acceptOrganizationContribution(actorId, request.params.id, request.body.reviewedRevision)); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 409).send({ error: error instanceof Error ? error.message : "ContributionAcceptanceFailed" }); }
+  });
+  app.post("/api/v1/organization/sync", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.code(201).send(await runtime.useCases.createOrganizationSync(actorId)); }
+    catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : "OrganizationSyncFailed" }); }
   });
 
   app.post("/api/v1/auth/logout", async (request, reply) => {
@@ -182,11 +347,18 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "Forbidden" }); }
   });
 
-  app.post<{ Params: { workId: string }; Body: { lensId: string; question: string; evidenceEventIds: string[] } }>("/api/v1/works/:workId/reflections", async (request, reply) => {
+  app.post<{ Params: { workId: string }; Body: { message: string } }>("/api/v1/works/:workId/reflections", async (request, reply) => {
     const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
     if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
-    try { return reply.code(201).send(await runtime.useCases.startReflection(actorId, request.params.workId, request.body.lensId, request.body.question, request.body.evidenceEventIds ?? [])); }
+    try { return reply.code(201).send(await runtime.useCases.startReflectionConversation(actorId, request.params.workId, request.body?.message ?? "")); }
     catch (error) { return reply.code(error instanceof Error && ["WorkNotOwned", "ReflectionEvidenceMismatch"].includes(error.message) ? 403 : 400).send({ error: error instanceof Error ? error.message : "ReflectionFailed" }); }
+  });
+
+  app.post<{ Params: { workId: string } }>("/api/v1/works/:workId/reflection/open", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.openWorkReflection(actorId, request.params.workId)); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "WorkNotOwned" ? 403 : 400).send({ error: error instanceof Error ? error.message : "ReflectionOpenFailed" }); }
   });
 
   app.get<{ Params: { reflectionId: string } }>("/api/v1/reflections/:reflectionId", async (request, reply) => {
@@ -217,11 +389,13 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     catch { return reply.code(403).send({ error: "Forbidden" }); }
   });
 
-  app.post<{ Body: { source: string; reason: string; evidence?: string } }>("/api/v1/proposals", async (request, reply) => {
+  app.get<{ Querystring: { page?: string; ownerId?: string; status?: string; source?: string } }>("/api/v1/proposals", async (request, reply) => {
     const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
     if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
-    try { return reply.code(201).send(await runtime.useCases.createPersonalProposal(actorId, request.body.source, request.body.reason, request.body.evidence ?? "")); }
-    catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "ProposalCreationFailed" }); }
+    const rawPage = request.query.page ?? "1";
+    if (!/^[1-9]\d{0,5}$/.test(rawPage) || Number(rawPage) > 100_000) return reply.code(400).send({ error: "InvalidProposalPage" });
+    try { return reply.send(await runtime.useCases.listProposals(actorId, { ...(request.query.ownerId ? { ownerUserId: request.query.ownerId } : {}), ...(request.query.status ? { status: request.query.status as "open" | "adopted" | "abandoned" } : {}), ...(request.query.source ? { source: request.query.source as "personal" | "reflection" | "organization-sync" } : {}) }, Number(rawPage))); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 400).send({ error: error instanceof Error ? error.message : "ProposalListFailed" }); }
   });
 
   app.get<{ Params: { proposalId: string } }>("/api/v1/proposals/:proposalId", async (request, reply) => {
@@ -272,6 +446,13 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : "ProposalAdoptionFailed" }); }
   });
 
+  app.post<{ Params: { proposalId: string } }>("/api/v1/proposals/:proposalId/abandon", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.abandonPersonalProposal(actorId, request.params.proposalId)); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 400).send({ error: error instanceof Error ? error.message : "ProposalAbandonFailed" }); }
+  });
+
   app.after(() => app.get("/acp", { websocket: true }, (socket) => {
     let ticket = "";
     socket.on("close", () => { if (ticket) void runtime.useCases.disconnectAcp(ticket); });
@@ -303,6 +484,7 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const config = loadConfig();
+  if (config.testIdentitySwitch && config.bindHost && config.bindHost !== "127.0.0.1") throw new Error("TestIdentitySwitchRequiresLoopback");
   const app = buildServer(new ForgeRuntime(config));
-  await app.listen({ port: config.port, host: "0.0.0.0" });
+  await app.listen({ port: config.port, host: config.bindHost ?? (config.testIdentitySwitch ? "127.0.0.1" : "0.0.0.0") });
 }

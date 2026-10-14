@@ -12,6 +12,12 @@ p0-stages.feature 是行为合同草案，按开发计划的阶段 1–5 分组�
 
 阶段 4 的三种 Reflection lens、证据归因、API Suggestion、并行 Proposal、真实 Report 闭环和容器重启恢复见 stage-4-record.md。
 
-阶段 5 的三份数据快照与隔离还原、同机部署示例和 P0 总验收进度见 stage-5-record.md。该记录在所有门槛通过前保持“进行中”。
+阶段 5 的三份数据快照与隔离还原、同机部署示例和 P0 总验收结果见 stage-5-record.md。
+
+阶段 6 的组织选择性吸收、成员同步、成效基线和隔离容量样本见 stage-6-record.md；行为契约见 p1-organization.feature。
+
+Work、Reflection 与 Proposal 的入口和资源关系见 work-reflection-proposal.feature。
+
+Work 列表分页、独立详情地址与权限见 work-list-navigation.feature。
 
 P0-01～13、15～21 的逐项证据索引见 p0-evidence-matrix.md。

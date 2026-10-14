@@ -30,6 +30,6 @@ export class ForgeRuntime {
     this.trajectories = new JsonlTrajectoryStore(config.dataDir);
     this.certReporter = new CertReporterClient(config.certReporterUrl);
     this.om.initialize();
-    this.useCases = new ForgeUseCases({ accounts: this.db, works: this.db, om: this.om, certReporter: this.certReporter, catalogs: this.db, agents: new PiWorkAgentRunner(config), reflectionAgent: new PiReflectionAgentRunner(config), sessions: this.sessions, evidenceExtractor: new LocalEvidenceExtractor(), evidenceSessions: this.evidenceSessions, passwordSetups: this.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: this.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
+    this.useCases = new ForgeUseCases({ accounts: this.db, works: this.db, om: this.om, omDrafts: this.db, organization: this.db, measurements: this.db, certReporter: this.certReporter, catalogs: this.db, agents: new PiWorkAgentRunner(config), reflectionAgent: new PiReflectionAgentRunner(config), sessions: this.sessions, evidenceExtractor: new LocalEvidenceExtractor(), evidenceSessions: this.evidenceSessions, passwordSetups: this.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: this.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
   }
 }

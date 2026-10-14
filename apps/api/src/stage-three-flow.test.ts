@@ -11,6 +11,7 @@ import type { ForgeConfig } from "./config.js";
 import { InMemoryPasswordSetupStore } from "./password-setup-store.js";
 import { ForgeRuntime } from "./runtime.js";
 import { systemPort } from "./system-port.js";
+import { createTestProposal } from "./test-proposal-fixture.js";
 
 test("personal Proposals keep active HEAD stable until reviewed adoption; stale peer rebases and next Turn uses new HEAD", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-three-"));
@@ -36,8 +37,8 @@ test("personal Proposals keep active HEAD stable until reviewed adoption; stale 
     const session = await useCases.bootstrap({ token: "token", reportId: "report-1" });
     const oldTurn = await useCases.startTurn(session.ticket, "Read the current policy");
     const base = oldTurn.turn.omRevision;
-    const first = await useCases.createPersonalProposal(author.id, "manual", "Clarify policy", "Work report-1");
-    const second = await useCases.createPersonalProposal(author.id, "manual", "Clarify method", "Work report-1");
+    const first = createTestProposal(runtime, author.id, "Clarify policy", "Work report-1");
+    const second = createTestProposal(runtime, author.id, "Clarify method", "Work report-1");
     assert.equal(first.baseRevision, base); assert.equal(second.baseRevision, base);
     await assert.rejects(() => useCases.personalProposal(other.id, first.id), /Forbidden/);
     await assert.rejects(() => useCases.writePersonalProposal(other.id, first.id, "work-definitions/report-authoring/policy.md", "bad"), /Forbidden/);
@@ -77,13 +78,13 @@ test("personal Proposals keep active HEAD stable until reviewed adoption; stale 
     assert.equal(oldTurn.turn.omRevision, base);
     assert.doesNotMatch(observedPolicies[0], /Stage 3 reviewed policy/);
     assert.match(observedPolicies[1], /Stage 3 reviewed policy/);
-    const third = await useCases.createPersonalProposal(author.id, "manual", "Add another WD", "Schema check");
+    const third = createTestProposal(runtime, author.id, "Add another WD", "Schema check");
     await useCases.writePersonalProposal(author.id, third.id, "subject-knowledge/inspection-guidance.md", `---\nid: inspection-guidance\ntitle: Inspection guidance\nsummary: Facts needed for inspection\ntopics: [inspection]\n---\n\nKeep source locations with report facts.\n`);
     await useCases.writePersonalProposal(author.id, third.id, "work-definitions/inspection-check/work.yml", `schemaVersion: 1\nid: inspection-check\ntitle: Inspection check\ndescription: Check report facts.\ncapabilities:\n  allowed: [report.read]\ndocuments: []\nknowledge:\n  bootstrap: []\n  available: [inspection-guidance]\ncompletion:\n  mode: user\n  requiredCapabilities: []\n`);
     const thirdReview = await useCases.reviewPersonalProposal(author.id, third.id);
     const adoptedThird = await useCases.adoptPersonalProposal(author.id, third.id, "Add inspection check", thirdReview.reviewedRevision);
     assert.equal(runtime.om.workDefinition(adoptedThird.revision, "inspection-check").title, "Inspection check");
-    const invalid = await useCases.createPersonalProposal(author.id, "manual", "Try invalid knowledge", "Validation gate");
+    const invalid = createTestProposal(runtime, author.id, "Try invalid knowledge", "Validation gate");
     await useCases.writePersonalProposal(author.id, invalid.id, "subject-knowledge/invalid.md", "# Missing front matter\n");
     await assert.rejects(() => useCases.reviewPersonalProposal(author.id, invalid.id), /InvalidOperatingModel.*front matter/);
     assert.equal((await useCases.personalProposal(author.id, invalid.id)).proposal.reviewedRevision, undefined);

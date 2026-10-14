@@ -2,9 +2,11 @@
 
 > 状态：实施中；以 `airic-forge-prd.md`、`decisions/0001-p0-runtime-contract.md` 和已确认的 CertReporter P0 集成计划为基线。
 > 范围：单实例、单业务 App、多用户；先完成个人工作与学习闭环（P0），再完成组织协作与运行增强（P1）。  
-> 当前进度：阶段 0–5 的本机 P0 交付验收已完成；正式生产部署需要目标环境配置。见 `acceptance/stage-0-record.md` 至 `acceptance/stage-5-record.md`。
+> 当前进度：阶段 0–5 的本机 P0 交付验收已完成；阶段 6 的组织 OM 治理、个人同步与测量基线已在隔离实例验收。正式生产部署和真实业务成效目标仍需目标环境数据。见 `acceptance/stage-0-record.md` 至 `acceptance/stage-6-record.md`。
 
 ## 当前推进位置
+
+2026-10-14 维护记录：Pi SDK 从 `0.99.2` 升级至精确锁定的 `1.2.0`；构建、类型检查、34 项自动测试与直接 SDK 冒烟验证通过。Codemode、MCP 和 Pi Durable 的适配评估见 [升级记录](acceptance/pi-sdk-1x-upgrade.md)，新增能力尚未启用。
 
 严格按 **阶段 0 → 阶段 1 → 阶段 2 → 阶段 3 → 阶段 4 → 阶段 5** 交付。跨阶段发现的缺陷只在阻断当前阶段验收、安全边界或数据正确性时立即修复；其余记入所属阶段，不用零散修补代替阶段完成。
 
@@ -16,6 +18,7 @@
 | 3. 个人 OM 编辑、提议与采纳 | 已完成，见 acceptance/stage-3-record.md | 阶段 4 已复用审阅、条件采纳和 rebase |
 | 4. 从轨迹到可审核的 Reflection | 已完成，见 acceptance/stage-4-record.md | 进入阶段 5；部署备份还原和 P0 总验收仍待完成 |
 | 5. P0 交付与恢复验收 | 已完成本机验收，见 acceptance/stage-5-record.md | 进入 P1 排期；正式上线按目标环境另行配置域名/TLS、固定镜像和密钥 |
+| 6. P1 组织吸收与运行增强 | 已完成隔离实例的组织 OM、成员同步、反馈口径与容量样本验证，见 acceptance/stage-6-record.md | 在真实部署积累可比 Work 样本，制定数值目标并复测容量与恢复 |
 
 ## 1. 要实现的行为
 
@@ -45,7 +48,7 @@
 | OM 文档格式 | 文档曾使用 `definition.md` 与 `work.yml` 两种示例 | 已定 `work.yml` 多文件 package，SK 独立于 `subject-knowledge/`；仍需补齐迁移与引用夹具 |
 | 个人 active 版本 | 曾同时描述显式 active 与 HEAD active | 已定个人分支 HEAD 即 active，外部提交下一 Turn 生效；Proposal 只在 base 等于 active HEAD 时可采纳 |
 | Proposal 与工作区 | 曾限制每用户一个未完成 Proposal | 已定每个 Proposal 独立分支与 worktree，可并行；阶段 3 已验证重启恢复和冲突处理 |
-| Work / Session / Reflection | 基数和恢复键曾未定 | 已定同一用户、Work Type、Report 页面恢复长期 Work/Session；每 Work 可多 Reflection，每 Reflection 至多一个 Proposal；API Suggestion 为可导出结果 |
+| Work / Session / Reflection | 基数和恢复键曾未定 | 同一用户、Work Type、Report 页面恢复长期 Work/Session；按原型交互，每 Work 打开或恢复一段 Reflection 对话，每 Reflection 至多一个 Proposal；API Suggestion 为可导出结果。既有多段 Reflection 记录保留历史可读 |
 | 身份与权限 | Web 登录及 App 身份关联曾未定 | 已定规范化 Email 自动关联、首次访问建无密码账户、独立密码与短期 Web 会话；资源权限矩阵仍需补齐 |
 | App / ACP 契约 | 页面事实、Token 与命令恢复曾未统一 | 已定 CertReporter 真实业务 App、`report.context` 权威投影、ACP WebSocket、内存 App token 与按 `commandId` 查回执；可执行夹具见 API 契约测试 |
 | Reflection lens | 原型只含两种 lens | 已定三种内置 lens，由管理员启停和版本化提示，不新增类型 |
@@ -61,8 +64,8 @@
 | --- | --- | --- | --- |
 | **1. 可部署的身份与 OM 基础** | 空实例启动；两个 App 用户进入工作台，各自看到个人 OM，管理员可查看但不会改变所有者 | **部署/身份边界：**镜像、`/project` 与 `/data` 初始化、App 身份验证、Web/ACP 会话、所有者/管理员鉴权。**OM 边界：**组织 `main`、个人分支及工作区、已采纳修订读取、WD/SK 解析和结构/引用校验。**界面边界：**把原型中的登录、个人 OM 和管理员用户页接入真实 API | 空目录与已有目录启动；同一身份重复进入不重复建号；两普通用户互不可见；管理员读取他人资源不更换其模型所有者；重启后身份和 OM 仍可读。覆盖 P0-01～05、11 的基础部分 |
 | **2. App 内完成可追溯的 Work** | 在 CertReporter Report 页面打开 Copilot，启动/恢复 Work，看到流式进度；允许的命令得到 App 回执并刷新页面；AiricForge 工作台可查看同一 Work 的 Turn、Action 和上下文来源 | **App 接入边界：**CertReporter 权威投影、App 专用 OpenAPI 候选/接受、能力标识与 WD 白名单、身份 Token 透传、命令幂等与结果查询。**运行边界：**pi-sdk Work Agent 的受限工具集、ACP、每 Turn 固定 OM 和能力目录版本、Context Compiler 与来源清单。**轨迹边界：**规范事件、回执、未知结果及恢复。**界面边界：**CertReporter Drawer 与 Work 详情 | 演示被允许的命令、App 拒绝、越权目标、Token 撤销、页面切换、响应丢失后按同一幂等键查结果；每 Turn 能定位 OM 修订、WD/SK 文档与命令回执；断线与重启后可继续读取。覆盖 P0-06～10、18～19 的运行部分 |
-| **3. 个人 OM 编辑、提议与采纳** | 普通用户在 Web 中改 WD/SK，查看差异、来源和检查结果，确认一次采纳；下一轮使用新版本 | **文档治理边界：**Proposal 的独立 worktree、基准与证据、结构/能力/路径/依赖校验、预期 active HEAD 的条件提交；个人 active 分支的外部 Git 提交从下一 Turn 生效。**界面边界：**编辑、差异、冲突和历史视图。**运行边界：**每轮重新解析 active，执行中快照保持不变 | 未提交的工作区内容不进入运行时；外部 active 提交不被覆盖；并发 Proposal 采纳只有一个成功且另一请求可 rebase；新增 WD 无需重启；旧 Turn 仍能读到原内容。覆盖 P0-12～13、18，并补全 P0-11 |
-| **4. 从轨迹到可审核的 Reflection** | 用户从有权读取的 Work 选证据与三种 lens，对话得出有证据的 SK/WD 改动或 API 建议；证据不足时保存分析而不强行产生 Proposal | **学习边界：**Reflection Agent 只读被授权的轨迹证据，只能修改候选 OM 文件，不能调用 App Command API；结果记录 lens 版本、来源事件和归因理由。**治理边界：**每个 Proposal 独立 worktree、并发防混写，复用阶段 3 的审阅与采纳。**建议边界：**API Suggestion 可导出，但不进入工具目录。**界面边界：**Reflection 工作区、提议和建议详情 | 三 lens 都有可演示路径；无证据和仅 API 建议路径不产生空提交；两个并行 Proposal 不混写；从 App 工作到下一轮版本变化的浏览器闭环通过。覆盖 P0-15～17、21 |
+| **3. 个人 OM 编辑、提议与采纳** | 普通用户在 Web 中编辑 WD/SK 并保存私有草稿；Reflection 基于 Work 证据形成 Proposal 后查看差异、来源和检查结果，确认采纳；下一轮使用新版本 | **文档治理边界：**草稿不产生 Git 提交或 Proposal；Reflection Proposal 使用独立 worktree、基准与证据、结构/能力/路径/依赖校验、预期 active HEAD 的条件提交；个人 active 分支的外部 Git 提交从下一 Turn 生效。**界面边界：**草稿编辑、差异、冲突和历史视图。**运行边界：**每轮重新解析 active，执行中快照保持不变 | 未采纳草稿不进入运行时；外部 active 提交不被覆盖；并发 Proposal 采纳只有一个成功且另一请求可 rebase；新增 WD 无需重启；旧 Turn 仍能读到原内容。覆盖 P0-12～13、18，并补全 P0-11 |
+| **4. 从轨迹到可审核的 Reflection** | 用户在 Work 打开或恢复唯一的连续 Reflection 会话；Agent 按需读取该 Work 的轨迹，用户用三种 slash lens 形成有证据的 SK/WD 改动或 API 建议；证据不足时保存讨论而不强行产生 Proposal | **学习边界：**Reflection Agent 只读被授权的轨迹证据，只能修改候选 OM 文件，不能调用 App Command API；结果记录 lens 版本、来源事件和归因理由。**治理边界：**每个 Proposal 独立 worktree、并发防混写，复用阶段 3 的审阅与采纳。**建议边界：**API Suggestion 可导出，但不进入工具目录。**界面边界：**Reflection 工作区、提议和建议详情 | 三 lens 都有可演示路径；无证据和仅 API 建议路径不产生空提交；两个并行 Proposal 不混写；从 App 工作到下一轮版本变化的浏览器闭环通过。覆盖 P0-15～17、21 |
 | **5. P0 交付与恢复验收** | AiricForge 镜像可与 CertReporter 同机部署；故障后用户可找到既有工作与未完成提议 | **部署/数据边界：**迁移、故障恢复、备份还原、凭据隔离、日志与健康检查、最小接入说明。**验收边界：**按 PRD 场景执行真实浏览器、API、Git 和 App 回执验证，记录证据与缺口 | 新环境按说明部署；备份与恢复 Forge `/project`、Forge `/data` 及 CertReporter 自身数据后身份、版本、轨迹、Reflection 和 Proposal 一致；P0-01～13、15～21 逐项有结果与证据；安全/未知命令场景实测通过。P0-14 在 PRD 中缺号，不虚构需求 |
 | **6. P1 组织吸收与运行增强** | 管理员比较个人与组织版本，选择性吸收有依据的变更；成员自行同步并处理冲突；可衡量真实改善 | **组织治理边界：**来源与依赖检查、选定内容合并、历史修订保留、组织内容与私人轨迹隔离。**个人同步边界：**rebase/冲突工作流，显式采纳后才改变 active；旧 Turn 引用仍可读取。**产品测量边界：**采纳时长、SK/WD 复用、必要人工决策与可避免纠正分开统计。**运行边界：**明确样本规模后做容量与恢复测试 | P1-01～08 在真实服务通过；组织吸收不暴露私人 Session；成员未同步前版本不变；rebase 不破坏历史归因；形成有样本口径的基线，再制定数值目标 |
 

@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { parse, stringify } from "yaml";
@@ -51,6 +51,11 @@ export class GitOperatingModel {
   containsRevision(branch: string, revision: string): boolean {
     if (!/^[0-9a-f]{40}$/.test(revision)) return false;
     return run(this.projectDir, ["rev-list", "--first-parent", branch]).split("\n").includes(revision);
+  }
+
+  includesRevision(branch: string, revision: string): boolean {
+    if (!/^[0-9a-f]{40}$/.test(revision)) return false;
+    return spawnSync("git", ["merge-base", "--is-ancestor", revision, branch], { cwd: this.projectDir }).status === 0;
   }
 
   workDefinition(revision: string, id: string): WorkDefinition {
@@ -197,6 +202,73 @@ export class GitOperatingModel {
     const message = ["Adopt AiricForge Proposal", "", ...Object.entries(trailers).map(([key, value]) => `${key}: ${value}`)];
     try { run(userWorktree, ["-c", "user.name=AiricForge", "-c", "user.email=forge@localhost", "merge", "--no-ff", proposalBranch, "-m", message.join("\n")]); }
     catch (error) { spawnSync("git", ["merge", "--abort"], { cwd: userWorktree, encoding: "utf8" }); throw error; }
+    return this.head(userBranch);
+  }
+
+  divergence(sourceRevision: string, targetRevision: string): { baseRevision: string; changedPaths: string[]; diff: string } {
+    const baseRevision = run(this.projectDir, ["merge-base", sourceRevision, targetRevision]);
+    const changedPaths = run(this.projectDir, ["diff", "--name-only", baseRevision, sourceRevision, "--", "work-definitions", "subject-knowledge"]).split("\n").filter(Boolean);
+    const diff = run(this.projectDir, ["diff", "--no-ext-diff", baseRevision, sourceRevision, "--", "work-definitions", "subject-knowledge"]);
+    return { baseRevision, changedPaths, diff };
+  }
+
+  pinContributionSource(contributionId: string, sourceRevision: string): void {
+    if (!/^[a-zA-Z0-9_-]+$/.test(contributionId) || !/^[0-9a-f]{40}$/.test(sourceRevision)) throw new Error("InvalidContributionSource");
+    run(this.projectDir, ["update-ref", `refs/forge/contributions/${contributionId}/source`, sourceRevision]);
+  }
+
+  prepareContribution(contributionId: string, sourceRevision: string, baseRevision: string, mainRevision: string, selectedPaths: string[], message: string): { branch: string; worktree: string; revision: string } {
+    if (this.head("main") !== mainRevision) throw new Error("OrganizationReviewStale");
+    const changed = new Set(this.divergence(sourceRevision, mainRevision).changedPaths);
+    if (!selectedPaths.length || selectedPaths.some((path) => !isAllowedProposalPath(path) || !changed.has(path))) throw new Error("InvalidContributionSelection");
+    const branch = `contributions/${contributionId}`;
+    const worktree = resolve(this.dataDir, "worktrees", "contributions", contributionId);
+    const baseFiles = new Set(this.listFiles(baseRevision));
+    const mainFiles = new Set(this.listFiles(mainRevision));
+    const sourceFiles = new Set(this.listFiles(sourceRevision));
+    for (const path of selectedPaths) {
+      const baseContent = baseFiles.has(path) ? this.document(baseRevision, path) : undefined;
+      const mainContent = mainFiles.has(path) ? this.document(mainRevision, path) : undefined;
+      const sourceContent = sourceFiles.has(path) ? this.document(sourceRevision, path) : undefined;
+      if (mainContent !== baseContent && mainContent !== sourceContent) throw new Error(`OrganizationPathConflict: ${path}`);
+    }
+    mkdirSync(resolve(worktree, ".."), { recursive: true });
+    if (existsSync(worktree)) run(worktree, ["reset", "--hard", mainRevision]);
+    else run(this.projectDir, ["worktree", "add", "-b", branch, worktree, mainRevision]);
+    for (const path of selectedPaths) {
+      const sourceContent = sourceFiles.has(path) ? this.document(sourceRevision, path) : undefined;
+      if (sourceContent === undefined) rmSync(resolve(worktree, path), { force: true });
+      else this.writeProposalFile(worktree, path, sourceContent);
+    }
+    if (!this.proposalChanges(worktree).length) throw new Error("ContributionHasNoChanges");
+    run(worktree, ["add", "-A"]);
+    run(worktree, ["-c", "user.name=AiricForge", "-c", "user.email=forge@localhost", "commit", "-m", message]);
+    return { branch, worktree, revision: this.head(branch) };
+  }
+
+  acceptContribution(candidateBranch: string, expectedMainRevision: string): string {
+    if (this.head("main") !== expectedMainRevision) throw new Error("OrganizationReviewStale");
+    if (run(this.projectDir, ["rev-parse", `${candidateBranch}^`]) !== expectedMainRevision) throw new Error("OrganizationReviewStale");
+    run(this.projectDir, ["merge", "--ff-only", candidateBranch]);
+    return this.head("main");
+  }
+
+  synchronizeProposal(worktree: string, personalRevision: string, mainRevision: string): void {
+    const base = run(this.projectDir, ["merge-base", personalRevision, mainRevision]);
+    this.rebaseProposal(worktree, base, mainRevision);
+  }
+
+  adoptSynchronizedProposal(userBranch: string, userWorktree: string, proposalBranch: string, baseRevision: string, expectedMainRevision: string, trailers: Record<string, string>): string {
+    if (this.head(userBranch) !== baseRevision) throw new Error("ActiveRevisionChanged");
+    if (this.head("main") !== expectedMainRevision) throw new Error("OrganizationRevisionChanged");
+    if (this.proposalChanges(userWorktree).length) throw new Error("UserWorktreeDirty");
+    const message = ["Adopt organization OM synchronization", "", ...Object.entries(trailers).map(([key, value]) => `${key}: ${value}`), `AiricForge-Upstream: ${expectedMainRevision}`].join("\n");
+    try {
+      run(userWorktree, ["-c", "user.name=AiricForge", "-c", "user.email=forge@localhost", "merge", "--no-commit", "--no-ff", "-s", "ours", proposalBranch]);
+      run(userWorktree, ["restore", "--source", proposalBranch, "--staged", "--worktree", "."]);
+      if (run(userWorktree, ["write-tree"]) !== run(userWorktree, ["rev-parse", `${proposalBranch}^{tree}`])) throw new Error("SynchronizedTreeMismatch");
+      run(userWorktree, ["-c", "user.name=AiricForge", "-c", "user.email=forge@localhost", "commit", "-m", message]);
+    } catch (error) { spawnSync("git", ["merge", "--abort"], { cwd: userWorktree, encoding: "utf8" }); throw error; }
     return this.head(userBranch);
   }
 }
