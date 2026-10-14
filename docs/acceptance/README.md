@@ -21,3 +21,5 @@ Work、Reflection 与 Proposal 的入口和资源关系见 work-reflection-propo
 Work 列表分页、独立详情地址与权限见 work-list-navigation.feature。
 
 P0-01～13、15～21 的逐项证据索引见 p0-evidence-matrix.md。
+
+Material UI 工作台的真实页面迁移、自动化浏览器场景和视觉证据见 [mui-migration-record.md](mui-migration-record.md)。原型继续作为历史参考，生产呈现标准改为 MUI 默认设计语言。

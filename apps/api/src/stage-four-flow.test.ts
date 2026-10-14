@@ -3,7 +3,8 @@ import test from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { ForgeUseCases, type AgentRunnerPort, type CapabilityCatalog, type CertReporterPort, type ReflectionAgentPort } from "@airic-forge/domain";
+import { ForgeUseCases, type AgentRunnerPort, type AppPort, type ReflectionAgentPort } from "@airic-forge/domain";
+import { testCatalog, acknowledgeCheckpoint } from "./certlab-test-catalog.js";
 import { hashPassword, verifyPassword } from "./auth.js";
 import { InMemoryAppSessionStore } from "./app-session-store.js";
 import { InMemoryPasswordSetupStore } from "./password-setup-store.js";
@@ -13,10 +14,9 @@ import { systemPort } from "./system-port.js";
 
 test("three Reflection lenses preserve evidence and version, create only supported outcomes, and keep concurrent worktrees separate", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-four-"));
-  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/project"), webDistDir: join(root, "web"), certReporterUrl: "http://127.0.0.1:1", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
-  const ids = ["report.context", "report.read", "report.gaps", "report.update-master", "report.update-data", "report-type.context", "report-type.read", "report-type.list-published-standards", "report-type.preview", "report-type.update-draft"];
-  const catalog: CapabilityCatalog = { id: "accepted", appId: "certreporter", domainRelease: "certreporter/v1", digest: "digest", acceptedAt: "", capabilities: ids.map((id) => ({ id, kind: id.startsWith("report.update") || id === "report-type.update-draft" ? "command" : "query", title: id, description: "", inputSchema: {}, outputSchema: {} })) };
-  const app: CertReporterPort = { identity: async () => ({ appId: "certreporter", appUserId: "author", email: "author@example.com", displayName: "Author" }), catalog: async () => catalog, openApi: async () => ({}), reportContext: async (_token, reportId) => ({ resource: { namespace: "certreporter", resourceType: "report", resourceId: reportId, revision: "1" } }), query: async () => ({}), submitCommand: async () => ({ status: "rejected" }), receipt: async () => undefined };
+  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
+  const catalog = testCatalog("digest");
+  const app: AppPort = { identity: async () => ({ appId: "certlab", appUserId: "author", email: "author@example.com", displayName: "Author" }), catalog: async () => catalog, openApi: async () => ({}), reportContext: async (_token, reportId) => ({ resource: { namespace: "certlab", resourceType: "report", resourceId: reportId } }), query: async () => ({}), submitCommand: async () => ({ status: "rejected" }), receipt: async () => undefined };
   const availableKnowledge: string[][] = [];
   const agents: AgentRunnerPort = { runWork: async (input) => { availableKnowledge.push(input.availableDocumentIds); return { text: "The report needs an evidence location." }; } };
   const calls: Array<{ lens: string; evidenceIds: string[]; draftPaths: string[] }> = [];
@@ -33,15 +33,15 @@ test("three Reflection lenses preserve evidence and version, create only support
     return { outcome: "proposal", analysis: "Preserve a reusable evidence-location note.", attribution: "The selected Turn exposed an evidence-location gap.", citedEventIds, edits: [{ path: `subject-knowledge/${stableId}.md`, content: `---\nid: ${stableId}\ntitle: Evidence location\nsummary: Record the source location for report facts.\ntopics: [evidence]\n---\n\nKeep the source location with each extracted fact.\n` }] };
   } };
   const runtime = new ForgeRuntime(config);
-  const compose = (source: ForgeRuntime) => new ForgeUseCases({ accounts: source.db, works: source.db, om: source.om, omDrafts: source.db, certReporter: app, catalogs: source.db, agents, reflectionAgent, sessions: new InMemoryAppSessionStore(), passwordSetups: new InMemoryPasswordSetupStore(), passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: source.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
+  const compose = (source: ForgeRuntime) => new ForgeUseCases({ accounts: source.db, works: source.db, om: source.om, omDrafts: source.db, app, catalogs: source.db, agents, reflectionAgent, sessions: new InMemoryAppSessionStore(), passwordSetups: new InMemoryPasswordSetupStore(), passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: source.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
   try {
     const author = runtime.db.ensureUser("author@example.com", false);
     const other = runtime.db.ensureUser("other@example.com", false);
     const admin = runtime.db.ensureUser("admin@example.com", true);
-    runtime.db.saveCandidate(catalog, { paths: {} }); runtime.db.accept("certreporter", catalog.digest, admin.id);
+    runtime.db.saveCandidate(catalog, { paths: {} }); runtime.db.accept("certlab", catalog.digest, admin.id);
     const useCases = compose(runtime);
     const openWork = async (reportId: string) => {
-      const session = await useCases.bootstrap({ token: "token", reportId });
+      const session = await useCases.bootstrap({ token: "token", reportId, goal: "Find evidence location" });
       await useCases.startTurn(session.ticket, "Find the missing evidence location");
       return session;
     };
@@ -79,7 +79,7 @@ test("three Reflection lenses preserve evidence and version, create only support
     assert.equal(suggestion.proposal, undefined);
     assert.match(await useCases.reflectionSuggestion(author.id, suggestion.reflection.id), /report\.evidence-location/);
     await assert.rejects(() => useCases.reflectionSuggestion(other.id, suggestion.reflection.id), /Forbidden/);
-    assert.equal((await runtime.db.accepted("certreporter"))?.digest, catalog.digest);
+    assert.equal((await runtime.db.accepted("certlab"))?.digest, catalog.digest);
     assert.equal((await useCases.reflectionDetail(admin.id, suggestion.reflection.id)).reflection.ownerUserId, author.id);
     await assert.rejects(() => useCases.continueReflection(admin.id, suggestion.reflection.id, "Change it"), /ReflectionNotOwned/);
     const beforeLens = (await useCases.reflectionDetail(author.id, domainA.reflection.id)).reflection;
@@ -96,6 +96,7 @@ test("three Reflection lenses preserve evidence and version, create only support
     assert.equal((await useCases.reflectionDetail(author.id, domainA.reflection.id)).reflection.status, "completed");
     await assert.rejects(() => useCases.continueReflection(author.id, domainA.reflection.id, "Keep talking"), /ReflectionClosed/);
     await assert.rejects(() => useCases.adoptPersonalProposal(author.id, domainB.proposal!.id, "Stale", "not-reviewed"), /ProposalReviewRequired/);
+    await acknowledgeCheckpoint(useCases, session.ticket);
     const nextTurn = await useCases.startTurn(session.ticket, "Read the updated OM");
     assert.equal(nextTurn.turn.omRevision, adopted.revision);
     assert.equal(turn?.omRevision, headBefore);
@@ -110,9 +111,9 @@ test("three Reflection lenses preserve evidence and version, create only support
 
 test("Reflection conversation starts with a message and reads only its Work trajectory through a bounded resource", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-reflection-chat-"));
-  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/project"), webDistDir: join(root, "web"), certReporterUrl: "http://127.0.0.1:1", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
+  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
   const runtime = new ForgeRuntime(config);
-  const app: CertReporterPort = { identity: async () => ({ appId: "certreporter", appUserId: "author", email: "author@example.com", displayName: "Author" }), catalog: async () => ({ id: "accepted", appId: "certreporter", domainRelease: "certreporter/v1", digest: "digest", acceptedAt: "", capabilities: ["report.context", "report.read", "report.gaps", "report.update-master", "report.update-data", "report-type.context", "report-type.read", "report-type.list-published-standards", "report-type.preview", "report-type.update-draft"].map((id) => ({ id, kind: id.startsWith("report.update") || id === "report-type.update-draft" ? "command" : "query", title: id, description: "", inputSchema: {}, outputSchema: {} })) }), openApi: async () => ({}), reportContext: async (_token, reportId) => ({ resource: { namespace: "certreporter", resourceType: "report", resourceId: reportId, revision: "1" } }), query: async () => ({}), submitCommand: async () => ({ status: "rejected" }), receipt: async () => undefined };
+  const app: AppPort = { identity: async () => ({ appId: "certlab", appUserId: "author", email: "author@example.com", displayName: "Author" }), catalog: async () => testCatalog("digest"), openApi: async () => ({}), reportContext: async (_token, reportId) => ({ resource: { namespace: "certlab", resourceType: "report", resourceId: reportId } }), query: async () => ({}), submitCommand: async () => ({ status: "rejected" }), receipt: async () => undefined };
   const calls: Array<{ reflectionId: string; lens: string; messageCount: number }> = [];
   let citeWithoutReading = false;
   let previouslyReadEventId = "";
@@ -127,13 +128,13 @@ test("Reflection conversation starts with a message and reads only its Work traj
     }
     return { outcome: "analysis", analysis: "We can discuss this Work.", attribution: "", citedEventIds: eventId ? [eventId] : [] };
   } };
-  const useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, certReporter: app, catalogs: runtime.db, agents: { runWork: async () => ({ text: "Done" }) }, reflectionAgent, sessions: new InMemoryAppSessionStore(), passwordSetups: new InMemoryPasswordSetupStore(), passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
+  const useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, app, catalogs: runtime.db, agents: { runWork: async () => ({ text: "Done" }) }, reflectionAgent, sessions: new InMemoryAppSessionStore(), passwordSetups: new InMemoryPasswordSetupStore(), passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
   try {
     const author = runtime.db.ensureUser("author@example.com", false);
     const other = runtime.db.ensureUser("other@example.com", false);
     const catalog = await app.catalog("token");
-    runtime.db.saveCandidate(catalog, { paths: {} }); runtime.db.accept("certreporter", catalog.digest, author.id);
-    const session = await useCases.bootstrap({ token: "token", reportId: "report-1" });
+    runtime.db.saveCandidate(catalog, { paths: {} }); runtime.db.accept("certlab", catalog.digest, author.id);
+    const session = await useCases.bootstrap({ token: "token", reportId: "report-1", goal: "Find evidence location" });
     await useCases.startTurn(session.ticket, "Find the source location");
     await assert.rejects(() => useCases.startReflectionConversation(other.id, session.work.id, "Discuss the Work"), /WorkNotOwned/);
     await assert.rejects(() => useCases.startReflectionConversation(author.id, session.work.id, "/unknown Analyze"), /UnknownReflectionLens/);

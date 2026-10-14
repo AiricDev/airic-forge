@@ -1,0 +1,12 @@
+.git
+**/node_modules
+**/dist
+runtime
+.env
+.env.*
+**/test-results
+**/playwright-report
+**/coverage
+**/*.tsbuildinfo
+**/__pycache__
+deploy/p0/state

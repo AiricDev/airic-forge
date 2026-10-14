@@ -1,6 +1,7 @@
 import type { AppIdentity, CapabilityCatalog, CapabilityDefinition, ForgeUser } from "./model.js";
 import type { ValidationIssue, WorkDefinition } from "./operating-model.js";
 import type { Work } from "./work.js";
+import type { WorkCheckpoint } from "./work-progress.js";
 
 /** A port is written in the language of a Forge use case, never an SDK or SQL API. */
 export type MaybePromise<T> = T | Promise<T>;
@@ -23,6 +24,30 @@ export interface ReflectionLens { id: "conversation" | "domain-knowledge" | "del
 export interface ReflectionRecord { id: string; workId: string; ownerUserId: string; lensId: string; lensVersion: number; lensPrompt: string; question: string; evidenceEventIds: string[]; omRevision: string; status: string; outcome?: ReflectionOutcome; analysis?: string; attribution?: string; suggestionMarkdown?: string; }
 export interface ReflectionMessage { id: string; reflectionId: string; role: "user" | "agent"; content: string; at: string; lensId?: string; lensVersion?: number; citedEventIds?: string[]; }
 export interface ReflectionAgentResult { outcome: ReflectionOutcome; analysis: string; attribution: string; citedEventIds: string[]; edits?: Array<{ path: string; content: string }>; suggestionMarkdown?: string; proposalMessage?: string; }
+export type ReflectionToolName = "read_work_trajectory" | "read_candidate_file" | "write_candidate_file";
+export interface ReflectionToolStatus { id: string; name: ReflectionToolName; status: "running" | "completed" | "failed"; }
+export type ReflectionProgress =
+  | { type: "text.delta"; text: string }
+  | { type: "text.replace"; text: string }
+  | { type: "tool.status"; tool: ReflectionToolStatus }
+  | { type: "proposal.updated"; proposalId: string };
+export type ReflectionRunStatus = "running" | "cancelling" | "completed" | "failed" | "cancelled" | "interrupted";
+export interface ReflectionRun {
+  id: string; reflectionId: string; ownerUserId: string; requestId: string; message: string;
+  userMessage: ReflectionMessage; status: ReflectionRunStatus; sequence: number;
+  text: string; tools: ReflectionToolStatus[]; proposalId?: string; agentMessageId?: string;
+  error?: string; createdAt: string; updatedAt: string;
+}
+export interface ReflectionRunEvent { version: 1; runId: string; sequence: number; type: ReflectionProgress["type"] | "snapshot" | "run.status" | "completed" | "failed" | "cancelled"; run: ReflectionRun; }
+/** Atomic acceptance records the user's message with the run, never twice. */
+export interface ReflectionRunStore {
+  reflectionRun(id: string): ReflectionRun | undefined;
+  reflectionRunForRequest(reflectionId: string, requestId: string): ReflectionRun | undefined;
+  currentReflectionRun(reflectionId: string): ReflectionRun | undefined;
+  createReflectionRun(input: Omit<ReflectionRun, "userMessage">): ReflectionRun;
+  saveReflectionRun(run: ReflectionRun): void;
+  interruptReflectionRuns(now: string): void;
+}
 export interface ProposalRecord { id: string; reflectionId?: string; workId?: string; ownerUserId: string; baseRevision: string; branchRef: string; worktreePath: string; status: string; source: string; reason: string; evidence: string; reviewedRevision?: string; upstreamRevision?: string; }
 export interface WorkListFilters { ownerUserId?: string; workType?: Work["workType"]; status?: Work["status"]; }
 export interface ProposalListFilters { ownerUserId?: string; status?: "open" | "adopted" | "abandoned"; source?: "personal" | "reflection" | "organization-sync"; }
@@ -43,7 +68,7 @@ export interface MeasurementPort {
   feedbackCounts(): MaybePromise<Record<WorkFeedbackKind, number>>;
 }
 export interface TurnRecord { id: string; workId: string; sequence: number; status: string; omRevision: string; catalogDigest: string; contextDigest: string; startedAt: string; }
-export interface TrajectoryEvent { id: string; workId: string; turnId?: string; type: "turn.started" | "turn.completed" | "context.assembled" | "context.document-loaded" | "message" | "action" | "error"; at: string; payload: Record<string, unknown>; }
+export interface TrajectoryEvent { id: string; workId: string; turnId?: string; type: "turn.started" | "turn.completed" | "context.assembled" | "context.document-loaded" | "message" | "action" | "error" | "observation" | "work.checkpoint" | "work.feedback"; at: string; payload: Record<string, unknown>; }
 export interface OmDraft { ownerUserId: string; path: string; baseRevision: string; content: string; updatedAt: string; }
 export interface OmDraftPort {
   draftsForUser(ownerUserId: string): MaybePromise<OmDraft[]>;
@@ -66,13 +91,14 @@ export interface WorkPort {
   worksPage(filters: WorkListFilters, offset: number, limit: number): MaybePromise<{ works: Work[]; total: number }>;
   proposalsPage(filters: ProposalListFilters, offset: number, limit: number): MaybePromise<{ proposals: ProposalRecord[]; total: number }>;
   work(workId: string): MaybePromise<Work | undefined>;
+  setWorkEntityTitle(workId: string, title: string): MaybePromise<void>;
   turnsForWork(workId: string): MaybePromise<TurnRecord[]>;
   activeWork(ownerUserId: string, appId: string, workType: string, entityId: string): MaybePromise<Work | undefined>;
-  createWork(ownerUserId: string, appId: string, workType: string, entityId: string): MaybePromise<Work>;
+  createWork(ownerUserId: string, appId: string, workType: string, entityId: string, binding?: { goal: string; appUserId: string; selection?: Record<string, unknown> }): MaybePromise<Work>;
   createOrTouchSession(workId: string): MaybePromise<{ id: string }>;
   userForWork(workId: string): MaybePromise<string | undefined>;
   nextTurn(workId: string, omRevision: string, catalogDigest: string, contextDigest: string): MaybePromise<TurnRecord>;
-  completeTurn(turnId: string, status: "completed" | "failed"): MaybePromise<void>;
+  completeTurn(turnId: string, status: "completed" | "failed" | "cancelled"): MaybePromise<void>;
   completeWork(workId: string): MaybePromise<void>;
   lenses(): MaybePromise<ReflectionLens[]>;
   lens(id: string): MaybePromise<ReflectionLens | undefined>;
@@ -107,10 +133,11 @@ export interface OperatingModelPort {
   workDefinition(revision: string, id: string): MaybePromise<WorkDefinition>;
   document(revision: string, path: string): MaybePromise<string>;
   knownKnowledge(revision: string): MaybePromise<Set<string>>;
+  knowledgePath?(revision: string, id: string): MaybePromise<string>;
   knowledgeIssues(revision: string): MaybePromise<ValidationIssue[]>;
   createProposal(userId: string, proposalId: string, baseRevision: string): MaybePromise<{ branch: string; worktree: string }>;
   writeProposalFile(worktree: string, path: string, content: string): MaybePromise<void>;
-  makeKnowledgeAvailable(worktree: string, workDefinitionId: string, knowledgeIds: string[]): MaybePromise<void>;
+  makeKnowledgeAvailable(worktree: string, workDefinitionId: string, knowledgePaths: string[]): MaybePromise<void>;
   proposalChanges(worktree: string): MaybePromise<string[]>;
   proposalChangedPaths(worktree: string, baseRevision: string): MaybePromise<string[]>;
   proposalConflicts(worktree: string): MaybePromise<string[]>;
@@ -141,6 +168,37 @@ export interface CertReporterPort {
   receipt(token: string, commandId: string): Promise<Record<string, unknown> | undefined>;
 }
 
+export interface AppCommandLocator {
+  commandId: string;
+  capabilityId: string;
+  reportId: string;
+  assessmentId?: string;
+  targetKind?: string;
+  targetId?: string;
+  resourceKind: "project";
+  resourceId: string;
+  scope: string;
+}
+export interface AppCommandTarget {
+  resourceKind: "project";
+  resourceId: string;
+  scope: string;
+  targetKind: string;
+  targetId: string;
+}
+
+/** Only the configured CertLab binding implements the live App port. */
+export interface AppPort {
+  identity(token: string): Promise<AppIdentity>;
+  catalog(token: string): Promise<CapabilityCatalog>;
+  openApi(token: string): Promise<Record<string, unknown>>;
+  reportContext(token: string, reportId: string, selection?: Record<string, unknown>): Promise<Record<string, unknown>>;
+  query(token: string, capabilityId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
+  prepareCommand?(token: string, capabilityId: string, input: Record<string, unknown>): Promise<AppCommandTarget>;
+  submitCommand(token: string, capabilityId: string, body: Record<string, unknown>, locator?: AppCommandLocator): Promise<{ status: "committed" | "rejected" | "unknown"; receipt?: Record<string, unknown>; reason?: string }>;
+  receipt(token: string, locator: AppCommandLocator): Promise<Record<string, unknown> | undefined>;
+}
+
 export interface ExtractedEvidence { filename: string; digest: string; text: string; warnings: string[]; }
 export interface EvidenceExtractorPort { extract(filename: string, mediaType: string, content: Uint8Array): Promise<ExtractedEvidence>; }
 export interface EvidenceSessionPort {
@@ -165,6 +223,7 @@ export interface WorkAgentTool {
 export interface AgentRunnerPort {
   runWork(input: {
     sessionId: string;
+    signal?: AbortSignal;
     userMessage: string;
     context: Record<string, unknown>;
     documents: Array<{ id: string; content: string }>;
@@ -173,12 +232,17 @@ export interface AgentRunnerPort {
     evidence?: Array<{ filename: string; digest: string; text: string }>;
     conversation?: Array<{ role: "user" | "agent"; text: string }>;
     tools: WorkAgentTool[];
+    checkpoint?: (input: WorkCheckpoint) => Promise<{ checkpointId: string }>;
     onText?: (text: string) => void;
+    onContextStatus?: (status: "organizing" | "ready" | "failed") => void;
+    readHistory?: (offset: number, limit: number) => Promise<Array<Record<string, unknown>>>;
+    inputTokens?: number;
+    outputTokens?: number;
   }): Promise<{ text: string }>;
 }
 
 export interface ReflectionAgentPort {
-  analyze(input: { reflectionId: string; lens: ReflectionLens; question: string; messages: ReflectionMessage[]; evidence: TrajectoryEvent[]; readTrajectory?: (offset: number, limit: number) => Promise<TrajectoryEvent[]>; readProposalFile?: (path: string) => Promise<string>; writeProposalFile?: (path: string, content: string, citedEventIds: string[], message: string) => Promise<void>; omRevision: string; documents: Array<{ path: string; content: string }>; privateDrafts?: Array<{ path: string; content: string; baseRevision: string }> }): Promise<ReflectionAgentResult>;
+  analyze(input: { reflectionId: string; lens: ReflectionLens; question: string; messages: ReflectionMessage[]; evidence: TrajectoryEvent[]; readTrajectory?: (offset: number, limit: number) => Promise<TrajectoryEvent[]>; readProposalFile?: (path: string) => Promise<string>; writeProposalFile?: (path: string, content: string, citedEventIds: string[], message: string) => Promise<void>; omRevision: string; documents: Array<{ path: string; content: string }>; privateDrafts?: Array<{ path: string; content: string; baseRevision: string }>; signal?: AbortSignal; onProgress?: (event: ReflectionProgress) => void }): Promise<ReflectionAgentResult>;
 }
 
 export interface AppSessionPort { put(session: SessionGrant): MaybePromise<void>; get(ticket: string): MaybePromise<SessionGrant | undefined>; claim(ticket: string): MaybePromise<SessionGrant | undefined>; remove(ticket: string): MaybePromise<void>; }

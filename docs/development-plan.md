@@ -37,7 +37,7 @@
 | Agent harness | Work 与 Reflection 的对话循环、流式事件和受限工具执行 | OM 采纳决定、业务操作结果、产品级规范轨迹 |
 | Web 工作台 / 嵌入式 Copilot | 展示有权访问的资源，收集人类编辑、审阅和采纳决定；App 页面负责命令成功后的刷新 | 通过前端文本或页面状态直接授予业务权限 |
 
-技术设计中的 Node.js、pnpm、pi-sdk 和 ACP 是既定方向；Fastify、SQLite、Drizzle、JSONL 分段、具体包拆分等仍按 proposed 实现选型处理。实施时先固定领域契约，再验证机制是否满足它。`prototype/` 可复用页面信息架构、交互和视觉组件，但其 `DemoContext`、`localStorage`、种子数据及模拟 Reflection 逻辑不是服务端契约。
+技术设计中的 Node.js、pnpm、pi-sdk 和 ACP 是既定方向；Fastify、SQLite、Drizzle、JSONL 分段、具体包拆分等仍按 proposed 实现选型处理。实施时先固定领域契约，再验证机制是否满足它。真实工作台在 `prototype/src/workbench/` 使用 Material UI 默认组件与设计语言；原型仅保留为历史信息架构参考，不再约束视觉与通用组件交互。`DemoContext`、`localStorage`、种子数据及模拟 Reflection 不进入生产数据路径。
 
 ## 3. 契约与迁移基线（阶段 0）
 
@@ -101,3 +101,9 @@
 - 交付证据覆盖：CertReporter、Forge 镜像、接入文档、浏览器记录、Git 状态、轨迹与 App 回执。
 
 本计划不以 Airic Framework 旧代码或原型逻辑作为实现完成的证据。迁移旧实现前，逐项核对其责任边界和契约；能复用的模块作为实现候选，不能让历史结构反向决定 AiricForge 的产品规则。
+
+## Material UI 工作台迁移（2026-10-14）
+
+本次按基础框架与身份 → Work 列表、详情和 Reflection → OM、Proposal 与管理页面三个切片实施。全部真实页面采用 MUI 默认浅色主题、Material Icons 与标准控件；按页面拆分请求与状态，移除生产入口对旧设计系统和 Tailwind 的依赖。原来的业务 API、Work 地址、权限、草稿与版本治理保持兼容，实际 App Copilot 不属于迁移范围。
+
+验证和逐页截图见 [迁移验收记录](acceptance/mui-migration-record.md)。本机交付完成状态以该记录的最终检查结果为准；这不代表正式部署已发布，也不重新宣称真实模型验收。

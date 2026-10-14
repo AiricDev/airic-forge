@@ -12,7 +12,7 @@ test("Work list is paginated and detail keeps the original ownership boundary", 
   const webDistDir = join(root, "web");
   mkdirSync(webDistDir);
   writeFileSync(join(webDistDir, "index.html"), "<html>AiricForge Work</html>");
-  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/project"), webDistDir, certReporterUrl: "http://127.0.0.1:1", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
+  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir, certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
   const runtime = new ForgeRuntime(config);
   const app = buildServer(runtime);
   try {
@@ -40,8 +40,8 @@ test("Work list is paginated and detail keeps the original ownership boundary", 
     assert.equal((await app.inject({ method: "PUT", url: draftUrl, headers: ownerCookie, payload: { path: "../bad.md", content: "bad", baseRevision: activeHead } })).statusCode, 400);
     assert.equal((await app.inject({ method: "DELETE", url: `${draftUrl}?path=${encodeURIComponent(draftPath)}`, headers: ownerCookie })).statusCode, 204);
     assert.deepEqual((await app.inject({ method: "GET", url: draftUrl, headers: ownerCookie })).json().drafts, []);
-    const owned = Array.from({ length: 45 }, (_, index) => runtime.db.createWork(owner.id, "certreporter", "report-authoring", `report-${index}`));
-    runtime.db.createWork(stranger.id, "certreporter", "report-authoring", "private-report");
+    const owned = Array.from({ length: 45 }, (_, index) => runtime.db.createWork(owner.id, "certlab", "report-authoring", `report-${index}`));
+    runtime.db.createWork(stranger.id, "certlab", "report-authoring", "private-report");
     const cookie = (userId: string) => ({ cookie: `forge_session=${runtime.webSessions.issue(userId)}` });
     const list = async (page: string, headers = cookie(owner.id)) => app.inject({ method: "GET", url: `/api/v1/users/${owner.id}/works?page=${page}`, headers });
     const first = await list("1");
@@ -68,7 +68,7 @@ test("Work list is paginated and detail keeps the original ownership boundary", 
     assert.deepEqual(linked.json().proposals.map((proposal: { id: string }) => proposal.id), ["prp-from-work"]);
     assert.equal((await app.inject({ method: "GET", url: `/api/v1/works/${workId}/proposals`, headers: cookie(stranger.id) })).statusCode, 403);
     runtime.db.completeWork(owned[0]!.id);
-    runtime.db.createWork(owner.id, "certreporter", "report-type-definition", "report-type-1");
+    runtime.db.createWork(owner.id, "certlab", "report-type-definition", "report-type-1");
     const filteredWorks = await app.inject({ method: "GET", url: `/api/v1/works?page=1&ownerId=${owner.id}&workType=report-authoring&status=completed`, headers: cookie(admin.id) });
     assert.equal(filteredWorks.statusCode, 200);
     assert.equal(filteredWorks.json().total, 1);

@@ -13,9 +13,9 @@ test("two users are isolated; an admin can inspect without becoming the OM owner
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-one-"));
   const config: ForgeConfig = {
     port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"),
-    seedProjectDir: resolve(process.cwd(), "../../seed/project"),
+    seedProjectDir: resolve(process.cwd(), "../../seed/certlab"),
     webDistDir: join(root, "missing-web"),
-    certReporterUrl: "http://127.0.0.1:1", allowedOrigin: "http://localhost:5173",
+    certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173",
     initialAdminEmails: new Set(["admin@example.com"]),
   };
   const runtime = new ForgeRuntime(config);
@@ -25,21 +25,21 @@ test("two users are isolated; an admin can inspect without becoming the OM owner
   const admin = runtime.db.ensureUser("admin@example.com", true);
   assert.equal(alice.id, repeated.id);
   assert.notEqual(alice.id, bob.id);
-  runtime.db.recordAppIdentity("certreporter", "app-alice", alice.id, alice.email);
-  assert.equal(runtime.db.linkedUserId("certreporter", "app-alice"), alice.id);
-  assert.throws(() => runtime.db.recordAppIdentity("certreporter", "app-alice", bob.id, bob.email), /AppIdentityEmailConflict/);
-  assert.equal(runtime.db.linkedUserId("certreporter", "app-alice"), alice.id);
+  runtime.db.recordAppIdentity("certlab", "app-alice", alice.id, alice.email);
+  assert.equal(runtime.db.linkedUserId("certlab", "app-alice"), alice.id);
+  assert.throws(() => runtime.db.recordAppIdentity("certlab", "app-alice", bob.id, bob.email), /AppIdentityEmailConflict/);
+  assert.equal(runtime.db.linkedUserId("certlab", "app-alice"), alice.id);
   for (const user of [alice, bob, admin]) {
     runtime.om.ensureUserBranch(user.id);
     assert.equal(runtime.db.setInitialPassword(user.id, hashPassword("stage-one-password")), true);
   }
-  const catalog = { id: "catalog-1", appId: "certreporter", domainRelease: "certreporter/v1", digest: "digest-1", acceptedAt: "", capabilities: [
+  const catalog = { id: "catalog-1", appId: "certlab", domainRelease: "certlab/v1", digest: "digest-1", acceptedAt: "", capabilities: [
     { id: "report.context", kind: "query" as const, title: "Context", description: "", inputSchema: {}, outputSchema: {} },
   ] };
   runtime.db.saveCandidate(catalog, { paths: { "/airic/v1/queries/report.context": {} } });
-  runtime.db.accept("certreporter", catalog.digest, admin.id);
-  assert.equal(runtime.db.accepted("certreporter")?.digest, catalog.digest);
-  const bobWork = runtime.db.createWork(bob.id, "certreporter", "report-authoring", "report-bob");
+  runtime.db.accept("certlab", catalog.digest, admin.id);
+  assert.equal(runtime.db.accepted("certlab")?.digest, catalog.digest);
+  const bobWork = runtime.db.createWork(bob.id, "certlab", "report-authoring", "report-bob");
   const bobTurn = runtime.db.nextTurn(bobWork.id, runtime.om.head(`users/${bob.id}`), catalog.digest, "context-digest");
   runtime.trajectories.append({ id: "event-bob", workId: bobWork.id, turnId: bobTurn.id, type: "turn.started", at: bobTurn.startedAt, payload: { omRevision: bobTurn.omRevision } });
   const app = buildServer(runtime);
@@ -85,9 +85,9 @@ test("two users are isolated; an admin can inspect without becoming the OM owner
     const restarted = new ForgeRuntime(config);
     try {
       assert.equal(restarted.db.ensureUser("alice@example.com", false).id, alice.id);
-      assert.equal(restarted.db.linkedUserId("certreporter", "app-alice"), alice.id);
+      assert.equal(restarted.db.linkedUserId("certlab", "app-alice"), alice.id);
       assert.equal(restarted.om.head(`users/${alice.id}`), revision);
-      assert.equal(restarted.db.accepted("certreporter")?.digest, catalog.digest);
+      assert.equal(restarted.db.accepted("certlab")?.digest, catalog.digest);
       assert.equal(restarted.db.draftsForUser(alice.id)[0]?.content, draftContent);
       assert.equal(restarted.om.head(`users/${alice.id}`), revision);
       assert.equal(restarted.db.work(bobWork.id)?.ownerUserId, bob.id);

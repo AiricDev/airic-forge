@@ -3,6 +3,18 @@ import { digest, normalizeEmail } from "./ids.js";
 
 type Json = Record<string, unknown>;
 
+const record = (value: unknown): Json => value && typeof value === "object" && !Array.isArray(value) ? value as Json : {};
+/** Translate the App's projection into display metadata, never guess from IDs. */
+function withEntityTitle(context: Json): Json {
+  const facts = Array.isArray(context.facts) ? context.facts.map(record) : [];
+  const report = record(facts.find((fact) => fact.source === "ReportInstance")?.value);
+  const reportType = record(context.reportType ?? context.definition);
+  const resource = record(context.resource);
+  const title = [report.projectName, reportType.name, reportType.title, resource.title, resource.name, context.title, context.name]
+    .find((value): value is string => typeof value === "string" && Boolean(value.trim()));
+  return title ? { ...context, entityTitle: title.trim().replace(/\s+/g, " ").slice(0, 300) } : context;
+}
+
 export class CertReporterClient {
   constructor(private readonly baseUrl: string) {}
 
@@ -14,11 +26,11 @@ export class CertReporterClient {
   }
 
   async reportContext(token: string, reportId: string, selection?: Record<string, unknown>): Promise<Json> {
-    return this.#request("/airic/v1/queries/report.context", token, { expectedDomainRelease: "certreporter/v1", input: { reportId, selection } }) as Promise<Json>;
+    return withEntityTitle(await this.#request("/airic/v1/queries/report.context", token, { expectedDomainRelease: "certreporter/v1", input: { reportId, selection } }) as Json);
   }
 
   async reportTypeContext(token: string, reportTypeId: string, selection?: Record<string, unknown>): Promise<Json> {
-    return this.#request("/airic/v1/queries/report-type.context", token, { expectedDomainRelease: "certreporter/v1", input: { reportTypeId, selection } }) as Promise<Json>;
+    return withEntityTitle(await this.#request("/airic/v1/queries/report-type.context", token, { expectedDomainRelease: "certreporter/v1", input: { reportTypeId, selection } }) as Json);
   }
 
   async catalog(token: string): Promise<CapabilityCatalog> {

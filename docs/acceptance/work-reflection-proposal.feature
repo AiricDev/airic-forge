@@ -1,5 +1,40 @@
 Feature: Work Reflection and OM Proposal ownership
 
+  Scenario: A Reflection reply is observable before generation finishes
+    Given the owner has sent a message in an active Reflection
+    When the Agent produces answer text and executes an authorized tool
+    Then the owner can read the growing answer before the run completes
+    And tool names and execution status are observable without private inputs or reasoning
+    And only a validated final answer becomes a completed conversation message
+
+  Scenario: Disconnecting does not stop a Reflection run
+    Given a Reflection run is generating a reply
+    When the owner disconnects and later returns
+    Then the same run continues without resubmitting the question
+    And its current answer and execution state are restored without duplicated text
+    And repeating the original request ID does not add another user message
+
+  Scenario: The owner explicitly stops generation
+    Given a Reflection run has already saved a candidate file
+    When the owner requests cancellation
+    Then no new candidate write begins after cancellation is requested
+    And the run remains exclusive until its in-flight tool has settled
+    And saved candidate changes remain available for review and are not adopted automatically
+    And partial answer text is identified as incomplete rather than a completed Agent message
+    And the owner can continue the same Reflection after the run settles
+
+  Scenario: Proposal governance cannot race a Reflection run
+    Given a Reflection run is generating or stopping
+    When a user attempts to modify, review, rebase, adopt or abandon its Proposal
+    Then the operation is rejected while the run remains active
+    And the same protection applies to the workspace and App session entry points
+
+  Scenario: An interrupted server does not replay candidate writes
+    Given a Reflection run was active when the server stopped unexpectedly
+    When the server starts again
+    Then the run is marked interrupted and its saved answer remains readable
+    And the server does not automatically rerun the question or its tools
+
   Scenario: Opening a Work Reflection reuses its continuous session
     Given a user owns a Work
     When the user opens Reflection for that Work

@@ -11,10 +11,11 @@ export interface ForgeUser {
 }
 
 export interface AppIdentity {
-  appId: "certreporter";
+  appId: string;
   appUserId: string;
   email: string;
   displayName: string;
+  organizationId?: string;
 }
 
 export interface CapabilityCatalog {
@@ -33,6 +34,7 @@ export interface CapabilityDefinition {
   kind: "query" | "command";
   inputSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
+  receiptScope?: string;
 }
 
 export interface DocumentProvenance {

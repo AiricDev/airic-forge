@@ -337,3 +337,11 @@ Proposed 的工程约束：
 | 容量、并发、响应时间与保留周期 | Unknown，首个部署后建立基线 |
 
 Proposed 的风险应对：对每个未定契约先在 `domain/ports` 写出最小接口定义与契约测试，再进入对应验收项；在契约确定前不将相关能力纳入交付门槛。
+
+## Web 工作台实现约定（2026-10-14）
+
+生产入口沿用 `prototype/src/index.tsx`，经轻量 `StageOneApp.tsx` 装配 `src/workbench/`。使用 Material UI 默认浅色主题、默认 Emotion 引擎、Material Icons 与免费的 MUI X RichTreeView。仅配置中文字体回退和控件文案，Roboto 随构建发布；布局和文档排版使用 `sx`。生产不加载旧 Tailwind 或生成设计系统样式；旧原型作为历史参考保留。
+
+入口负责账户与导航；页面拥有读取、筛选、编辑与提交状态。集中 HTTP 客户端和响应类型是呈现层机制，不拥有领域授权或版本治理。读取拒绝旧响应覆盖新选择；提交防重，失败保留输入。标准 Dialog 承担确认和未保存离开，确认成功后关闭；错误持续显示 Alert，成功显示 Snackbar。列表使用 Table 与服务端 Pagination，Work 路由和查询参数保持兼容，不新增后端 API 或其他页面地址。
+
+所有写入继续通过既有服务端用例。管理员可见性不扩大写入权；OM 私有草稿不影响 active HEAD；Reflection Proposal 不提供手工文件编辑。浏览器验收使用真实 API 与一次性存储、测试专用确定性模型 adapter，不能作为真实模型效果证据。实现导航与测试入口见 [前端说明](../prototype/README.md)。

@@ -8,8 +8,10 @@ export interface ForgeConfig {
   projectDir: string;
   dataDir: string;
   seedProjectDir: string;
+  reportWorkDefinitionId?: string;
   webDistDir: string;
-  certReporterUrl: string;
+  certLabUrl: string;
+  organizationId: string;
   allowedOrigin: string;
   publicUrl?: string;
   initialAdminEmails: Set<string>;
@@ -18,17 +20,21 @@ export interface ForgeConfig {
   modelId?: string;
   modelApiKey?: string;
   modelBaseUrl?: string;
+  contextInputTokens?: number;
+  contextOutputTokens?: number;
 }
 
 export function loadConfig(env = process.env): ForgeConfig {
   return {
     port: Number(env.FORGE_PORT ?? 4175),
     bindHost: env.FORGE_BIND_HOST,
-    projectDir: resolve(env.FORGE_PROJECT_DIR ?? "./runtime/project"),
-    dataDir: resolve(env.FORGE_DATA_DIR ?? "./runtime/data"),
-    seedProjectDir: resolve(env.FORGE_SEED_PROJECT_DIR ?? "./seed/project"),
+    projectDir: resolve(env.FORGE_PROJECT_DIR ?? "./runtime/certlab/project"),
+    dataDir: resolve(env.FORGE_DATA_DIR ?? "./runtime/certlab/data"),
+    seedProjectDir: resolve(env.FORGE_SEED_PROJECT_DIR ?? "./seed/certlab"),
+    reportWorkDefinitionId: env.FORGE_REPORT_WORK_DEFINITION,
     webDistDir: resolve(env.FORGE_WEB_DIST_DIR ?? "./prototype/dist"),
-    certReporterUrl: (env.FORGE_CERTREPORTER_URL ?? "http://127.0.0.1:8000").replace(/\/$/, ""),
+    certLabUrl: (env.FORGE_CERTLAB_URL ?? "http://127.0.0.1:8000").replace(/\/$/, ""),
+    organizationId: (env.FORGE_ORGANIZATION_ID ?? "").trim(),
     allowedOrigin: env.FORGE_ALLOWED_ORIGIN ?? "http://127.0.0.1:5173",
     publicUrl: (env.FORGE_PUBLIC_URL ?? "http://127.0.0.1:4175").replace(/\/$/, ""),
     initialAdminEmails: list(env.FORGE_INITIAL_ADMIN_EMAILS),
@@ -37,5 +43,14 @@ export function loadConfig(env = process.env): ForgeConfig {
     modelId: env.FORGE_MODEL_ID,
     modelApiKey: env.FORGE_MODEL_API_KEY,
     modelBaseUrl: env.FORGE_MODEL_BASE_URL,
+    contextInputTokens: positiveBudget(env.FORGE_CONTEXT_INPUT_TOKENS, 32_000),
+    contextOutputTokens: positiveBudget(env.FORGE_CONTEXT_OUTPUT_TOKENS, 8_000),
   };
+}
+
+function positiveBudget(value: string | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < 1024 || number > 1_000_000) throw new Error("InvalidContextBudget");
+  return number;
 }

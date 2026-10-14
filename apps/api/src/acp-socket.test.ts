@@ -8,7 +8,7 @@ import { buildServer } from "./server.js";
 
 test("ACP upgrades to WebSocket and handles session/new as a socket message", async () => {
   const root = mkdtempSync(join(tmpdir(), "forge-acp-socket-"));
-  const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/project"), webDistDir: join(root, "web"), certReporterUrl: "http://127.0.0.1:1", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() });
+  const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() });
   const app = buildServer(runtime);
   try {
     const address = await app.listen({ port: 0, host: "127.0.0.1" });

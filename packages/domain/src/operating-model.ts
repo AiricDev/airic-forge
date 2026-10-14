@@ -32,7 +32,13 @@ export interface ValidationIssue {
 }
 
 export function isAllowedProposalPath(path: string): boolean {
-  return /^(work-definitions\/[a-z0-9-]+\/(?:work\.yml|[a-z0-9-]+\.md)|subject-knowledge\/[a-z0-9-]+\.md)$/.test(path);
+  return /^work-definitions\/[a-z0-9-]+\/(?:work\.yml|[a-z0-9-]+\.md)$/.test(path)
+    || /^(?:subject-knowledge|precedents)\/(?:[a-z0-9-]+\/)*(?:[a-z0-9-]+|README)\.md$/.test(path);
+}
+
+/** Both scopes use the explicitly governed OM directories, never arbitrary files. */
+export function isAllowedOmDocumentPath(path: string): boolean {
+  return isAllowedProposalPath(path);
 }
 
 export function validateWorkDefinition(

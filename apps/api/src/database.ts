@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { CapabilityCatalog, ForgeUser, OmDraft, OrganizationContribution, ProposalListFilters, ProposalRecord, ReflectionLens, ReflectionMessage, ReflectionOutcome, ReflectionRecord, TurnRecord, UserRole, Work, WorkFeedback, WorkFeedbackKind, WorkListFilters } from "@airic-forge/domain";
+import type { CapabilityCatalog, ForgeUser, OmDraft, OrganizationContribution, ProposalListFilters, ProposalRecord, ReflectionLens, ReflectionMessage, ReflectionOutcome, ReflectionRecord, ReflectionRun, TurnRecord, UserRole, Work, WorkFeedback, WorkFeedbackKind, WorkListFilters } from "@airic-forge/domain";
 import { id, normalizeEmail } from "./ids.js";
 
 export class ForgeDatabase {
@@ -96,6 +96,17 @@ export class ForgeDatabase {
         at TEXT NOT NULL
       ) STRICT;
       CREATE INDEX IF NOT EXISTS reflection_messages_order ON reflection_messages(reflection_id, at);
+      CREATE TABLE IF NOT EXISTS reflection_runs (
+        id TEXT PRIMARY KEY,
+        reflection_id TEXT NOT NULL REFERENCES reflections(id),
+        request_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(reflection_id, request_id)
+      ) STRICT;
+      CREATE UNIQUE INDEX IF NOT EXISTS reflection_run_active
+        ON reflection_runs(reflection_id) WHERE status IN ('running', 'cancelling');
       CREATE TABLE IF NOT EXISTS proposals (
         id TEXT PRIMARY KEY,
         work_id TEXT REFERENCES works(id),
@@ -181,6 +192,9 @@ export class ForgeDatabase {
       `);
     }
     const upgradedColumns = this.#db.prepare("PRAGMA table_info(proposals)").all() as Array<{ name: string }>;
+    const workColumns = this.#db.prepare("PRAGMA table_info(works)").all() as Array<{ name: string }>;
+    if (!workColumns.some((column) => column.name === "entity_title")) this.#db.exec("ALTER TABLE works ADD COLUMN entity_title TEXT");
+    for (const column of ["goal", "app_user_id", "selection_json"]) if (!workColumns.some((item) => item.name === column)) this.#db.exec(`ALTER TABLE works ADD COLUMN ${column} TEXT`);
     if (!upgradedColumns.some((column) => column.name === "reviewed_revision")) this.#db.exec("ALTER TABLE proposals ADD COLUMN reviewed_revision TEXT");
     if (!upgradedColumns.some((column) => column.name === "upstream_revision")) this.#db.exec("ALTER TABLE proposals ADD COLUMN upstream_revision TEXT");
     const reflectionColumns = new Set((this.#db.prepare("PRAGMA table_info(reflections)").all() as Array<{ name: string }>).map((column) => column.name));
@@ -321,6 +335,10 @@ export class ForgeDatabase {
     return row ? this.#work(row) : undefined;
   }
 
+  setWorkEntityTitle(workId: string, title: string): void {
+    this.#db.prepare("UPDATE works SET entity_title=? WHERE id=?").run(title, workId);
+  }
+
   turnsForWork(workId: string): TurnRecord[] {
     return (this.#db.prepare("SELECT * FROM turns WHERE work_id=? ORDER BY sequence").all(workId) as Record<string, unknown>[]).map((row) => ({
       id: String(row.id), workId: String(row.work_id), sequence: Number(row.sequence), status: String(row.status),
@@ -333,10 +351,10 @@ export class ForgeDatabase {
     return row ? this.#work(row) : undefined;
   }
 
-  createWork(ownerUserId: string, appId: string, workType: string, entityId: string): Work {
+  createWork(ownerUserId: string, appId: string, workType: string, entityId: string, binding?: { goal: string; appUserId: string; selection?: Record<string, unknown> }): Work {
     const now = new Date().toISOString(); const work = { id: id("wrk"), owner_user_id: ownerUserId, app_id: appId, work_type: workType, entity_id: entityId, status: "active", created_at: now, updated_at: now };
-    this.#db.prepare("INSERT INTO works (id, owner_user_id, app_id, work_type, entity_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(...Object.values(work));
-    return this.#work(work);
+    this.#db.prepare("INSERT INTO works (id, owner_user_id, app_id, work_type, entity_id, status, created_at, updated_at, goal, app_user_id, selection_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(...Object.values(work), binding?.goal ?? null, binding?.appUserId ?? null, binding ? JSON.stringify(binding.selection ?? {}) : null);
+    return this.work(work.id)!;
   }
 
   createOrTouchSession(workId: string): { id: string } {
@@ -353,7 +371,8 @@ export class ForgeDatabase {
     this.#db.prepare("INSERT INTO turns (id, work_id, sequence, status, om_revision, catalog_digest, context_digest, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(turn.id, turn.work_id, turn.sequence, turn.status, turn.om_revision, turn.catalog_digest, turn.context_digest, turn.started_at); return { id: turn.id, workId: turn.work_id, sequence: turn.sequence, status: turn.status, omRevision: turn.om_revision, catalogDigest: turn.catalog_digest, contextDigest: turn.context_digest, startedAt: turn.started_at };
   }
 
-  completeTurn(turnId: string, status: "completed" | "failed"): void { this.#db.prepare("UPDATE turns SET status=?, completed_at=? WHERE id=?").run(status, new Date().toISOString(), turnId); }
+  completeTurn(turnId: string, status: "completed" | "failed" | "cancelled"): void { this.#db.prepare("UPDATE turns SET status=?, completed_at=? WHERE id=?").run(status, new Date().toISOString(), turnId); }
+  interruptWorkTurns(): void { this.#db.prepare("UPDATE turns SET status='interrupted', completed_at=? WHERE status='running'").run(new Date().toISOString()); }
   completeWork(workId: string): void { this.#db.prepare("UPDATE works SET status='completed', updated_at=? WHERE id=?").run(new Date().toISOString(), workId); }
 
   lenses(): ReflectionLens[] { return (this.#db.prepare("SELECT * FROM reflection_lenses ORDER BY id").all() as Record<string, unknown>[]).map((row) => this.#lens(row)); }
@@ -383,6 +402,40 @@ export class ForgeDatabase {
     }
   }
   reflection(reflectionId: string): ReflectionRecord | undefined { const row = this.#db.prepare("SELECT * FROM reflections WHERE id=?").get(reflectionId) as Record<string, unknown> | undefined; return row ? this.#reflection(row) : undefined; }
+  reflectionRun(runId: string): ReflectionRun | undefined {
+    const row = this.#db.prepare("SELECT snapshot_json FROM reflection_runs WHERE id=?").get(runId) as { snapshot_json: string } | undefined;
+    return row ? JSON.parse(row.snapshot_json) as ReflectionRun : undefined;
+  }
+  reflectionRunForRequest(reflectionId: string, requestId: string): ReflectionRun | undefined {
+    const row = this.#db.prepare("SELECT snapshot_json FROM reflection_runs WHERE reflection_id=? AND request_id=?").get(reflectionId, requestId) as { snapshot_json: string } | undefined;
+    return row ? JSON.parse(row.snapshot_json) as ReflectionRun : undefined;
+  }
+  currentReflectionRun(reflectionId: string): ReflectionRun | undefined {
+    const row = this.#db.prepare("SELECT snapshot_json FROM reflection_runs WHERE reflection_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(reflectionId) as { snapshot_json: string } | undefined;
+    return row ? JSON.parse(row.snapshot_json) as ReflectionRun : undefined;
+  }
+  createReflectionRun(input: Omit<ReflectionRun, "userMessage">): ReflectionRun {
+    this.#db.exec("BEGIN IMMEDIATE");
+    try {
+      const userMessage = this.appendReflectionMessage(input.reflectionId, "user", input.message);
+      const run = { ...input, userMessage };
+      this.#db.prepare("INSERT INTO reflection_runs (id, reflection_id, request_id, status, snapshot_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(run.id, run.reflectionId, run.requestId, run.status, JSON.stringify(run), run.createdAt);
+      this.#db.exec("COMMIT");
+      return run;
+    } catch (error) { this.#db.exec("ROLLBACK"); throw error; }
+  }
+  saveReflectionRun(run: ReflectionRun): void {
+    this.#db.prepare("UPDATE reflection_runs SET status=?, snapshot_json=? WHERE id=?").run(run.status, JSON.stringify(run), run.id);
+  }
+  interruptReflectionRuns(now: string): void {
+    const rows = this.#db.prepare("SELECT snapshot_json FROM reflection_runs WHERE status IN ('running', 'cancelling')").all() as Array<{ snapshot_json: string }>;
+    for (const row of rows) {
+      const run = JSON.parse(row.snapshot_json) as ReflectionRun;
+      run.status = "interrupted"; run.error = "ReflectionInterrupted"; run.sequence++; run.updatedAt = now;
+      this.saveReflectionRun(run);
+    }
+  }
   reflectionsForWork(workId: string): ReflectionRecord[] { return (this.#db.prepare("SELECT * FROM reflections WHERE work_id=? ORDER BY created_at DESC").all(workId) as Record<string, unknown>[]).map((row) => this.#reflection(row)); }
   reflectionMessages(reflectionId: string): ReflectionMessage[] { return (this.#db.prepare("SELECT * FROM reflection_messages WHERE reflection_id=? ORDER BY at, rowid").all(reflectionId) as Record<string, unknown>[]).map((row) => ({ id: String(row.id), reflectionId, role: row.role as ReflectionMessage["role"], content: String(row.content), at: String(row.at), ...(row.context_json ? JSON.parse(String(row.context_json)) as Pick<ReflectionMessage, "lensId" | "lensVersion" | "citedEventIds"> : {}) })); }
   appendReflectionMessage(reflectionId: string, role: ReflectionMessage["role"], content: string, context?: { lensId: string; lensVersion: number; citedEventIds: string[] }): ReflectionMessage {
@@ -440,7 +493,7 @@ export class ForgeDatabase {
   #user(row: Record<string, unknown>): ForgeUser { return { id: String(row.id), email: String(row.email), role: row.role as UserRole, passwordConfigured: typeof row.password_hash === "string", activeBranch: String(row.active_branch), createdAt: String(row.created_at) }; }
   #lens(row: Record<string, unknown>): ReflectionLens { return { id: String(row.id) as ReflectionLens["id"], version: Number(row.version), enabled: Number(row.enabled) === 1, prompt: String(row.prompt) }; }
   #reflection(row: Record<string, unknown>): ReflectionRecord { return { id: String(row.id), workId: String(row.work_id), ownerUserId: String(row.owner_user_id), lensId: String(row.lens_id), lensVersion: Number(row.lens_version), lensPrompt: String(row.lens_prompt), question: String(row.question), evidenceEventIds: JSON.parse(String(row.evidence_ids_json)) as string[], omRevision: String(row.om_revision), status: String(row.status), ...(row.outcome ? { outcome: row.outcome as ReflectionOutcome } : {}), ...(row.analysis ? { analysis: String(row.analysis) } : {}), ...(row.attribution ? { attribution: String(row.attribution) } : {}), ...(row.suggestion_markdown ? { suggestionMarkdown: String(row.suggestion_markdown) } : {}) }; }
-  #work(row: Record<string, unknown>): Work { return { id: String(row.id), ownerUserId: String(row.owner_user_id), appId: "certreporter", workType: String(row.work_type) as Work["workType"], entityId: String(row.entity_id), status: row.status === "completed" ? "completed" : "active", createdAt: String(row.created_at), updatedAt: String(row.updated_at) }; }
+  #work(row: Record<string, unknown>): Work { return { id: String(row.id), ownerUserId: String(row.owner_user_id), appId: String(row.app_id) as Work["appId"], workType: String(row.work_type) as Work["workType"], entityId: String(row.entity_id), ...(typeof row.entity_title === "string" ? { entityTitle: row.entity_title } : {}), ...(typeof row.goal === "string" ? { goal: row.goal } : {}), ...(typeof row.app_user_id === "string" ? { appUserId: row.app_user_id } : {}), ...(typeof row.selection_json === "string" ? { selection: JSON.parse(row.selection_json) as Record<string, unknown> } : {}), status: row.status === "completed" ? "completed" : "active", createdAt: String(row.created_at), updatedAt: String(row.updated_at) }; }
   #proposal(row: Record<string, unknown>): ProposalRecord { return { id: String(row.id), ...(row.reflection_id == null ? {} : { reflectionId: String(row.reflection_id) }), ...(row.work_id == null ? {} : { workId: String(row.work_id) }), ownerUserId: String(row.owner_user_id), baseRevision: String(row.base_revision), branchRef: String(row.branch_ref), worktreePath: String(row.worktree_path), status: String(row.status), source: String(row.source), reason: String(row.reason), evidence: String(row.evidence), ...(row.reviewed_revision == null ? {} : { reviewedRevision: String(row.reviewed_revision) }), ...(row.upstream_revision == null ? {} : { upstreamRevision: String(row.upstream_revision) }) }; }
 
   createContribution(record: OrganizationContribution): void {

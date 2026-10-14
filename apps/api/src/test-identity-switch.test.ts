@@ -11,8 +11,8 @@ test("test identity switch requires an explicit flag and the original admin sess
   const root = mkdtempSync(join(tmpdir(), "airic-forge-test-identity-"));
   const config: ForgeConfig = {
     port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"),
-    seedProjectDir: resolve(process.cwd(), "../../seed/project"), webDistDir: join(root, "web"),
-    certReporterUrl: "http://127.0.0.1:1", allowedOrigin: "http://localhost:5173",
+    seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"),
+    certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173",
     initialAdminEmails: new Set(), testIdentitySwitch: false,
   };
   const runtime = new ForgeRuntime(config);

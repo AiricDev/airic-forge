@@ -1,0 +1,69 @@
+schemaVersion: 1
+id: report-authoring
+title: CertLab report assessment
+description: Advance the explicit single-report goal using authoritative assessments and human checkpoints.
+capabilities:
+  allowed:
+    - report.context
+    - assessment.context
+    - assessment.history
+    - command.receipt
+    - assessment.start
+    - assessment.save-draft
+    - assessment.reverify
+    - command.context
+    - test-task.list
+    - finding.list
+    - work-item.context
+    - output.context
+    - report.output-readiness
+    - test-task.create
+    - test-task.edit
+    - finding.create
+    - finding.edit
+    - work-item.block
+    - work-item.respond
+    - work-item.complete
+    - report.output-configure
+    - test-plan.generate
+    - finding-export.generate
+    - report.generate
+    - job.retry
+    - asset.list
+    - asset.revisions
+    - asset.read
+    - asset.search
+    - asset.read-location
+    - asset.impact-preview
+documents:
+  - id: policy
+    path: policy.md
+    title: CertLab boundaries
+    role: policy
+    load: required
+  - id: method
+    path: method.md
+    title: Evidence-led assessment
+    role: procedure
+    load: required
+  - id: recovery
+    path: recovery.md
+    title: Resource and original-command recovery
+    role: procedure
+    load: required
+  - id: evidence
+    path: evidence.md
+    title: Evidence and uncertainty
+    role: reference
+    load: on-demand
+  - id: precedent
+    path: precedent.md
+    title: Synthetic example limitations
+    role: precedent
+    load: on-demand
+knowledge:
+  bootstrap: []
+  available: []
+completion:
+  mode: user
+  requiredCapabilities: []

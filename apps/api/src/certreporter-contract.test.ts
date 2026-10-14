@@ -35,7 +35,12 @@ async function fixture() {
       const request = await body(req); const input = request.input as Record<string, unknown>;
       if (request.expectedDomainRelease !== "certreporter/v1" || input?.reportId !== REPORT) { send(res, 403, { error: "ReportNotAccessible" }); return; }
       lastSelection = input.selection;
-      send(res, 200, { schemaVersion: "airic-cognitive/v1", resource: { namespace: "certreporter", resourceType: "report", resourceId: REPORT, revision: "3" }, projectionDigest: "context-digest-1", facts: [], gaps: [], blockers: [], allowedNextActions: [] }); return;
+      send(res, 200, { schemaVersion: "airic-cognitive/v1", resource: { namespace: "certreporter", resourceType: "report", resourceId: REPORT, revision: "3" }, projectionDigest: "context-digest-1", facts: [{ source: "ReportInstance", value: { projectName: "  Safety  report  " } }], gaps: [], blockers: [], allowedNextActions: [] }); return;
+    }
+    if (req.method === "POST" && path === "/airic/v1/queries/report-type.context") {
+      const request = await body(req);
+      const input = request.input as Record<string, unknown>;
+      send(res, 200, { resource: { type: "report-type", id: input.reportTypeId }, reportType: input.reportTypeId === "unnamed" ? {} : { name: "Equipment inspection" } }); return;
     }
     if (req.method === "POST" && path === "/airic/v1/commands/report.update-master") {
       const request = await body(req);
@@ -81,9 +86,19 @@ test("CertReporter contract: identity, catalog, OpenAPI and authoritative report
     const selection = { scope: "report" };
     const context = await app.client.reportContext(TOKEN, REPORT, selection);
     assert.equal((context.resource as Record<string, unknown>).resourceId, REPORT);
+    assert.equal(context.entityTitle, "Safety report");
+    assert.equal(context.projectionDigest, "context-digest-1");
     assert.deepEqual(app.selection(), selection);
     await assert.rejects(() => app.client.reportContext(TOKEN, "other-report"), /403/);
     await assert.rejects(() => app.client.identity("invalid"), /401/);
+  } finally { await app.close(); }
+});
+
+test("CertReporter context uses Report Type names without substituting technical IDs", async () => {
+  const app = await fixture();
+  try {
+    assert.equal((await app.client.reportTypeContext(TOKEN, "type-1")).entityTitle, "Equipment inspection");
+    assert.equal((await app.client.reportTypeContext(TOKEN, "unnamed")).entityTitle, undefined);
   } finally { await app.close(); }
 });
 

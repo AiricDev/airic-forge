@@ -1,18 +1,22 @@
 import type { DocumentProvenance } from "./model.js";
 
 export type WorkStatus = "active" | "completed";
-export type TurnStatus = "running" | "completed" | "failed";
+export type TurnStatus = "running" | "completed" | "failed" | "cancelled" | "interrupted";
 export type ActionStatus = "pending" | "succeeded" | "rejected" | "unknown";
 
 export interface WorkKey {
   ownerUserId: string;
-  appId: "certreporter";
+  appId: "certlab";
   workType: "report-authoring" | "report-type-definition";
   entityId: string;
 }
 
 export interface Work extends WorkKey {
   id: string;
+  entityTitle?: string;
+  goal?: string;
+  appUserId?: string;
+  selection?: Record<string, unknown>;
   status: WorkStatus;
   createdAt: string;
   updatedAt: string;

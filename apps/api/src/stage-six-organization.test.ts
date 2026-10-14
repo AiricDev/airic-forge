@@ -3,7 +3,8 @@ import test from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { ForgeUseCases, type CapabilityCatalog } from "@airic-forge/domain";
+import { ForgeUseCases } from "@airic-forge/domain";
+import { testCatalog } from "./certlab-test-catalog.js";
 import { ForgeRuntime } from "./runtime.js";
 import type { ForgeConfig } from "./config.js";
 import { buildServer } from "./server.js";
@@ -11,15 +12,14 @@ import { createTestProposal } from "./test-proposal-fixture.js";
 
 test("administrator selectively accepts personal OM and member sync preserves old HEAD", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-six-"));
-  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/project"), webDistDir: join(root, "web"), certReporterUrl: "http://127.0.0.1:1", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
+  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
   const runtime = new ForgeRuntime(config);
   try {
     const admin = runtime.db.ensureUser("admin@example.com", true);
     const author = runtime.db.ensureUser("author@example.com", false);
     const member = runtime.db.ensureUser("member@example.com", false);
-    const ids = ["report.context", "report.read", "report.gaps", "report.update-master", "report.update-data", "report-type.context", "report-type.read", "report-type.list-published-standards", "report-type.preview", "report-type.update-draft"];
-    const catalog: CapabilityCatalog = { id: "catalog", appId: "certreporter", domainRelease: "certreporter/v1", digest: "accepted", acceptedAt: "", capabilities: ids.map((id) => ({ id, kind: "query", title: id, description: "", inputSchema: {}, outputSchema: {} })) };
-    runtime.db.saveCandidate(catalog, { paths: {} }); runtime.db.accept("certreporter", catalog.digest, admin.id);
+    const catalog = testCatalog();
+    runtime.db.saveCandidate(catalog, { paths: {} }); runtime.db.accept("certlab", catalog.digest, admin.id);
     const useCases: ForgeUseCases = runtime.useCases;
     const authorBranch = runtime.om.ensureUserBranch(author.id);
     const memberBranch = runtime.om.ensureUserBranch(member.id);
@@ -60,7 +60,7 @@ test("administrator selectively accepts personal OM and member sync preserves ol
     assert.equal(runtime.om.includesRevision(memberBranch.branch, accepted.revision), true);
     assert.equal((await useCases.personalOm(member.id, member.id, oldMemberHead)).revision, oldMemberHead);
     await assert.rejects(() => useCases.createOrganizationSync(member.id), /OrganizationAlreadyCurrent/);
-    const work = runtime.db.createWork(member.id, "certreporter", "report-authoring", "report-1");
+    const work = runtime.db.createWork(member.id, "certlab", "report-authoring", "report-1");
     await assert.rejects(() => useCases.addWorkFeedback(author.id, work.id, "avoidable-correction", "Wrong owner"), /Forbidden/);
     await useCases.addWorkFeedback(member.id, work.id, "required-human-decision", "Report approval belongs to a human");
     await useCases.addWorkFeedback(member.id, work.id, "avoidable-correction", "I had to repeat the evidence location");
@@ -76,7 +76,7 @@ test("administrator selectively accepts personal OM and member sync preserves ol
 
 test("a reviewed organization candidate cannot overwrite a newer main HEAD", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-six-stale-"));
-  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/project"), webDistDir: join(root, "web"), certReporterUrl: "http://127.0.0.1:1", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
+  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
   const runtime = new ForgeRuntime(config);
   try {
     const author = runtime.db.ensureUser("author@example.com", false);
@@ -97,7 +97,7 @@ test("a reviewed organization candidate cannot overwrite a newer main HEAD", asy
 
 test("organization sync conflict stays in proposal until member resolves and adopts it", () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-six-conflict-"));
-  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/project"), webDistDir: join(root, "web"), certReporterUrl: "http://127.0.0.1:1", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
+  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
   const runtime = new ForgeRuntime(config);
   try {
     const author = runtime.om.ensureUserBranch("author");
@@ -130,7 +130,7 @@ test("organization sync conflict stays in proposal until member resolves and ado
 
 test("organization HTTP routes expose main to members while keeping private evidence and baseline administrative", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-six-http-"));
-  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/project"), webDistDir: join(root, "web"), certReporterUrl: "http://127.0.0.1:1", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
+  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
   const runtime = new ForgeRuntime(config);
   const app = buildServer(runtime);
   try {
@@ -138,7 +138,7 @@ test("organization HTTP routes expose main to members while keeping private evid
     const author = runtime.db.ensureUser("author@example.com", false);
     const reader = runtime.db.ensureUser("reader@example.com", false);
     for (const user of [admin, author, reader]) runtime.om.ensureUserBranch(user.id);
-    const work = runtime.db.createWork(author.id, "certreporter", "report-authoring", "report-1");
+    const work = runtime.db.createWork(author.id, "certlab", "report-authoring", "report-1");
     const cookie = (id: string) => ({ cookie: `forge_session=${runtime.webSessions.issue(id)}` });
     const readerHeaders = cookie(reader.id);
     const adminHeaders = cookie(admin.id);

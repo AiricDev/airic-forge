@@ -7,8 +7,9 @@ import { cookieToken, sessionCookie } from "./web-session-store.js";
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { registerReflectionHttp } from "./reflection-http.js";
 
-type BootstrapBody = { appId: "certreporter"; workType: "report-authoring" | "report-type-definition"; entityId: string; selection?: Record<string, unknown> };
+type BootstrapBody = { appId: "certlab"; workType: "report-authoring"; entityId: string; selection?: Record<string, unknown>; goal?: string; workId?: string };
 type RpcRequest = { id?: string | number; method?: string; params?: Record<string, unknown> };
 
 const bearer = (value: unknown): string => {
@@ -20,6 +21,7 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
   const app = Fastify({ logger: true, bodyLimit: 9 * 1024 * 1024 });
   void app.register(cors, { origin: runtime.config.allowedOrigin, credentials: true });
   void app.register(websocket);
+  registerReflectionHttp(app, runtime);
   app.addContentTypeParser(/^(application\/pdf|application\/octet-stream|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document|text\/plain)$/i, { parseAs: "buffer" }, (_request, body, done) => done(null, body));
 
   app.get("/health", async () => ({ status: "ok", service: "airic-forge" }));
@@ -42,10 +44,15 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
   app.post<{ Body: BootstrapBody }>("/api/v1/app-sessions/bootstrap", async (request, reply) => {
     try {
       const body = request.body;
-      if (body.appId !== "certreporter" || !["report-authoring", "report-type-definition"].includes(body.workType) || !body.entityId) return reply.code(400).send({ error: "UnsupportedAppContext" });
-      const result = await runtime.useCases.bootstrap({ token: bearer(request.headers.authorization), entityId: body.entityId, workType: body.workType, selection: body.selection });
+      if (body.appId !== "certlab" || body.workType !== "report-authoring" || !body.entityId) return reply.code(400).send({ error: "UnsupportedAppContext" });
+      const result = await runtime.useCases.bootstrap({ token: bearer(request.headers.authorization), entityId: body.entityId, workType: body.workType, selection: body.selection, goal: body.goal, workId: body.workId });
       return reply.code(201).send({ ...result, acpUrl: "/acp", workspaceUrl: runtime.config.publicUrl ?? "http://127.0.0.1:4175" });
     } catch (error) { return reply.code(401).send({ error: error instanceof Error ? error.message : "BootstrapFailed" }); }
+  });
+
+  app.post<{ Body: { reportId: string } }>("/api/v1/app-sessions/works", async (request, reply) => {
+    try { return reply.send(await runtime.useCases.appWorks(bearer(request.headers.authorization), request.body.reportId)); }
+    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "AppWorksFailed" }); }
   });
 
   app.put("/api/v1/app-sessions/evidence", async (request, reply) => {
@@ -453,30 +460,41 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 400).send({ error: error instanceof Error ? error.message : "ProposalAbandonFailed" }); }
   });
 
-  app.after(() => app.get("/acp", { websocket: true }, (socket) => {
+  app.after(() => app.get("/acp", { websocket: true }, (socket, request) => {
+    if (request.headers.origin && request.headers.origin !== runtime.config.allowedOrigin) { socket.close(1008, "Origin not allowed"); return; }
     let ticket = "";
+    const send = (value: unknown) => { if (socket.readyState === 1) socket.send(JSON.stringify(value)); };
     socket.on("close", () => { if (ticket) void runtime.useCases.disconnectAcp(ticket); });
     socket.on("message", async (raw: unknown) => {
       let request: RpcRequest;
       try { request = JSON.parse(String(raw)) as RpcRequest; } catch { socket.send(JSON.stringify({ error: { code: -32700, message: "Parse error" } })); return; }
       try {
         if (request.method === "session/new") {
+          if (ticket) throw new Error("AppSessionAlreadyConnected");
           const requestedTicket = String(request.params?.ticket ?? "");
           const session = await runtime.useCases.connectAcp(requestedTicket);
           ticket = requestedTicket;
-          socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { sessionId: session.sessionId, workId: session.workId } })); return;
+          send({ jsonrpc: "2.0", id: request.id, result: { sessionId: session.sessionId, workId: session.workId, history: await runtime.useCases.sessionHistory(ticket) } }); return;
         }
+        if (!ticket) throw new Error("AppSessionExpired");
+        if (request.method === "session/history") { send({ jsonrpc: "2.0", id: request.id, result: await runtime.useCases.sessionHistory(ticket) }); return; }
+        if (request.method === "session/feedback") {
+          send({ jsonrpc: "2.0", id: request.id, result: await runtime.useCases.checkpointFeedback(ticket,
+            request.params as unknown as import("@airic-forge/domain").CheckpointFeedback, String(request.id ?? "")) }); return;
+        }
+        if (request.method === "session/cancel") { send({ jsonrpc: "2.0", id: request.id, result: await runtime.useCases.cancelTurn(ticket) }); return; }
+        if (request.method === "session/reconcile") { send({ jsonrpc: "2.0", id: request.id, result: await runtime.useCases.recoverCommand(ticket, String(request.params?.commandId ?? "")) }); return; }
         if (request.method === "session/prompt") {
           const message = String(request.params?.message ?? ""); if (!ticket || !message) throw new Error("InvalidPrompt");
           socket.send(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { phase: "running" } }));
           const evidenceDigests = request.params?.evidenceDigests;
           if (evidenceDigests !== undefined && (!Array.isArray(evidenceDigests) || evidenceDigests.some((value) => typeof value !== "string"))) throw new Error("InvalidEvidenceSelection");
-          const result = await runtime.useCases.startTurn(ticket, message, (text) => socket.send(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { phase: "text-delta", text } })), evidenceDigests as string[] | undefined);
-          socket.send(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { phase: "completed", text: result.reply, turn: result.turn } }));
-          socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, result })); return;
+          const result = await runtime.useCases.startTurn(ticket, message, (text) => send({ jsonrpc: "2.0", method: "session/update", params: { phase: "text-delta", text } }), evidenceDigests as string[] | undefined, String(request.id ?? ""), (turnId) => send({ jsonrpc: "2.0", method: "session/update", params: { phase: "turn-started", turnId } }), (status) => send({ jsonrpc: "2.0", method: "session/update", params: { phase: "context-status", status } }));
+          send({ jsonrpc: "2.0", method: "session/update", params: { phase: "completed", text: result.reply, turn: result.turn } });
+          send({ jsonrpc: "2.0", id: request.id, result }); return;
         }
         socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Method not found" } }));
-      } catch (error) { socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: -32000, message: error instanceof Error ? error.message : "Runtime failure" } })); }
+      } catch (error) { send({ jsonrpc: "2.0", id: request.id, error: { code: -32000, message: error instanceof Error ? error.message : "Runtime failure" } }); }
     });
   }));
   return app;
