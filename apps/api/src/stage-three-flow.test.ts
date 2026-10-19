@@ -34,7 +34,7 @@ test("personal Proposals keep active HEAD stable until reviewed adoption; stale 
     runtime.om.ensureUserBranch(other.id);
     const useCases = compose(runtime);
     runtime.db.saveCandidate(catalog, { paths: {} }); runtime.db.accept("certlab", catalog.digest, author.id);
-    const session = await useCases.bootstrap({ token: "token", reportId: "report-1", goal: "Read policy" });
+    const session = await useCases.bootstrap({ token: "token", reportId: "report-1" });
     const oldTurn = await useCases.startTurn(session.ticket, "Read the current policy");
     const base = oldTurn.turn.omRevision;
     const first = createTestProposal(runtime, author.id, "Clarify policy", "Work report-1");

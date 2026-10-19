@@ -1,5 +1,7 @@
 # Material UI 工作台迁移验收
 
+历史记录：本文中的 `prototype/` 生产代码已于 2026-10-19 恢复到 `apps/workbench/`；当前构建入口和验收见 [恢复记录](workbench-restoration-record.md)。
+
 日期：2026-10-14（Asia/Shanghai）。本次完成全部真实 AiricForge Web 工作台页面迁移，不包含业务 App 的嵌入式 Copilot，不发布正式部署。
 
 ## 实现结果与边界

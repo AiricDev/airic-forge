@@ -15,27 +15,5 @@ playwright-report/
 
 prototype/
 
-# Version the real workbench; keep the generated prototype reference-only.
-!prototype/
-prototype/*
-!prototype/README.md
-!prototype/package.json
-!prototype/index.html
-!prototype/vite.config.ts
-!prototype/vitest.config.ts
-!prototype/playwright.config.ts
-!prototype/postcss.config.js
-!prototype/tsconfig.json
-!prototype/e2e/
-!prototype/src/
-prototype/src/*
-!prototype/src/index.tsx
-!prototype/src/StageOneApp.tsx
-!prototype/src/workbench/
-!prototype/src/utils/
-prototype/src/utils/*
-!prototype/src/utils/om.ts
-!prototype/src/utils/manifest.ts
-!prototype/src/types/
-prototype/src/types/*
-!prototype/src/types/domain.ts
+# The external prototype is reference-only; production lives in apps/workbench.
+apps/workbench/public/

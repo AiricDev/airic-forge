@@ -9,7 +9,7 @@ const event = (id: string, type: TrajectoryEvent["type"], payload: Record<string
 const history = () => Array.from({length:100},(_,n) => [event(`u${n}`,"turn.started",{userMessage:`用户 ${n} `+"讨论".repeat(100)},`t${n}`),event(`a${n}`,"turn.completed",{text:`答复 ${n} `+"分析".repeat(100)},`t${n}`)]).flat();
 function ports() {
   const cache = new Map<string,ContextSummary>(); let calls=0;
-  const value: WorkContextPorts = {summaries:{read:async k=>cache.get(k),write:async(k,v)=>{cache.set(k,structuredClone(v));}},summarizer:{modelFingerprint:"model",summarize:async({messages,previousSummary})=>{calls++; return `讨论摘要，来源 ${messages[0].eventId} 至 ${messages.at(-1)!.eventId}。${previousSummary.slice(0,100)}`;}}};
+  const value: WorkContextPorts = {inputTokens:32_000,summaries:{read:async k=>cache.get(k),write:async(k,v)=>{cache.set(k,structuredClone(v));}},summarizer:{modelFingerprint:"model",summarize:async({messages,previousSummary})=>{calls++; return `讨论摘要，来源 ${messages[0].eventId} 至 ${messages.at(-1)!.eventId}。${previousSummary.slice(0,100)}`;}}};
   return {cache,value,calls:()=>calls};
 }
 test("short discussion needs no summarizer and required facts cannot be truncated",async()=>{
@@ -50,4 +50,11 @@ test("deterministic corrections and unknown receipts survive; huge messages rema
   const facts=pinnedWorkFacts(events); assert.equal(facts.corrections[0].note,"必须保留的纠正");assert.equal(facts.unresolved.length,1);assert.equal(facts.receipts[0].commandId,"ok");
   const text="中文😀".repeat(5000),chunks=conversationMessages([event("huge","turn.completed",{text})]);
   assert.equal(chunks.map(c=>c.text).join(""),text);assert.ok(chunks.every(c=>c.eventId==="huge" && c.textRange));
+});
+
+test("80 percent is an organization target, not a rejection limit for mandatory input", async()=>{
+  const p=ports();
+  const result=await assembleWorkMemory({scope,events:[],mandatory:"x".repeat(54000),ports:p.value,digest});
+  assert.ok(result.estimatedTokens>25600 && result.estimatedTokens<32000);
+  assert.equal(p.calls(),0);assert.equal(result.memory,undefined);
 });

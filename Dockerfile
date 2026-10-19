@@ -3,14 +3,13 @@ WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-workspace.yaml tsconfig.base.json pnpm-lock.yaml ./
 COPY apps/api/package.json apps/api/package.json
+COPY apps/workbench/package.json apps/workbench/package.json
 COPY packages/domain/package.json packages/domain/package.json
-COPY prototype/package.json prototype/package.json
 RUN pnpm install --frozen-lockfile
 COPY apps apps
 COPY packages packages
-COPY prototype prototype
 COPY seed seed
-RUN pnpm --filter @airic-forge/domain build && pnpm --filter @airic-forge/api build && pnpm --filter magic-patterns-vite-template build
+RUN pnpm --filter @airic-forge/domain build && pnpm --filter @airic-forge/api build && pnpm --filter @airic-forge/workbench build
 
 FROM node:24-bookworm-slim
 WORKDIR /app
@@ -23,7 +22,7 @@ COPY --from=build /app/packages/domain/dist /app/packages/domain/dist
 COPY --from=build /app/packages/domain/package.json /app/packages/domain/package.json
 COPY --from=build /app/apps/api/dist /app/apps/api/dist
 COPY --from=build /app/apps/api/package.json /app/apps/api/package.json
-COPY --from=build /app/prototype/dist /app/prototype/dist
+COPY --from=build /app/apps/workbench/public /app/apps/workbench/public
 COPY --from=build /app/seed /app/seed
 COPY scripts/migrate-report-type-om.mjs /app/scripts/migrate-report-type-om.mjs
 EXPOSE 4175

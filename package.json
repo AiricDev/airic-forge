@@ -7,7 +7,7 @@
     "check": "pnpm -r check",
     "test": "pnpm -r test",
     "dev": "pnpm --filter @airic-forge/api dev",
-    "test:e2e": "pnpm --filter magic-patterns-vite-template test:e2e"
+    "test:e2e": "pnpm --filter @airic-forge/workbench test:e2e"
   },
   "pnpm": {
     "overrides": {

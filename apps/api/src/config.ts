@@ -32,7 +32,7 @@ export function loadConfig(env = process.env): ForgeConfig {
     dataDir: resolve(env.FORGE_DATA_DIR ?? "./runtime/certlab/data"),
     seedProjectDir: resolve(env.FORGE_SEED_PROJECT_DIR ?? "./seed/certlab"),
     reportWorkDefinitionId: env.FORGE_REPORT_WORK_DEFINITION,
-    webDistDir: resolve(env.FORGE_WEB_DIST_DIR ?? "./prototype/dist"),
+    webDistDir: resolve(env.FORGE_WEB_DIST_DIR ?? "./apps/workbench/public"),
     certLabUrl: (env.FORGE_CERTLAB_URL ?? "http://127.0.0.1:8000").replace(/\/$/, ""),
     organizationId: (env.FORGE_ORGANIZATION_ID ?? "").trim(),
     allowedOrigin: env.FORGE_ALLOWED_ORIGIN ?? "http://127.0.0.1:5173",
@@ -43,7 +43,7 @@ export function loadConfig(env = process.env): ForgeConfig {
     modelId: env.FORGE_MODEL_ID,
     modelApiKey: env.FORGE_MODEL_API_KEY,
     modelBaseUrl: env.FORGE_MODEL_BASE_URL,
-    contextInputTokens: positiveBudget(env.FORGE_CONTEXT_INPUT_TOKENS, 32_000),
+    contextInputTokens: positiveBudget(env.FORGE_CONTEXT_INPUT_TOKENS, 256_000),
     contextOutputTokens: positiveBudget(env.FORGE_CONTEXT_OUTPUT_TOKENS, 8_000),
   };
 }

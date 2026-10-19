@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ForgeUseCases } from "./use-cases.js";
-import type { AppSessionPort, SessionGrant } from "./ports.js";
+import type { AppSessionPort, SessionGrant, WorkActivity } from "./ports.js";
 
 test("expired ACP grants are removed before any app capability can be used", async () => {
   const grants = new Map<string, SessionGrant>([["expired", { ticket: "expired", expiresAt: "2020-01-01T00:00:00.000Z", forgeUserId: "u", workId: "w", sessionId: "s", appToken: "secret", reportId: "r" }]]);
@@ -49,7 +49,7 @@ test("bootstrap rejects an App identity whose verified Email now maps to another
     om: {} as never, catalogs: {} as never, agents: {} as never, sessions: {} as never, passwordSetups: {} as never, passwordCodec: {} as never, trajectories: {} as never,
     system: { id: () => "id", digest: () => "digest", now: () => "2026-10-02T00:00:00.000Z" }, initialAdminEmails: new Set(),
   });
-  await assert.rejects(() => useCases.bootstrap({ token: "app-token", reportId: "report-1", goal: "Inspect report" }), /AppIdentityEmailConflict/);
+  await assert.rejects(() => useCases.bootstrap({ token: "app-token", reportId: "report-1" }), /AppIdentityEmailConflict/);
   assert.equal(writes, 0);
 });
 
@@ -154,7 +154,10 @@ test("a Work Turn exposes only accepted and allowed tools, records an unknown co
     agents: { runWork: async ({ tools }: { tools: Array<{ capability: { id: string }; invoke: (input: Record<string, unknown>) => Promise<unknown> }> }) => {
       assert.deepEqual(tools.map((tool) => tool.capability.id), ["report.context", "assessment.save-draft"]);
       await assert.rejects(() => tools[1].invoke({ report_id: "other", assessment_id: "assessment", expected_record_no: 3 }), /CommandTargetMismatch/);
-      assert.deepEqual(await tools[1].invoke({ assessment_id: "assessment", expected_record_no: 3 }), { status: "unknown", commandId: "cmd_4", actionEventId: "evt_6" });
+      const outcome = await tools[1].invoke({ assessment_id: "assessment", expected_record_no: 3 }) as Record<string, unknown>;
+      assert.equal(outcome.status, "unknown");
+      assert.match(String(outcome.commandId), /^cmd_/);
+      assert.match(String(outcome.actionEventId), /^evt_/);
       await assert.rejects(() => tools[1].invoke({ assessment_id: "assessment", expected_record_no: 3 }), /UnresolvedCommandBlocksFurtherWrites/);
       return { text: "Result needs reconciliation" };
     } } as never,
@@ -162,10 +165,20 @@ test("a Work Turn exposes only accepted and allowed tools, records an unknown co
     system: { id: (prefix) => `${prefix}_${++nextId}`, now: () => "2026-10-02T00:00:00.000Z", digest: () => "context" },
     accounts: {} as never, passwordSetups: {} as never, passwordCodec: {} as never, initialAdminEmails: new Set(),
   });
-  await useCases.startTurn("ticket", "Update this report");
+  const activities: WorkActivity[] = [];
+  await useCases.startTurn("ticket", "Update this report", undefined, [], undefined, undefined, undefined, value => activities.push(value));
+  assert.equal(activities[0].phase, "preparing");
+  assert(activities.some(value => value.phase === "context" && value.status === "completed"));
+  assert(activities.some(value => value.capabilityId === "assessment.save-draft" && value.status === "running"));
+  assert(activities.some(value => value.status === "failed" && value.code === "CommandTargetMismatch"));
+  assert(activities.some(value => value.status === "unknown" && value.code === "CommandResultUnknown"));
+  assert(!JSON.stringify(activities).includes("secret"));
+  assert(!JSON.stringify(activities).includes("expected_record_no"));
+  assert(events.some(event => event.payload.activity));
   assert.equal(calls.filter((item) => item === "assessment.save-draft").length, 1);
-  assert.equal(events.find((event) => event.type === "action" && event.payload.status === "unknown")?.payload.commandId, "cmd_4");
-  const recovered = await useCases.recoverCommand("ticket", "cmd_4");
+  const commandId = String(events.find((event) => event.type === "action" && event.payload.status === "unknown")?.payload.commandId);
+  assert.match(commandId, /^cmd_/);
+  const recovered = await useCases.recoverCommand("ticket", commandId);
   assert.equal(recovered.status, "committed");
   assert.equal(calls.filter((item) => item === "assessment.save-draft").length, 1);
 });

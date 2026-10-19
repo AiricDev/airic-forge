@@ -47,13 +47,15 @@ export class CertLabClient implements AppPort {
 
   async openApi(token: string): Promise<Json> { return this.#request("/airic/v1/openapi", token); }
   async reportContext(token: string, reportId: string, selection?: Json): Promise<Json> {
-    return this.query(token, "report.context", { report_id: reportId, ...(selection ? { selection } : {}) });
+    // Startup needs counts, the selected full assessment and a small scope sample.
+    // Remaining requirements stay available through explicit App queries.
+    return this.query(token, "report.context", { report_id: reportId, assessment_limit: 5, ...(selection ? { selection } : {}) });
   }
   async query(token: string, capabilityId: string, input: Json): Promise<Json> {
     const value = await this.#request(`/airic/v1/queries/${encodeURIComponent(capabilityId)}`, token, { expectedDomainRelease: release, input }, ["asset.read", "asset.read-location"].includes(capabilityId) ? 12 * 1024 * 1024 : capabilityId === "asset.search" ? 2 * 1024 * 1024 : undefined);
     if (["asset.read", "asset.read-location"].includes(capabilityId)) {
       const source = record(value.source);
-      if (!["ready", "unavailable"].includes(String(value.status)) || source.revision_id !== input.revision_id
+      if (!(capabilityId === "asset.read-location" ? ["ready", "image_required", "no_original_text", "unavailable"] : ["ready", "unavailable"]).includes(String(value.status)) || source.revision_id !== input.revision_id
         || (capabilityId === "asset.read" ? source.page !== input.page : source.location_id !== input.location_id || !/^[a-f0-9]{64}$/.test(String(source.location_id)) || !Object.keys(record(source.locator)).length) || typeof source.asset_id !== "string"
         || typeof source.project_id !== "string" || !/^[0-9a-f]{64}$/.test(String(source.sha256))
         || typeof value.text !== "string" || value.text.length > 200_000
@@ -71,10 +73,16 @@ export class CertLabClient implements AppPort {
           || range.next_offset !== (end < total ? end : null)
           || JSON.stringify(source.text_range) !== JSON.stringify(range)) throw new Error("InvalidMaterialRange");
       }
+      if (capabilityId === "asset.read-location") {
+        if (value.document_summary !== undefined && (typeof value.document_summary !== "string" || Array.from(value.document_summary).length > 600)) throw new Error("InvalidMaterialSummary");
+        if (value.visual_summary !== undefined && (typeof value.visual_summary !== "string" || Array.from(value.visual_summary).length > 1200)) throw new Error("InvalidMaterialSummary");
+        if (input.image_index !== undefined && source.image_index !== input.image_index) throw new Error("InvalidMaterialImageSource");
+        if (value.images !== undefined && (!Array.isArray(value.images) || value.images.length > 8 || value.images.some((entry) => { const image = record(entry); return !Number.isSafeInteger(image.image_index) || Number(image.image_index) < 0 || typeof image.visual_summary !== "string" || Array.from(image.visual_summary).length > 300 || !/^[a-f0-9]{64}$/.test(String(image.view_sha256)); }))) throw new Error("InvalidMaterialImages");
+      }
       if (value.image) {
         if (input.include_image !== true) throw new Error("UnrequestedMaterialImage");
         const image = record(value.image);
-        if (value.status !== "ready" || image.mimeType !== "image/png" || typeof image.data !== "string"
+        if (!["ready", "image_required"].includes(String(value.status)) || image.mimeType !== "image/png" || typeof image.data !== "string"
           || image.data.length > 12 * 1024 * 1024 || !/^[A-Za-z0-9+/]+={0,2}$/.test(image.data)) throw new Error("InvalidMaterialImage");
         const bytes = Buffer.from(image.data, "base64");
         if (bytes.length > 8 * 1024 * 1024 || bytes.toString("base64") !== image.data
@@ -86,10 +94,10 @@ export class CertLabClient implements AppPort {
         || typeof value.coverage !== "object" || Object.values(record(value.coverage)).some(n => !Number.isInteger(n) || Number(n) < 0)) throw new Error("InvalidMaterialSearch");
       for (const item of value.items) {
         const hit = record(item);
-        if (!["asset_id", "revision_id", "filename", "path", "status"].every(key => typeof hit[key] === "string" && String(hit[key]).length <= 2000)
+        if (!["asset_id", "revision_id", "filename", "path", "status"].every(key => typeof hit[key] === "string" && Array.from(String(hit[key])).length <= 2000)
           || !/^[a-f0-9]{64}$/.test(String(hit.sha256))
           || (hit.location_id !== null && !/^[a-f0-9]{64}$/.test(String(hit.location_id)))
-          || typeof hit.snippet !== "string" || hit.snippet.length > 400) throw new Error("InvalidMaterialSearch");
+          || typeof hit.snippet !== "string" || Array.from(hit.snippet).length > 400) throw new Error("InvalidMaterialSearch");
       }
     }
     return value;

@@ -10,3 +10,6 @@ runtime
 **/*.tsbuildinfo
 **/__pycache__
 deploy/p0/state
+
+apps/workbench/public
+prototype

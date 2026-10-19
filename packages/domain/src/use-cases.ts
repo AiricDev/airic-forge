@@ -1,7 +1,7 @@
 import { isAllowedOmDocumentPath, isAllowedProposalPath, validateWorkDefinition } from "./operating-model.js";
 import { materialObservation } from "./materials.js";
 import { assembleWorkMemory, pinnedWorkFacts, conversationMessages, CONTEXT_POLICY_VERSION, type WorkContextPorts } from "./work-context.js";
-import type { AccountPort, AgentRunnerPort, AppSessionPort, AppPort, AppCommandLocator, CatalogPort, EvidenceExtractorPort, EvidenceSessionPort, MeasurementPort, OmDraftPort, OperatingModelPort, OrganizationContributionPort, PasswordCodecPort, PasswordSetupPort, ProposalListFilters, ProposalRecord, ReflectionAgentPort, ReflectionRunStore, ReflectionLens, ReflectionRecord, SessionGrant, SystemPort, TrajectoryPort, WorkFeedbackKind, WorkListFilters, WorkPort, WorkAgentTool } from "./ports.js";
+import type { AccountPort, AgentRunnerPort, AppSessionPort, AppPort, AppCommandLocator, CatalogPort, EvidenceExtractorPort, EvidenceSessionPort, MeasurementPort, OmDraftPort, OperatingModelPort, OrganizationContributionPort, PasswordCodecPort, PasswordSetupPort, ProposalListFilters, ProposalRecord, ReflectionAgentPort, ReflectionRunStore, ReflectionLens, ReflectionRecord, SessionGrant, SystemPort, TrajectoryPort, WorkFeedbackKind, WorkListFilters, WorkPort, WorkAgentTool, WorkActivity } from "./ports.js";
 
 import { ReflectionRuns, type ReflectionExecution } from "./reflection-runs.js";
 
@@ -24,7 +24,7 @@ export class ForgeUseCases {
     return workType === "report-authoring" ? this.ports.reportWorkDefinitionId ?? workType : workType;
   }
 
-  async bootstrap(input: { token: string; reportId?: string; entityId?: string; workType?: "report-authoring" | "report-type-definition"; selection?: Record<string, unknown>; goal?: string; workId?: string }) {
+  async bootstrap(input: { token: string; reportId?: string; entityId?: string; workType?: "report-authoring" | "report-type-definition"; selection?: Record<string, unknown>; workId?: string }) {
     const workType = input.workType ?? "report-authoring";
     const entityId = input.entityId ?? input.reportId;
     if (!entityId || workType !== "report-authoring") throw new Error("UnsupportedAppContext");
@@ -34,8 +34,6 @@ export class ForgeUseCases {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("AppIdentityEmailRequired");
     const context = await this.authoritativeContext(input.token, workType, entityId, input.selection);
     this.assertContextTarget(context, workType, entityId);
-    const goal = input.goal?.trim();
-    if (!input.workId && (!goal || goal.length > 4000)) throw new Error("WorkGoalRequired");
     const existing = input.workId ? await this.ports.works.work(input.workId) : undefined;
     if (input.workId && (!existing || existing.appId !== identity.appId || existing.entityId !== entityId || existing.workType !== workType || existing.appUserId !== identity.appUserId || existing.status !== "active")) throw new Error("WorkBindingMismatch");
     const linkedUserId = await this.ports.accounts.linkedUserId(identity.appId, identity.appUserId);
@@ -45,7 +43,12 @@ export class ForgeUseCases {
     const user = await this.ports.accounts.ensureUser(email, this.ports.initialAdminEmails.has(email));
     const branch = await this.ports.om.ensureUserBranch(user.id);
     await this.ports.accounts.recordAppIdentity(identity.appId, identity.appUserId, user.id, email);
-    const work = existing ?? await this.ports.works.createWork(user.id, identity.appId, workType, entityId, { goal: goal!, appUserId: identity.appUserId, selection: input.selection });
+    const revision = await this.ports.om.head(branch.branch);
+    const definition = await this.ports.om.workDefinition(revision, this.workDefinitionId(workType));
+    const reportGoal = definition.description.trim() || definition.title.trim();
+    if (!reportGoal || reportGoal.length > 4000) throw new Error("WorkGoalRequired");
+    const work = await this.ports.works.ensureReportWork(user.id, identity.appId, workType, entityId, { goal: reportGoal, appUserId: identity.appUserId });
+    if (work.ownerUserId !== user.id || work.appUserId !== identity.appUserId || work.status !== "active" || (input.workId && work.id !== input.workId)) throw new Error("WorkBindingMismatch");
     if (typeof context.entityTitle === "string" && context.entityTitle.trim()) {
       work.entityTitle = context.entityTitle.trim().slice(0, 300);
       await this.ports.works.setWorkEntityTitle(work.id, work.entityTitle);
@@ -177,7 +180,7 @@ export class ForgeUseCases {
     return candidate;
   }
 
-  async startTurn(ticket: string, userMessage: string, onText?: (text: string) => void, evidenceDigests: string[] = [], requestId?: string, onTurn?: (turnId: string) => void, onContextStatus?: (status: "organizing" | "ready" | "failed") => void) {
+  async startTurn(ticket: string, userMessage: string, onText?: (text: string) => void, evidenceDigests: string[] = [], requestId?: string, onTurn?: (turnId: string) => void, onContextStatus?: (status: "organizing" | "ready" | "failed") => void, onActivity?: (activity: WorkActivity) => void) {
     const session = await this.appSession(ticket);
     await this.assertActiveWork(session);
     if (!userMessage.trim() || userMessage.length > 4000) throw new Error("WorkMessageRequired");
@@ -205,6 +208,9 @@ export class ForgeUseCases {
     const operations = new Set<Promise<unknown>>();
     const assertRunning = async () => { controller.signal.throwIfAborted(); await this.appSession(ticket); };
     try {
+    const preparingAt = this.ports.system.now();
+    const preparation: WorkActivity = { id: this.ports.system.id("progress"), phase: "preparing", status: "running", label: "核对报告、权限与工作方法", at: preparingAt, startedAt: preparingAt };
+    onActivity?.(preparation);
     const userId = await this.ports.works.userForWork(session.workId);
     if (!userId) throw new Error("WorkNotFound");
     const revision = await this.ports.om.head(`users/${userId}`);
@@ -239,10 +245,55 @@ export class ForgeUseCases {
     }));
     await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId, turnId: turn.id, type: "turn.started", at: turn.startedAt, payload: { omRevision: revision, catalogDigest: catalog.digest, userMessage, ...(requestId ? { requestId } : {}) } });
     onTurn?.(turn.id);
+    const trajectoryWrites: Promise<unknown>[] = [];
+    let streamedAgentText = "";
+    let activeActivity: WorkActivity | undefined;
+    const activity = async (value: WorkActivity) => {
+      activeActivity = value;
+      await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId,
+        turnId: turn.id, type: "message", at: value.at, payload: { activity: value } });
+      onActivity?.(value);
+    };
+    const startActivity = async (phase: WorkActivity["phase"], label: string, extra: Partial<WorkActivity> = {}) => {
+      const at = this.ports.system.now();
+      const value: WorkActivity = { id: this.ports.system.id("progress"), turnId: turn.id, phase, status: "running", label, at, startedAt: at, ...extra };
+      await activity(value);
+      return value;
+    };
+    const finishActivity = async (value: WorkActivity, status: WorkActivity["status"] = "completed", code?: string) => {
+      await activity({ ...value, status, at: this.ports.system.now(), ...(code ? { code } : {}) });
+    };
+    const monitor = async <T>(label: string, operation: () => Promise<T>, extra: Partial<WorkActivity> = {}) => {
+      if (modelActivity?.status === "running") { const value = modelActivity; modelActivity = undefined; await finishActivity(value); }
+      const value = await startActivity("tool", label, extra);
+      try {
+        const result = await operation();
+        const outcome = result && typeof result === "object" ? result as Record<string, unknown> : undefined;
+        const status = outcome?.status === "unknown" ? "unknown" : outcome?.status === "rejected" ? "failed" : "completed";
+        const reason = typeof outcome?.reason === "string" && /^[\w.-]{1,100}$/.test(outcome.reason) ? outcome.reason : undefined;
+        await finishActivity(value, status, status === "failed" ? reason ?? "CommandRejected" : status === "unknown" ? reason ?? "CommandResultUnknown" : undefined);
+        return result;
+      }
+      catch (error) {
+        const raw = error instanceof Error ? error.message : "ToolFailed";
+        await finishActivity(value, controller.signal.aborted ? "cancelled" : "failed", /^[\w.-]{1,100}$/.test(raw) ? raw : "ToolFailed");
+        throw error;
+      }
+    };
+    await finishActivity({ ...preparation, turnId: turn.id });
+    let modelActivity: WorkActivity | undefined;
+    const waitingForModel = () => {
+      const previous = modelActivity;
+      const at = this.ports.system.now();
+      modelActivity = { id: this.ports.system.id("progress"), turnId: turn.id, phase: "model", status: "running", label: "等待模型响应", at, startedAt: at };
+      const next = modelActivity;
+      const write = previous ? finishActivity(previous).then(() => activity(next)) : activity(next);
+      trajectoryWrites.push(write); void write.catch(() => {});
+    };
     let paused = false;
     let checkpointWritten = false;
     let handoffReason: string | undefined;
-    const checkpoint = async (input: WorkCheckpoint, internal = false) => {
+    const checkpointImpl = async (input: WorkCheckpoint, internal = false) => {
       await assertRunning();
       if ((paused && !internal) || operations.size) throw new Error("WorkCheckpointNotReady");
       const events = await this.ports.trajectories.read(session.workId);
@@ -256,9 +307,20 @@ export class ForgeUseCases {
       } catch (error) { paused = false; throw error; }
       return { checkpointId: id };
     };
+    const checkpoint = (input: WorkCheckpoint, internal = false) => monitor("记录工作检查点", () => checkpointImpl(input, internal));
     let unresolvedCommand = this.unresolvedCommands(priorEvents).length > 0;
+    let organizationActivity: WorkActivity | undefined;
     const contextStatus = async (status: "organizing" | "ready" | "failed") => {
       if (controller.signal.aborted) return;
+      if (status === "organizing" && !organizationActivity)
+        organizationActivity = await startActivity("context", "整理对话上下文");
+      if (status === "failed" && !organizationActivity)
+        organizationActivity = await startActivity("context", "整理对话上下文");
+      if (status !== "organizing" && organizationActivity) {
+        await finishActivity(organizationActivity, status === "failed" ? "failed" : "completed", status === "failed" ? "ContextOrganizationFailed" : undefined);
+        organizationActivity = undefined;
+        if (status === "ready" && modelActivity) waitingForModel();
+      }
       onContextStatus?.(status);
       await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId,
         turnId: turn.id, type: "message", at: this.ports.system.now(), payload: { contextStatus: status } });
@@ -267,7 +329,7 @@ export class ForgeUseCases {
     const tools: WorkAgentTool[] = catalog.capabilities.filter((capability) => !forbidden.has(capability.id) && !capability.id.startsWith("report-type.") && definition.capabilities.allowed.includes(capability.id)).map((capability) => ({
       capability,
       invoke: (input) => {
-        const operation = (async () => {
+        const operation = monitor(capability.title, async () => {
         await assertRunning();
         if (paused) throw new Error("WorkAwaitingFeedback");
         if (input.report_id !== undefined && input.report_id !== entityId) throw new Error("CommandTargetMismatch");
@@ -326,13 +388,15 @@ export class ForgeUseCases {
         const actionEventId = this.ports.system.id("evt");
         await this.ports.trajectories.append({ id: actionEventId, workId: session.workId, turnId: turn.id, type: "action", at: this.ports.system.now(), payload: { actionId, commandId, capabilityId: capability.id, status: outcome.status, locator, input: boundInput, receipt: outcome.receipt, reason: outcome.reason } });
         return { status: outcome.status, commandId, actionEventId, ...(outcome.receipt ? { receipt: outcome.receipt } : {}), ...(outcome.reason ? { reason: outcome.reason } : {}) };
-        })();
+        }, { capabilityId: capability.id,
+          detail: [typeof input.q === "string" ? `关键词：${input.q.slice(0, 100)}` : "",
+            typeof input.revision_id === "string" ? `版本：${input.revision_id.slice(0, 80)}` : "",
+            Number.isSafeInteger(input.page) ? `第 ${input.page} 页` : ""].filter(Boolean).join(" · ") });
         operations.add(operation);
         void operation.then(() => operations.delete(operation), () => operations.delete(operation));
         return operation;
       },
     }));
-    const textWrites: Promise<unknown>[] = [];
     try {
       if (evidenceDigests.length > 3 || new Set(evidenceDigests).size !== evidenceDigests.length) throw new Error("InvalidEvidenceSelection");
       const evidence = evidenceDigests.length ? await this.ports.evidenceSessions?.take(ticket, evidenceDigests) : [];
@@ -344,6 +408,7 @@ export class ForgeUseCases {
           [id, this.ports.om.knowledgePath ? await this.ports.om.knowledgePath(revision, id) : `subject-knowledge/${id}.md`] as const)),
       ]);
       let memory;
+      const contextActivity = await startActivity("context", "组装当前回合上下文");
       try {
         const summarizer = this.ports.workContext?.summarizer;
         memory = await assembleWorkMemory({
@@ -359,6 +424,7 @@ export class ForgeUseCases {
         await assertRunning();
         if (memory.memory) await contextStatus("ready");
       } catch (error) { await contextStatus("failed"); throw error; }
+      await finishActivity(contextActivity);
       context.workMemory = memory.memory;
       await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId,
         turnId: turn.id, type: "context.assembled", at: this.ports.system.now(), payload: {
@@ -368,10 +434,12 @@ export class ForgeUseCases {
           memory: memory.memory ? { firstEventId: memory.memory.firstEventId, lastEventId: memory.memory.lastEventId, sourceDigest: memory.memory.sourceDigest } : undefined,
           documents: documents.map(({ content: _, ...provenance }) => provenance),
         } });
+      modelActivity = await startActivity("model", "准备模型会话");
       const result = await this.ports.agents.runWork({ sessionId: session.sessionId, signal: controller.signal, userMessage, conversation: memory.conversation, context,
         inputTokens: this.ports.workContext?.inputTokens, outputTokens: this.ports.workContext?.outputTokens,
-        onContextStatus: status => { const write = contextStatus(status); textWrites.push(write); void write.catch(() => {}); },
-        readHistory: async (offset, limit) => {
+        onModelStatus: waitingForModel,
+        onContextStatus: status => { const write = contextStatus(status); trajectoryWrites.push(write); void write.catch(() => {}); },
+        readHistory: (offset, limit) => monitor("读取工作历史", async () => {
           await assertRunning();
           if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 20) throw new Error("InvalidHistoryRange");
           const page: Array<Record<string, unknown>> = [];
@@ -384,21 +452,27 @@ export class ForgeUseCases {
             page.push({ ...message, offset: index, nextOffset: index + 1 });
           }
           return page;
-        }, documents: documents.map(({ id, content }) => ({ id, content })), evidence: (evidence ?? []).map(({ filename, digest, text }) => ({ filename, digest, text })), availableDocumentIds: [...available.keys()], loadDocument: async (id) => {
+        }), documents: documents.map(({ id, content }) => ({ id, content })), evidence: (evidence ?? []).map(({ filename, digest, text }) => ({ filename, digest, text })), availableDocumentIds: [...available.keys()], loadDocument: (id) => monitor("读取工作方法文档", async () => {
         await assertRunning();
         const path = available.get(id);
         if (!path) throw new Error("DocumentNotAvailable");
         const content = await this.ports.om.document(revision, path);
         await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId, turnId: turn.id, type: "context.document-loaded", at: this.ports.system.now(), payload: { id, path, revision, reason: "on-demand" } });
         return content;
-      }, tools, checkpoint, onText: (text) => {
+      }), tools, checkpoint, onText: (text) => {
+        if (modelActivity?.status === "running" && modelActivity.label === "等待模型响应") {
+          const value = modelActivity;
+          const at = this.ports.system.now();
+          modelActivity = { ...value, id: this.ports.system.id("progress"), label: "正在生成回复", at, startedAt: at };
+          const responding = modelActivity;
+          const write = finishActivity(value).then(() => activity(responding)); trajectoryWrites.push(write); void write.catch(() => {});
+        }
         if (controller.signal.aborted) return;
-        const write = Promise.resolve(this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId, turnId: turn.id, type: "message", at: this.ports.system.now(), payload: { agentTextDelta: text } }));
-        void write.catch(() => {});
-        textWrites.push(write);
+        streamedAgentText += text;
         onText?.(text);
       } });
-      await Promise.all(textWrites);
+      await Promise.all(trajectoryWrites);
+      if (modelActivity?.status === "running") { await finishActivity(modelActivity); modelActivity = undefined; }
       await Promise.allSettled([...operations]);
       controller.signal.throwIfAborted();
       if (!checkpointWritten && (definition.capabilities.allowed.includes("command.context") || definition.capabilities.allowed.some(id => ["asset.read", "asset.search", "asset.read-location"].includes(id)))
@@ -421,10 +495,16 @@ export class ForgeUseCases {
       await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId, turnId: turn.id, type: "turn.completed", at: this.ports.system.now(), payload: { text: result.text } });
       return { turn: { ...turn, status: "completed" }, documents: documents.map(({ content: _, ...provenance }) => provenance), reply: result.text };
     } catch (error) {
-      await Promise.allSettled(textWrites);
+      await Promise.allSettled(trajectoryWrites);
       await Promise.allSettled([...operations]);
       const code = controller.signal.aborted ? "WorkCancelled" : error instanceof Error ? error.message : "AgentRunFailed";
+      if (activeActivity && (activeActivity.status === "running" || activeActivity.code === "ContextOrganizationFailed")) await finishActivity(activeActivity, controller.signal.aborted ? "cancelled" : "failed", /^[\w.-]{1,100}$/.test(code) ? code : "AgentRunFailed");
+      else {
+        const failed = await startActivity("model", activeActivity ? `处理“${activeActivity.label.slice(0, 200)}”的结果` : "执行回合", activeActivity?.capabilityId ? { capabilityId: activeActivity.capabilityId } : {});
+        await finishActivity(failed, controller.signal.aborted ? "cancelled" : "failed", /^[\w.-]{1,100}$/.test(code) ? code : "AgentRunFailed");
+      }
       await this.ports.works.completeTurn(turn.id, controller.signal.aborted ? "cancelled" : "failed");
+      if (streamedAgentText) await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId, turnId: turn.id, type: "message", at: this.ports.system.now(), payload: { agentTextDelta: streamedAgentText, partial: true } });
       await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId, turnId: turn.id, type: "error", at: this.ports.system.now(), payload: { code } });
       throw error;
     }

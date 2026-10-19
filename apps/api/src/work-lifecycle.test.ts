@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { ForgeUseCases, type AgentRunnerPort, type WorkContextPorts } from "@airic-forge/domain";
+import { ForgeDatabase } from "./database.js";
 import { ForgeRuntime } from "./runtime.js";
 import { testCatalog } from "./certlab-test-catalog.js";
 import { hashPassword, verifyPassword } from "./auth.js";
@@ -14,33 +15,76 @@ function fixture(agents: AgentRunnerPort, workContext?: WorkContextPorts) {
   const root = mkdtempSync(join(tmpdir(), "forge-work-lifecycle-"));
   const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve("../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost", initialAdminEmails: new Set() });
   let email = "author@example.invalid";
+  let actorId = "author";
   let submissions = 0;
-  runtime.app.identity = async () => ({ appId: "certlab", organizationId: "synthetic-org", appUserId: "author", email, displayName: "Author" });
+  runtime.app.identity = async () => ({ appId: "certlab", organizationId: "synthetic-org", appUserId: actorId, email, displayName: "Author" });
   runtime.app.reportContext = async (_token, id) => ({ resource: { namespace: "certlab", resourceType: "report", resourceId: id, projectId: "project" } });
   runtime.app.catalog = async () => testCatalog();
   runtime.app.query = async () => ({ assessment: { id: "assessment", report_id: "report", record_no: submissions } });
   const useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, app: runtime.app, organizationId: "synthetic-org", catalogs: runtime.db, agents, workContext, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: new Set() });
   const owner = runtime.db.ensureUser(email, false);
   const catalog = testCatalog(); runtime.db.saveCandidate(catalog, {}); runtime.db.accept("certlab", catalog.digest, owner.id);
-  return { root, runtime, useCases, submitted: () => submissions, changeEmail: (value: string) => { email = value; }, commit: () => ++submissions, close: () => { runtime.db.close(); rmSync(root, { recursive: true, force: true }); } };
+  return { root, runtime, useCases, submitted: () => submissions, changeActor: (id: string) => { actorId = id; }, changeEmail: (value: string) => { email = value; }, commit: () => ++submissions, close: () => { runtime.db.close(); rmSync(root, { recursive: true, force: true }); } };
 }
 
-test("explicit goals create independent Works; resume binds original actor, report, owner and goal", async () => {
+test("report bootstrap resume binds the original actor, report and owner", async () => {
   const f = fixture({ runWork: async () => ({ text: "Done" }) });
   try {
-    await assert.rejects(() => f.useCases.bootstrap({ token: "synthetic", reportId: "report" }), /WorkGoalRequired/);
-    const first = await f.useCases.bootstrap({ token: "synthetic", reportId: "report", goal: "Assess grounding" });
-    const second = await f.useCases.bootstrap({ token: "synthetic", reportId: "report", goal: "Check labels" });
-    assert.notEqual(first.work.id, second.work.id);
-    const resumed = await f.useCases.bootstrap({ token: "synthetic", reportId: "report", workId: first.work.id, goal: "Cannot replace original goal" });
+    const first = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
+    const resumed = await f.useCases.bootstrap({ token: "synthetic", reportId: "report", workId: first.work.id });
     assert.equal(resumed.work.id, first.work.id);
-    assert.equal(resumed.work.goal, "Assess grounding");
-    assert.equal((await f.useCases.sessionHistory(resumed.ticket)).work.id, first.work.id);
-    assert.equal((await f.useCases.appWorks("synthetic", "report")).works.length, 2);
+    assert.equal(resumed.work.goal, first.work.goal);
+    assert.equal((await f.useCases.appWorks("synthetic", "report")).works.length, 1);
     await assert.rejects(() => f.useCases.bootstrap({ token: "synthetic", reportId: "other", workId: first.work.id }), /WorkBindingMismatch/);
     f.changeEmail("different@example.invalid");
     await assert.rejects(() => f.useCases.bootstrap({ token: "synthetic", reportId: "report", workId: first.work.id }), /AppIdentityEmailConflict/);
     assert.equal(f.runtime.db.work(first.work.id)?.ownerUserId, first.user.id);
+  } finally { f.close(); }
+});
+
+test("report bootstrap restores one durable Work/session under concurrent opens and keeps reports and owners separate", async () => {
+  let runs = 0;
+  const f = fixture({ runWork: async () => { runs++; return { text: "Read only" }; } });
+  try {
+    const [first, again] = await Promise.all([f.useCases.bootstrap({ token: "synthetic", entityId: "report", workType: "report-authoring" }), f.useCases.bootstrap({ token: "synthetic", reportId: "report" })]);
+    assert.equal(first.work.id, again.work.id);
+    assert.equal(first.session.id, again.session.id);
+    const wd = f.runtime.om.workDefinition(first.activeRevision, "report-authoring");
+    assert.equal(first.work.goal, wd.description);
+    assert.equal(runs, 0);
+    assert.equal((await f.useCases.sessionHistory(again.ticket)).turns.length, 0);
+    await f.useCases.startTurn(first.ticket, "Read only");
+    const restored = await f.useCases.bootstrap({ token: "new-token", reportId: "report" });
+    assert.equal(restored.work.id, first.work.id);
+    assert.equal((await f.useCases.sessionHistory(restored.ticket)).turns.length, 1);
+    assert.equal(runs, 1);
+    const other = await f.useCases.bootstrap({ token: "synthetic", reportId: "another-report" });
+    assert.notEqual(other.work.id, first.work.id);
+    const reopened = new ForgeDatabase(join(f.root, "data"));
+    try {
+      assert.equal(reopened.ensureReportWork(first.user.id, "certlab", "report-authoring", "report", { goal: "must not replace", appUserId: "author" }).id, first.work.id);
+      assert.equal(reopened.createOrTouchSession(first.work.id).id, first.session.id);
+    } finally { reopened.close(); }
+    f.changeActor("another-author"); f.changeEmail("another@example.invalid");
+    const separateOwner = await f.useCases.bootstrap({ token: "other-token", reportId: "report" });
+    assert.notEqual(separateOwner.work.id, first.work.id);
+    await assert.rejects(() => f.useCases.bootstrap({ token: "other-token", reportId: "report", workId: first.work.id }), /WorkBindingMismatch/);
+  } finally { f.close(); }
+});
+
+test("first report open pins an existing Work without merging or following later unrelated Works", async () => {
+  const f = fixture({ runWork: async () => ({ text: "Done" }) });
+  try {
+    const owner = f.runtime.db.userByEmail("author@example.invalid")!;
+    for (const goal of ["Grounding", "Labels"]) f.runtime.db.createWork(owner.id, "certlab", "report-authoring", "report", { goal, appUserId: "author" });
+    const latest = f.runtime.db.activeWork(owner.id, "certlab", "report-authoring", "report")!;
+    const selected = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
+    assert.equal(selected.work.id, latest.id);
+    assert.equal(selected.work.goal, latest.goal);
+    const unrelated = f.runtime.db.createWork(owner.id, "certlab", "report-authoring", "report", { goal: "Separate old work", appUserId: "author" });
+    assert.equal((await f.useCases.bootstrap({ token: "synthetic", reportId: "report" })).work.id, selected.work.id);
+    await assert.rejects(() => f.useCases.bootstrap({ token: "synthetic", reportId: "report", workId: unrelated.id }), /WorkBindingMismatch/);
+    assert.equal((await f.useCases.appWorks("synthetic", "report")).works.length, 3);
   } finally { f.close(); }
 });
 
@@ -59,7 +103,7 @@ test("material observations keep the original revision/page while bytes and full
     current_revision_id: current, is_current: current === input.revision_id },
     text: fullText, image: { mimeType: "image/png", data: pixels }, warnings: ["unverified"] });
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report", goal: "Read grounding source" });
+    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
     await f.useCases.startTurn(session.ticket, "Read v1");
     current = "v2";
     const history = await f.useCases.sessionHistory(session.ticket);
@@ -88,7 +132,7 @@ test("stop waits for an in-flight command, preserves its committed receipt and p
     return { status: "committed", receipt: { commandId: body.commandId, status: "committed" } };
   };
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report", goal: "Assess report" });
+    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
     const running = f.useCases.startTurn(session.ticket, "Start");
     const failed = assert.rejects(() => running);
     await started;
@@ -113,7 +157,7 @@ test("cancelled partial text remains durable and does not become a complete resp
     return { text: "unreachable" };
   } });
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report", goal: "Read report" });
+    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
     const running = f.useCases.startTurn(session.ticket, "Read"); const failed = assert.rejects(() => running);
     await started;
     const history = await f.useCases.cancelTurn(session.ticket); await failed;
@@ -130,7 +174,7 @@ test("repeating the same accepted prompt ID returns the original Turn without a 
   let calls = 0;
   const f = fixture({ runWork: async () => { calls++; return { text: "Original reply" }; } });
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report", goal: "Read report" });
+    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
     const first = await f.useCases.startTurn(session.ticket, "Read", undefined, [], "prompt-one");
     const replay = await f.useCases.startTurn(session.ticket, "Read", undefined, [], "prompt-one");
     assert.equal(first.turn.id, replay.turn.id);
@@ -143,13 +187,13 @@ test("repeating the same accepted prompt ID returns the original Turn without a 
 test("restart marks an abandoned Turn interrupted and preserves original goal and pending command locator", async () => {
   const f = fixture({ runWork: async () => ({ text: "unused" }) });
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report", goal: "Original goal" });
+    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
     const turn = f.runtime.db.nextTurn(session.work.id, f.runtime.om.head(`users/${session.user.id}`), "accepted", "context");
     f.runtime.trajectories.append({ id: "pending", workId: session.work.id, turnId: turn.id, type: "action", at: systemPort.now(), payload: { commandId: "original-key", status: "pending", capabilityId: "assessment.start", locator: { commandId: "original-key", reportId: "report", assessmentId: "assessment", capabilityId: "assessment.start", resourceKind: "project", resourceId: "project", scope: "assessment.start" } } });
     const restart = new ForgeRuntime(f.runtime.config);
     try {
       assert.equal(restart.db.turnsForWork(session.work.id)[0].status, "interrupted");
-      assert.equal(restart.db.work(session.work.id)?.goal, "Original goal");
+      assert.equal(restart.db.work(session.work.id)?.goal, session.work.goal);
       assert.equal(restart.trajectories.read(session.work.id)[0].payload.commandId, "original-key");
       assert.equal(f.submitted(), 0);
     } finally { restart.db.close(); }
@@ -158,7 +202,8 @@ test("restart marks an abandoned Turn interrupted and preserves original goal an
 
 test("real ACP snapshots and repeated RPC IDs preserve one Turn and the same server-owned messages", async () => {
   let calls = 0;
-  const f = fixture({ runWork: async ({ onText }) => { calls++; onText?.("Partial"); return { text: "Saved server reply" }; } });
+  const f = fixture({ runWork: async ({ onText, onModelStatus, tools }) => { calls++; onModelStatus?.(); await tools.find(tool => tool.capability.id === "assessment.context")!.invoke({ assessment_id: "assessment" }); onText?.("Partial"); return { text: "Saved server reply" }; } });
+  const updates: Record<string, unknown>[] = [];
   Object.assign(f.runtime, { useCases: f.useCases });
   const server = buildServer(f.runtime);
   let socket: WebSocket | undefined;
@@ -166,12 +211,13 @@ test("real ACP snapshots and repeated RPC IDs preserve one Turn and the same ser
     const timer = setTimeout(() => reject(new Error("RPC timeout")), 5000);
     socket!.onmessage = (event) => {
       const response = JSON.parse(String(event.data)) as Record<string, unknown>;
+      if (response.method === "session/update") updates.push(response.params as Record<string, unknown>);
       if (response.id === id) { clearTimeout(timer); resolveRpc(response); }
     };
     socket!.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
   });
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report", goal: "Read report" });
+    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
     const address = await server.listen({ host: "127.0.0.1", port: 0 });
     socket = new WebSocket(address.replace(/^http/, "ws") + "/acp");
     await new Promise<void>((resolveOpen, reject) => { socket!.onopen = () => resolveOpen(); socket!.onerror = () => reject(new Error("Socket failed")); });
@@ -180,6 +226,10 @@ test("real ACP snapshots and repeated RPC IDs preserve one Turn and the same ser
     const replay = await rpc("same-prompt", "session/prompt", { message: "Read" });
     assert.deepEqual(original.result, replay.result);
     assert.equal(calls, 1);
+    const progress = updates.filter(event => event.phase === "activity").map(event => event.activity as Record<string, unknown>);
+    assert(progress.some(event => event.phase === "model" && event.status === "running"));
+    assert(progress.some(event => event.capabilityId === "assessment.context" && event.status === "completed"));
+    assert(!JSON.stringify(progress).includes("record_no"));
     const history = (await rpc("history", "session/history")).result as { turns: unknown[]; events: { type: string }[] };
     assert.equal(history.turns.length, 1);
     assert.equal(history.events.filter((event) => event.type === "turn.started").length, 1);
@@ -207,7 +257,7 @@ test("checkpoints stop business calls; explicit scoped feedback resumes fresh fa
     return { text: "Step finished, goal is waiting" };
   } });
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report", goal: "Original PE-1 goal" });
+    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
     const head = f.runtime.om.head(`users/${session.user.id}`);
     await f.useCases.startTurn(session.ticket, "Read original", undefined, [], "first");
     const history = await f.useCases.sessionHistory(session.ticket);
@@ -224,7 +274,7 @@ test("checkpoints stop business calls; explicit scoped feedback resumes fresh fa
     f.commit();
     await f.useCases.startTurn(session.ticket, "Resume original goal");
     assert.equal(f.runtime.om.head(`users/${session.user.id}`), head);
-    assert.equal((await f.useCases.sessionHistory(session.ticket)).work.goal, "Original PE-1 goal");
+    assert.equal((await f.useCases.sessionHistory(session.ticket)).work.goal, session.work.goal);
     assert.equal(turns, 2);
   } finally { f.close(); }
 });
@@ -247,7 +297,7 @@ test("B3 command preparation persists the original scoped locator and never repl
     return undefined;
   };
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report", goal: "Test original sample" });
+    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
     await f.useCases.startTurn(session.ticket, "Register test");
     const history = await f.useCases.sessionHistory(session.ticket);
     assert.equal(history.unresolvedCommands.length, 1);
@@ -260,8 +310,10 @@ test("B3 command preparation persists the original scoped locator and never repl
 
 test("100-Turn Work retains corrections/current facts and pauses without replay when summary fails", async () => {
   const cache = new Map<string, import("@airic-forge/domain").ContextSummary>();
-  let calls = 0, runs = 0, fail = false, writes = 0;
+  let calls = 0, runs = 0, fail = false, writes = 0, expectedGoal = "";
   const context: WorkContextPorts = {
+    // This fixture intentionally exercises compaction independently of the 256k production default.
+    inputTokens: 32000,
     summaries: {read: async key => cache.get(key), write: async (key, summary) => {cache.set(key, summary);}},
     summarizer: {modelFingerprint: "synthetic-model", summarize: async ({messages}) => {
       calls++; if (fail) throw new Error("ContextSummaryFailed");
@@ -270,7 +322,7 @@ test("100-Turn Work retains corrections/current facts and pauses without replay 
   };
   const f = fixture({runWork: async input => {
     runs++;
-    assert.equal(input.context.workGoal, "Long assessment discussion");
+    assert.equal(input.context.workGoal, expectedGoal);
     assert.equal(input.context.currentMarker, runs);
     if (runs > 1) assert.ok(JSON.stringify(input.context.workFacts).includes("exact human correction"));
     assert.ok(input.readHistory && (await input.readHistory(0, 1)).length === (runs > 1 ? 1 : 0));
@@ -283,7 +335,8 @@ test("100-Turn Work retains corrections/current facts and pauses without replay 
   f.runtime.app.reportContext = async (_token, id) => ({resource:{namespace:"certlab",resourceType:"report",resourceId:id,projectId:"project"},currentMarker:runs+1});
   f.runtime.app.submitCommand = async (_token, _id, body) => {writes++;return {status:"committed",receipt:{commandId:body.commandId,status:"committed"}};};
   try {
-    const session = await f.useCases.bootstrap({token:"synthetic",reportId:"report",goal:"Long assessment discussion"});
+    const session = await f.useCases.bootstrap({token:"synthetic",reportId:"report"});
+    expectedGoal = session.work.goal!;
     for(let index=0; index<100; index++) {
       await f.useCases.startTurn(session.ticket, `继续核对 ${index}`);
       const snapshot=await f.useCases.sessionHistory(session.ticket);
@@ -294,9 +347,55 @@ test("100-Turn Work retains corrections/current facts and pauses without replay 
     fail=true;cache.clear();
     await assert.rejects(()=>f.useCases.startTurn(session.ticket,"继续原目标"),/ContextSummaryFailed/);
     const after=await f.useCases.sessionHistory(session.ticket);
+    const activity = after.events.filter(event => event.turnId === after.turns.at(-1)?.id).map(event => event.payload.activity).filter(Boolean).at(-1) as {phase: string; status: string; code: string};
+    assert.equal(activity.phase, "context"); assert.equal(activity.status, "failed"); assert.equal(activity.code, "ContextSummaryFailed");
+
     assert.equal(runs,100);assert.equal(writes,1);
     assert.deepEqual(after.events.filter(e=>before.events.some(old=>old.id===e.id)),before.events);
     assert.equal(after.turns.at(-1)!.status,"failed");
     assert.ok(after.events.some(e=>e.payload.contextStatus==="failed"));assert.equal(cache.size,0);
   } finally {f.close();}
+});
+
+test("missing independent workspace is explicit JSON 404 while App bootstrap remains usable",async()=>{
+  const f=fixture({runWork:async()=>({text:"ready"})}),server=buildServer(f.runtime);
+  server.log.level="silent";
+  try {
+    const missing=await server.inject({method:"GET",url:"/works/anything"});
+    assert.equal(missing.statusCode,404);assert.equal(missing.json().error,"WebWorkspaceNotBuilt");
+    const bootstrap=await server.inject({method:"POST",url:"/api/v1/app-sessions/bootstrap",headers:{authorization:"Bearer synthetic"},payload:{appId:"certlab",workType:"report-authoring",entityId:"report"}});
+    assert.equal(bootstrap.statusCode,201);assert.equal(bootstrap.json().workspaceAvailable,false);assert.ok(bootstrap.json().ticket);
+    const obsoleteGoal = await server.inject({method:"POST",url:"/api/v1/app-sessions/bootstrap",headers:{authorization:"Bearer synthetic"},payload:{appId:"certlab",workType:"report-authoring",entityId:"report",goal:"Split this report"}});
+    assert.equal(obsoleteGoal.statusCode, 400);
+  } finally {await server.close();f.close();}
+});
+
+test("failed model initialization is reported at its exact stage and restored from Work history", async () => {
+  const f = fixture({ runWork: async () => { throw new Error("ForgeModelNotConfigured"); } });
+  try {
+    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
+    const activities: Array<{ phase: string; status: string; code?: string }> = [];
+    await assert.rejects(f.useCases.startTurn(session.ticket, "Read", undefined, [], undefined, undefined, undefined, activity => activities.push(activity)), /ForgeModelNotConfigured/);
+    assert.equal(activities.at(-1)?.phase, "model");
+    assert.equal(activities.at(-1)?.status, "failed");
+    assert.equal(activities.at(-1)?.code, "ForgeModelNotConfigured");
+    const history = await f.useCases.sessionHistory(session.ticket);
+    assert(history.events.some(event => (event.payload.activity as { code?: string } | undefined)?.code === "ForgeModelNotConfigured"));
+  } finally { f.close(); }
+});
+
+test("an agent failure after a successful tool remains a distinct failed step", async () => {
+  const f = fixture({ runWork: async ({tools}) => {
+    await tools.find(tool => tool.capability.id === "assessment.context")!.invoke({assessment_id:"assessment"});
+    throw new Error("SyntheticResultInvalid");
+  } });
+  try {
+    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
+    await assert.rejects(f.useCases.startTurn(session.ticket,"Read"),/SyntheticResultInvalid/);
+    const history = await f.useCases.sessionHistory(session.ticket);
+    const steps = history.events.map(event => event.payload.activity as {phase:string; status:string; code?:string} | undefined).filter(Boolean);
+    assert(steps.some(step => step?.phase === "tool" && step.status === "completed"));
+    assert.equal(steps.at(-1)?.status,"failed");
+    assert.equal(steps.at(-1)?.code,"SyntheticResultInvalid");
+  } finally { f.close(); }
 });

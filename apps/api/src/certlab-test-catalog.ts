@@ -14,7 +14,7 @@ export const initialCapabilityIds = [
   "output.context", "report.output-readiness", "test-task.create", "test-task.edit",
   "finding.create", "finding.edit", "work-item.block", "work-item.respond", "work-item.complete",
   "report.output-configure", "test-plan.generate", "finding-export.generate", "report.generate", "job.retry",
-  "asset.list", "asset.revisions", "asset.read", "asset.search", "asset.read-location", "asset.impact-preview",
+  "asset.list", "asset.locations", "asset.revisions", "asset.read", "asset.search", "asset.read-location", "asset.impact-preview",
 ];
 export function testCatalog(digest = "accepted"): CapabilityCatalog {
   const scopes: Record<string, string> = {

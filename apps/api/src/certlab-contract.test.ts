@@ -32,7 +32,7 @@ test("CertLab identity and catalog bind trusted server Email, organization and a
   try {
     assert.deepEqual(await app.client.identity("synthetic-test"), { appId: "certlab", appUserId: "actor", email: "author@example.invalid", displayName: "Author", organizationId: "synthetic-org" });
     const catalog = await app.client.catalog("synthetic-test");
-    assert.equal(catalog.capabilities.length, 31);
+    assert.equal(catalog.capabilities.length, 32);
     assert.equal(catalog.digest, (await app.client.catalog("synthetic-test")).digest);
   } finally { await app.close(); }
 });
@@ -167,4 +167,50 @@ test("native ranges validate Unicode positions and remain bounded even when old 
     value={...valid,image:{mimeType:"image/png",data:"pixels"}};
     await assert.rejects(()=>app.client.query("synthetic-test","asset.read-location",input),/UnrequestedMaterialImage/);
   } finally {await app.close();}
+});
+
+test("startup context requests five summaries and preserves the full selected assessment",async()=>{
+  const selected={id:'selected',adopted_clause:{schema:{fields:[{key:'conformity',required:true}]}}};
+  const result={assessment_page:{total:79,limit:5,next_offset:5},selection:selected};
+  const app=await fixture(async(req,res)=>{
+    assert.equal(req.url,'/airic/v1/queries/report.context');
+    assert.deepEqual((await body(req)).input,{report_id:'report',assessment_limit:5,selection:{assessment_id:'selected'}});
+    json(res,result);
+  });
+  try{assert.deepEqual(await app.client.reportContext('synthetic-test','report',{assessment_id:'selected'}),result);}finally{await app.close();}
+});
+
+
+test("image-only sources preserve image identity and summaries remain discovery data", async () => {
+  const input = {report_id: "report", revision_id: "revision", location_id: "b".repeat(64), image_index: 0};
+  let value: Record<string, unknown> = {status: "image_required", text: "", visual_summary: "铭牌型号", images: [{image_index: 0, view_sha256: "c".repeat(64), visual_summary: "铭牌型号"}], warnings: [], source: {revision_id: "revision", location_id: input.location_id, locator: {kind: "image", page: 1}, sha256: "a".repeat(64), asset_id: "asset", project_id: "project", image_index: 0}};
+  const app = await fixture((_req, res) => json(res, value));
+  try {
+    assert.deepEqual(await app.client.query("synthetic-test", "asset.read-location", input), value);
+    value = {...value, source: {...value.source as Record<string, unknown>, image_index: 1}};
+    await assert.rejects(() => app.client.query("synthetic-test", "asset.read-location", input), /InvalidMaterialImageSource/);
+  } finally { await app.close(); }
+});
+
+
+test("material snippets use Unicode code point budgets", async () => {
+  let value = {items: [{asset_id: "asset", revision_id: "revision", filename: "manual.txt", path: "manual.txt", status: "ready", sha256: "a".repeat(64), location_id: "b".repeat(64), snippet: "😀".repeat(380)}], coverage: {ready: 1}, warnings: []};
+  const app = await fixture((_req, res) => json(res, value));
+  try {
+    await app.client.query("synthetic-test", "asset.search", {report_id: "report", q: "manual"});
+    value = {...value, items: [{...value.items[0]!, snippet: "😀".repeat(401)}]};
+    await assert.rejects(() => app.client.query("synthetic-test", "asset.search", {report_id: "report", q: "manual"}), /InvalidMaterialSearch/);
+  } finally {await app.close();}
+});
+
+test("Office whole-file reads retain logical page one and reject a mismatched page", async () => {
+  const value = { status: "ready", text: "Whole document", warnings: [], source: {
+    revision_id: "revision", asset_id: "asset", project_id: "project", sha256: "a".repeat(64),
+    format: "docx", location_kind: "document", page: 1,
+  } };
+  const app = await fixture((_req, res) => json(res, value));
+  try {
+    assert.deepEqual(await app.client.query("test", "asset.read", { revision_id: "revision", page: 1 }), value);
+    await assert.rejects(() => app.client.query("test", "asset.read", { revision_id: "revision", page: 2 }), /InvalidMaterialRead/);
+  } finally { await app.close(); }
 });

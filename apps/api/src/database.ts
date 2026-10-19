@@ -54,6 +54,14 @@ export class ForgeDatabase {
       ) STRICT;
       CREATE INDEX IF NOT EXISTS works_lookup ON works(owner_user_id, app_id, work_type, entity_id, status);
       CREATE INDEX IF NOT EXISTS works_page_order ON works(owner_user_id, updated_at DESC, id DESC);
+      CREATE TABLE IF NOT EXISTS report_conversations (
+        owner_user_id TEXT NOT NULL REFERENCES users(id),
+        app_id TEXT NOT NULL,
+        work_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        work_id TEXT NOT NULL UNIQUE REFERENCES works(id),
+        PRIMARY KEY (owner_user_id, app_id, work_type, entity_id)
+      ) STRICT;
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         work_id TEXT NOT NULL REFERENCES works(id),
@@ -347,7 +355,7 @@ export class ForgeDatabase {
   }
 
   activeWork(ownerUserId: string, appId: string, workType: string, entityId: string): Work | undefined {
-    const row = this.#db.prepare("SELECT * FROM works WHERE owner_user_id=? AND app_id=? AND work_type=? AND entity_id=? AND status='active' ORDER BY updated_at DESC LIMIT 1").get(ownerUserId, appId, workType, entityId) as Record<string, unknown> | undefined;
+    const row = this.#db.prepare("SELECT * FROM works WHERE owner_user_id=? AND app_id=? AND work_type=? AND entity_id=? AND status='active' ORDER BY updated_at DESC, id DESC LIMIT 1").get(ownerUserId, appId, workType, entityId) as Record<string, unknown> | undefined;
     return row ? this.#work(row) : undefined;
   }
 
@@ -357,12 +365,30 @@ export class ForgeDatabase {
     return this.work(work.id)!;
   }
 
+  ensureReportWork(ownerUserId: string, appId: string, workType: string, entityId: string, binding: { goal: string; appUserId: string }): Work {
+    this.#db.exec("BEGIN IMMEDIATE");
+    try {
+      const bound = this.#db.prepare("SELECT work_id FROM report_conversations WHERE owner_user_id=? AND app_id=? AND work_type=? AND entity_id=?").get(ownerUserId, appId, workType, entityId) as { work_id: string } | undefined;
+      if (bound) { const work = this.work(bound.work_id)!; this.#db.exec("COMMIT"); return work; }
+      const row = this.#db.prepare("SELECT * FROM works WHERE owner_user_id=? AND app_id=? AND work_type=? AND entity_id=? AND app_user_id=? AND status='active' ORDER BY updated_at DESC, id DESC LIMIT 1").get(ownerUserId, appId, workType, entityId, binding.appUserId) as Record<string, unknown> | undefined;
+      const work = row ? this.#work(row) : this.createWork(ownerUserId, appId, workType, entityId, binding);
+      this.#db.prepare("INSERT INTO report_conversations (owner_user_id, app_id, work_type, entity_id, work_id) VALUES (?, ?, ?, ?, ?)").run(ownerUserId, appId, workType, entityId, work.id);
+      this.#db.exec("COMMIT");
+      return work;
+    } catch (error) { this.#db.exec("ROLLBACK"); throw error; }
+  }
+
   createOrTouchSession(workId: string): { id: string } {
-    const now = new Date().toISOString();
-    const existing = this.#db.prepare("SELECT * FROM sessions WHERE work_id=? ORDER BY last_connected_at DESC LIMIT 1").get(workId) as Record<string, unknown> | undefined;
-    if (existing) { this.#db.prepare("UPDATE sessions SET last_connected_at=? WHERE id=?").run(now, String(existing.id)); return { id: String(existing.id) }; }
-    const session = { id: id("ses"), work_id: workId, created_at: now, last_connected_at: now };
-    this.#db.prepare("INSERT INTO sessions (id, work_id, created_at, last_connected_at) VALUES (?, ?, ?, ?)").run(...Object.values(session)); return { id: session.id };
+    this.#db.exec("BEGIN IMMEDIATE");
+    try {
+      const now = new Date().toISOString();
+      const existing = this.#db.prepare("SELECT id FROM sessions WHERE work_id=? ORDER BY last_connected_at DESC, id DESC LIMIT 1").get(workId) as { id: string } | undefined;
+      const sessionId = existing?.id ?? id("ses");
+      if (existing) this.#db.prepare("UPDATE sessions SET last_connected_at=? WHERE id=?").run(now, sessionId);
+      else this.#db.prepare("INSERT INTO sessions (id, work_id, created_at, last_connected_at) VALUES (?, ?, ?, ?)").run(sessionId, workId, now, now);
+      this.#db.exec("COMMIT");
+      return { id: sessionId };
+    } catch (error) { this.#db.exec("ROLLBACK"); throw error; }
   }
 
   nextTurn(workId: string, omRevision: string, catalogDigest: string, contextDigest: string): TurnRecord {

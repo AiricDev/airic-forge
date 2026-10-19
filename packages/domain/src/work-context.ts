@@ -1,9 +1,11 @@
 /** Work-owned memory and budgets. No model SDK, database or filesystem types. */
 import type { TrajectoryEvent } from "./ports.js";
 
-export const CONTEXT_POLICY_VERSION = "work-context-v1";
-export const DEFAULT_INPUT_TOKENS = 32_000;
+export const CONTEXT_POLICY_VERSION = "work-context-v2";
+export const DEFAULT_INPUT_TOKENS = 256_000;
 export const DEFAULT_OUTPUT_TOKENS = 8_000;
+export const CONTEXT_ORGANIZATION_THRESHOLD = 0.8;
+export const MAX_RECENT_CONTEXT_TOKENS = 64_000;
 export const MAX_SUMMARY_CHARACTERS = 4_000;
 export interface ContextMessage { eventId: string; turnId?: string; role: "user" | "agent"; text: string; textRange?: { offset: number; end: number; total: number } }
 export interface SummaryScope { organizationId: string; ownerId: string; workId: string; omRevision: string; catalogDigest: string; policyVersion: string; modelFingerprint: string }
@@ -31,6 +33,9 @@ export function inputBudget(window: number, configured = DEFAULT_INPUT_TOKENS, o
   const budget = Math.min(configured, Math.floor(window * 0.9) - output);
   if (!Number.isSafeInteger(budget) || budget < 1_024) throw new Error("ContextWindowTooSmall");
   return budget;
+}
+export function recentContextBudget(budget: number): number {
+  return Math.min(MAX_RECENT_CONTEXT_TOKENS, Math.floor(budget / 4));
 }
 export function conversationMessages(events: TrajectoryEvent[], excludedTurnId?: string): ContextMessage[] {
   return events.filter(e => e.turnId !== excludedTurnId && ["turn.started", "turn.completed"].includes(e.type)).flatMap(e => {
@@ -63,19 +68,21 @@ export async function assembleWorkMemory(input: {
   ports?: WorkContextPorts; digest(value: unknown): string; signal?: AbortSignal;
 }) {
   const budget = input.ports?.inputTokens ?? DEFAULT_INPUT_TOKENS;
-  if (contextTokens(input.mandatory) > budget * 0.8) throw new Error("RequiredContextExceedsBudget");
+  if (contextTokens(input.mandatory) > budget) throw new Error("RequiredContextExceedsBudget");
   const all = conversationMessages(input.events, input.excludedTurnId);
   const recentTurns = new Set(all.map(m => m.turnId ?? m.eventId).filter((v, i, a) => a.indexOf(v) === i).slice(-4));
   let cut = all.findIndex(m => recentTurns.has(m.turnId ?? m.eventId));
   if (cut < 0) cut = 0;
   // A single huge assistant reply may itself need summarization. Never truncate messages.
-  while (cut < all.length && contextTokens(all.slice(cut)) > 8_000) {
+  const recentBudget = recentContextBudget(budget);
+  while (cut < all.length && contextTokens(all.slice(cut)) > recentBudget) {
     const turn = all[cut].turnId ?? all[cut].eventId;
     while (cut < all.length && (all[cut].turnId ?? all[cut].eventId) === turn) cut++;
   }
-  const pressure = contextTokens([input.mandatory, all]) > budget * 0.8 || contextTokens(all) > 8_000;
-  if (!pressure) return { conversation: all, memory: undefined, estimatedTokens: contextTokens([input.mandatory, all]) };
-  if (!cut || !input.ports) throw new Error("ContextSummaryRequired");
+  const pressure = contextTokens([input.mandatory, all]) > budget * CONTEXT_ORGANIZATION_THRESHOLD;
+  if (!pressure || (!cut && contextTokens([input.mandatory, all]) <= budget)) return { conversation: all, memory: undefined, estimatedTokens: contextTokens([input.mandatory, all]) };
+  if (!input.ports) throw new Error("ContextSummaryRequired");
+  if (!cut) cut = all.length;
   const scope: SummaryScope = { ...input.scope, policyVersion: CONTEXT_POLICY_VERSION, modelFingerprint: input.ports.summarizer.modelFingerprint };
   const key = input.digest(scope);
   const older = all.slice(0, cut);
@@ -108,7 +115,7 @@ export async function assembleWorkMemory(input: {
   const memory = { summary, sourceDigest: record.sourceDigest, firstEventId: record.firstEventId, lastEventId: record.lastEventId, coveredMessages: covered, limitations: "Derived discussion summary, never authorization, original evidence or current Business State." };
   const conversation = all.slice(cut);
   const estimatedTokens = contextTokens([input.mandatory, memory, conversation]);
-  if (estimatedTokens > budget * 0.8) throw new Error("RequiredContextExceedsBudget");
+  if (estimatedTokens > budget) throw new Error("RequiredContextExceedsBudget");
   // Publish only a complete, validated summary. Failures leave the previous cache intact.
   await input.ports.summaries.write(key, record);
   return { conversation, memory, estimatedTokens };

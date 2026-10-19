@@ -94,7 +94,7 @@ Batch evidence and limits are recorded in CertLab `docs/airic-b3-record.md`.
 | Identity | `GET /api/v1/auth/me`: `actor_id`, `permissions`, `email`/`display_name`; browser email is not authoritative |
 | Manifest | `/airic/v1/manifest`: `appId=certlab`, `domain.release=certlab/v1`, fixed `organizationId`, published typed capabilities |
 | App port | Use-case-shaped identity/context/query/command/resource-receipt capabilities; HTTP and CertLab DTO mapping remain in adapters |
-| Work | Explicit goal and report scope; new Work and resume-by-ID are distinct; different goals for one report do not merge |
+| Work | Default report entry atomically binds one private Work/session per owner/App/WorkType/entityId. New goal comes from active OM; opening never prompts. Explicit workId must match the bound conversation; bootstrap does not accept goal; histories do not merge |
 | Versions | Assessment `record_no` and actual resource/affected-assessment tokens; no whole-report revision invented for concurrency |
 | Receipts | `commandId` equals the original idempotency key; preserve capability, target, input and original resource/scope/key |
 | Unknown | Resolve the original resource-scoped receipt; absence is not proof of failure; no blind retry with a new key |
@@ -266,11 +266,65 @@ persistent history, using a temporary Forge runtime and no external model call.
 `ContextSummaryPort` / `ContextSummaryStore` keep the model and private derived cache outside the domain;
 `runtime.ts` composes `PiContextSummarizer` and `FileContextSummaryStore`.
 `pi-context-budget.ts` projects each provider input, counts system/tools/images, replaces only exact repeated
-material ranges and uses bounded Pi SDK summaries. The authoritative trajectory is never rewritten.
-The defaults are 32000 input / 8000 output tokens, with 10% model-window headroom and organization at 80%.
+material ranges and uses Work-specific summaries via the same Pi ModelRuntime.completeSimple interface. Pi system.toolsAdded already contains provider tool declarations; executable tools are not counted twice. The authoritative trajectory is never rewritten.
+The default configured input cap is 256000 tokens with 8000 output tokens. The effective input budget is the smaller of the configured cap and 90% of the model context window minus the output budget; Work context is organized at 80% of that effective budget. Recent context may use up to 25% of the budget, capped at 64000 tokens. History below the 80% threshold is no longer summarized solely because it passed 8000 tokens.
 Configure `FORGE_CONTEXT_INPUT_TOKENS` / `FORGE_CONTEXT_OUTPUT_TOKENS` when needed.
 A failed summary or oversized mandatory context pauses further calls; committed App effects remain committed.
 `asset.read` / `asset.read-location` default to 4000 Unicode code points (max 8000); pixels require
 `include_image=true`. Persist the fixed `source.text_range`, not tool bodies. Current receipt requests use
 `target_kind` / `target_id`, never the removed `assessment_id` transport field.
 See CertLab `docs/context-budget.md` for the cross-repository contract and test mapping.
+
+First-use repair: 80% is a soft organization target; the hard budget and model-window headroom still apply.
+Work summaries reject empty, overlong, truncated and tool-call responses; the private cache fingerprint is v2.
+`pi-work-agent-budget.test.ts` exercises actual Pi projection against a local model endpoint, ten-step
+compaction without replay, and summary response/input failure contracts. Bootstrap also reports
+`workspaceAvailable=false` when no built independent UI exists; missing UI routes return JSON 404.
+Copilot App sessions do not require a separate Forge password setup.
+
+## Report conversation entry (2026-10-16)
+
+Bootstrap without workId creates or restores a durable report conversation using the actual configured work definition from the owner active OM. `report_conversations` is Forge-owned SQLite metadata keyed by owner/App/WorkType/entityId, atomically selecting/creating a Work under an IMMEDIATE transaction. It does not alter the CertLab database. First binding chooses the latest active existing Work for that App actor (updated_at, id descending), preserving its original goal/history; later unrelated Work records do not move this binding. Completed bindings fail closed rather than silently resetting. Sessions also use atomic lookup/create. Explicit workId must match the bound report conversation; the bootstrap goal field is removed.
+
+CertLab uses a compact assistant-ui chat; checkpoint messages first record neutral resume feedback and then prompt. Grant renewal restores the same Work; neither opening nor reconnecting sends messages. Source/receipt and typed feedback tools remain in expandable details. Tests: `work-lifecycle.test.ts` durable report bootstrap/existing Work binding; CertLab assistant client and real fixture browser suite.
+
+### Progressive material retrieval (2026-10-17)
+
+Pi loads `apps/api/src/material-retrieval-prompt.ts` into the system prompt when the authorized tool set contains `asset.search`. Reuse supplied App context, inspect small coverage metadata, search a few candidates with alternate terms, then read only relevant fixed original locations. Full `asset.list` remains for explicit inventory, not startup. Pending/history candidates must be identified and cannot be silently adopted. Search snippets and visual summaries are discovery clues; failed/partial/unsupported coverage limits no-hit claims. This is runtime tool-use guidance, not a replacement for the pinned OM's professional method or App authorization.
+
+`pi-work-agent-budget.test.ts` checks the actual SDK provider request receives the guidance. A real configured-model probe with synthetic materials completed coverage → targeted searches → one original location, with no full inventory or business writes. CertLab's live vision endpoint still needs a valid API credential before failed indexes can be retried successfully; a successful agent lookup probe does not establish real material coverage.
+
+### Actual private Work Definition correction (2026-10-17)
+
+A real continuation still fetched all assessments/materials because its active private WD omitted `asset.search` and `asset.read-location`; the former search-only prompt gate therefore skipped the guidance. Material-capable Works now always receive capability-aware guidance; missing search is an explicit configuration gap, never a reason for bulk inventory. The original owner's reviewed Reflection Proposal was adopted by explicit human confirmation as private revision `3d39a24570937e4998ac88ee94a53807750d3362`; organization main/other owners/seed source were not silently changed.
+
+The Pi budget can now compact the last completed call/result group, including the first tool round. Oversized serialized groups are summarized in bounded Unicode fragments; Work serialization preserves result tails that the SDK coding serializer truncates. Image pixels/thinking are excluded from text memory. Exact command results remain fixed facts, preserving unknown outcomes and receipts. History and business state remain immutable; tools are not replayed. Local SDK contracts cover the original oversized-first-round failure shape; actual-data model validation is a separate authorization/acceptance item.
+
+Actual-data verification was separately authorized by the human for the configured DeepSeek endpoint. It revealed that soft-pressure compaction erased fresh observations and restarted coverage checks. The final projection retains recent complete groups when possible, pins at most three exact unfiltered coverage observations by scope, and asks for five startup assessment summaries while preserving selection/schema/counts. Tests cover fresh-observation retention and the startup HTTP shape.
+
+The final isolated read-only CP0 probe used the adopted real private OM, actual 79-assessment report and original conversation: initial 5 summaries / estimated 19933 tokens, one all-scope and one current-scope coverage query, completed reply and checkpoint. No full inventory, command attempt or original Work history mutation. The earlier timeout/step-limit probes were diagnostic failures, not acceptance passes. Temporary verification credentials were revoked. Final domain/API suite: 22/86 passed; CertLab backend: 1328 passed/7 platform skips.
+
+## Work execution activity (2026-10-17)
+
+`startTurn` emits bounded `WorkActivity` metadata through the authorized ACP connection as
+`session/update` (`phase: activity`) and persists it as `message.payload.activity` in the
+original Work trajectory. Each operation has a stable progress ID and running/terminal
+updates with timestamps. Preparation, context assembly, model waiting/reply generation,
+App queries/commands, history/document reads and checkpoints use actual execution signals.
+Tool detail contains only bounded query keywords, revision IDs and page numbers; no raw
+arguments, results, credentials or model reasoning. Safe failure codes identify the stage.
+A completed call is not professional success or a command receipt. A disconnected client
+recovers latest-Turn metadata from `session/history` without replaying work. No new OM
+capability, endpoint, database migration or mutable history is introduced.
+
+Model text deltas are sent to the connected UI as they arrive, but are not individual
+trajectory messages. A successful assistant reply is stored once in
+`turn.completed.payload.text`. If a run stops after producing text, the trajectory stores
+one `message` with the accumulated `agentTextDelta` and `partial: true`; it is explicitly
+incomplete and is not included as a completed conversation turn. The Workbench coalesces
+historical delta records by Turn and prefers `turn.completed` for completed Turns. The
+append-only JSONL trajectory is not rewritten.
+
+Verified by domain use-case activity assertions, the real ACP history/repeated-ID test,
+model initialization failure recovery and the real Pi SDK model-start signal test; CertLab
+client/UI tests and the original drawer/material browser scenarios cover presentation.

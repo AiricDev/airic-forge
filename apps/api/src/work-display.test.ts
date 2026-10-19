@@ -15,7 +15,7 @@ test("Work remembers authorized entity titles, refreshes renamed objects and kee
   runtime.app.identity = async () => ({ appId: "certlab", organizationId: "synthetic-org", appUserId: "author", email: "title-owner@example.invalid", displayName: "Author" });
   runtime.app.reportContext = async () => ({ resource: { namespace: "certlab", resourceType: "report", resourceId }, entityTitle: title });
   try {
-    const first = await runtime.useCases.bootstrap({ token: "fixture", reportId: resourceId, goal: "Inspect report" });
+    const first = await runtime.useCases.bootstrap({ token: "fixture", reportId: resourceId });
     assert.equal(first.work.entityTitle, title);
     assert.equal((await runtime.useCases.workHistory(first.user.id, first.work.id)).work.entityTitle, title);
     title = "Renamed safety report";

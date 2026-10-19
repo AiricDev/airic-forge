@@ -19,7 +19,7 @@ mkdirSync(legacyType, { recursive: true });
 cpSync(join(seed, 'work-definitions/report-authoring'), legacyType, { recursive: true });
 const manifestPath = join(legacyType, 'work.yml');
 writeFileSync(manifestPath, readFileSync(manifestPath, 'utf8').replace(/^id: report-authoring$/m, 'id: report-type-definition'));
-const runtime = new ForgeRuntime({ port, bindHost: '127.0.0.1', projectDir: join(root, 'project'), dataDir: join(root, 'data'), seedProjectDir: seed, webDistDir: resolve('prototype/dist'), certLabUrl: 'http://127.0.0.1:1', organizationId: 'synthetic-mui-institution', allowedOrigin: `http://127.0.0.1:${port}`, initialAdminEmails: new Set(), testIdentitySwitch: true });
+const runtime = new ForgeRuntime({ port, bindHost: '127.0.0.1', projectDir: join(root, 'project'), dataDir: join(root, 'data'), seedProjectDir: seed, webDistDir: resolve('apps/workbench/public'), certLabUrl: 'http://127.0.0.1:1', organizationId: 'synthetic-mui-institution', allowedOrigin: `http://127.0.0.1:${port}`, initialAdminEmails: new Set(), testIdentitySwitch: true });
 function pause(ms, signal) {
   return new Promise((resolve, reject) => {
     const finish = () => { signal?.removeEventListener('abort', cancel); resolve(); };

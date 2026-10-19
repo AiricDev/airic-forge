@@ -80,7 +80,7 @@ const http = async (path: string, body?: unknown, method = body === undefined ? 
   return response.status === 204 ? undefined : response.json();
 };
 try {
-  const session = await http("/api/v1/app-sessions/bootstrap", { appId: "certlab", workType: "report-authoring", entityId: scene.reportId, goal: "Read original sources, save an unconfirmed draft, learn only from actual corrections and retain human confirmation" }, "POST", { Authorization: `Bearer ${scene.token}` }, 201);
+  const session = await http("/api/v1/app-sessions/bootstrap", { appId: "certlab", workType: "report-authoring", entityId: scene.reportId }, "POST", { Authorization: `Bearer ${scene.token}` }, 201);
   const useCases = runtime.useCases;
   const catalog = await useCases.importCatalog(session.ticket);
   await useCases.acceptCatalog(session.ticket, catalog.digest);
@@ -112,7 +112,7 @@ try {
   await useCases.startTurn(session.ticket, "Use adopted source-scope method in the original Work");
   assert.deepEqual((await useCases.sessionHistory(session.ticket)).events.filter((event) => original.events.some((old) => old.id === event.id)), original.events);
   assert.equal((await useCases.sessionHistory(session.ticket)).turns.at(-1)!.omRevision, adopted.revision);
-  const methodSession = await useCases.bootstrap({ token: scene.token, reportId: scene.reportId, goal: "Review a separate method candidate without adopting it" });
+  const methodSession = await useCases.bootstrap({ token: scene.token, reportId: scene.reportId });
   await useCases.startTurn(methodSession.ticket, "Check method candidate");
   const methodReflection = await http(`/api/v1/works/${methodSession.work.id}/reflection/open`, {});
   const method = await http(`/api/v1/reflections/${methodReflection.reflection.id}/messages`, { message: "/delegation-gap Preserve original limitations" });

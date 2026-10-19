@@ -49,7 +49,7 @@ test("accepted catalog and real Git/SQLite/JSONL keep a report command and its T
   const runtime = new ForgeRuntime(config);
   try {
     const useCases = compose(runtime);
-    const bootstrap = await useCases.bootstrap({ token: "app-token", reportId: "report-1", goal: "Save draft" });
+    const bootstrap = await useCases.bootstrap({ token: "app-token", reportId: "report-1" });
     await assert.rejects(() => useCases.startTurn(bootstrap.ticket, "before acceptance"), /CapabilityCatalogNotAccepted/);
     const candidate = await useCases.importCatalog(bootstrap.ticket);
     await useCases.acceptCatalog(bootstrap.ticket, candidate.digest);

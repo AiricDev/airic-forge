@@ -8,7 +8,7 @@ services:
       FORGE_PROJECT_DIR: /project
       FORGE_DATA_DIR: /data
       FORGE_SEED_PROJECT_DIR: /app/seed/project
-      FORGE_WEB_DIST_DIR: /app/prototype/dist
+      FORGE_WEB_DIST_DIR: /app/apps/workbench/public
       FORGE_CERTREPORTER_URL: ${FORGE_CERTREPORTER_URL:-http://host.docker.internal:8000}
       FORGE_ALLOWED_ORIGIN: ${FORGE_ALLOWED_ORIGIN:-http://localhost:5173}
       FORGE_PUBLIC_URL: ${FORGE_PUBLIC_URL:-http://127.0.0.1:4175}

@@ -5,11 +5,11 @@ import { loadConfig } from "./config.js";
 import { ForgeRuntime } from "./runtime.js";
 import { cookieToken, sessionCookie } from "./web-session-store.js";
 import { fileURLToPath } from "node:url";
-import { readFile } from "node:fs/promises";
+import { readFile, access } from "node:fs/promises";
 import { join } from "node:path";
 import { registerReflectionHttp } from "./reflection-http.js";
 
-type BootstrapBody = { appId: "certlab"; workType: "report-authoring"; entityId: string; selection?: Record<string, unknown>; goal?: string; workId?: string };
+type BootstrapBody = { appId: "certlab"; workType: "report-authoring"; entityId: string; selection?: Record<string, unknown>; workId?: string };
 type RpcRequest = { id?: string | number; method?: string; params?: Record<string, unknown> };
 
 const bearer = (value: unknown): string => {
@@ -28,7 +28,7 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
 
   const sendWorkspace = async (reply: import("fastify").FastifyReply) => {
     try { return reply.type("text/html; charset=utf-8").send(await readFile(join(runtime.config.webDistDir, "index.html"))); }
-    catch { return reply.code(404).send({ error: "WebWorkspaceNotBuilt" }); }
+    catch { return reply.type("application/json").code(404).send({ error: "WebWorkspaceNotBuilt" }); }
   };
   app.get("/", async (_request, reply) => sendWorkspace(reply));
   app.get("/works", async (_request, reply) => sendWorkspace(reply));
@@ -36,7 +36,7 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
   app.get<{ Params: { file: string } }>("/assets/:file", async (request, reply) => {
     const file = request.params.file;
     if (!/^[a-zA-Z0-9_.-]+$/.test(file)) return reply.code(404).send({ error: "NotFound" });
-    const type = file.endsWith(".js") ? "text/javascript" : file.endsWith(".css") ? "text/css" : file.endsWith(".svg") ? "image/svg+xml" : file.endsWith(".woff2") ? "font/woff2" : "application/octet-stream";
+    const type = file.endsWith(".js") ? "text/javascript" : file.endsWith(".css") ? "text/css" : file.endsWith(".svg") ? "image/svg+xml" : file.endsWith(".woff2") ? "font/woff2" : file.endsWith(".woff") ? "font/woff" : "application/octet-stream";
     try { return reply.type(type).send(await readFile(join(runtime.config.webDistDir, "assets", file))); }
     catch { return reply.code(404).send({ error: "NotFound" }); }
   });
@@ -44,9 +44,10 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
   app.post<{ Body: BootstrapBody }>("/api/v1/app-sessions/bootstrap", async (request, reply) => {
     try {
       const body = request.body;
-      if (body.appId !== "certlab" || body.workType !== "report-authoring" || !body.entityId) return reply.code(400).send({ error: "UnsupportedAppContext" });
-      const result = await runtime.useCases.bootstrap({ token: bearer(request.headers.authorization), entityId: body.entityId, workType: body.workType, selection: body.selection, goal: body.goal, workId: body.workId });
-      return reply.code(201).send({ ...result, acpUrl: "/acp", workspaceUrl: runtime.config.publicUrl ?? "http://127.0.0.1:4175" });
+      if (body.appId !== "certlab" || body.workType !== "report-authoring" || typeof body.entityId !== "string" || !body.entityId || Object.keys(body).some(key => !["appId", "workType", "entityId", "selection", "workId"].includes(key))) return reply.code(400).send({ error: "UnsupportedAppContext" });
+      const result = await runtime.useCases.bootstrap({ token: bearer(request.headers.authorization), entityId: body.entityId, workType: body.workType, selection: body.selection, workId: body.workId });
+      const workspaceAvailable = await access(join(runtime.config.webDistDir, "index.html")).then(() => true, () => false);
+      return reply.code(201).send({ ...result, acpUrl: "/acp", workspaceAvailable, workspaceUrl: runtime.config.publicUrl ?? "http://127.0.0.1:4175" });
     } catch (error) { return reply.code(401).send({ error: error instanceof Error ? error.message : "BootstrapFailed" }); }
   });
 
@@ -489,7 +490,7 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
           socket.send(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { phase: "running" } }));
           const evidenceDigests = request.params?.evidenceDigests;
           if (evidenceDigests !== undefined && (!Array.isArray(evidenceDigests) || evidenceDigests.some((value) => typeof value !== "string"))) throw new Error("InvalidEvidenceSelection");
-          const result = await runtime.useCases.startTurn(ticket, message, (text) => send({ jsonrpc: "2.0", method: "session/update", params: { phase: "text-delta", text } }), evidenceDigests as string[] | undefined, String(request.id ?? ""), (turnId) => send({ jsonrpc: "2.0", method: "session/update", params: { phase: "turn-started", turnId } }), (status) => send({ jsonrpc: "2.0", method: "session/update", params: { phase: "context-status", status } }));
+          const result = await runtime.useCases.startTurn(ticket, message, (text) => send({ jsonrpc: "2.0", method: "session/update", params: { phase: "text-delta", text } }), evidenceDigests as string[] | undefined, String(request.id ?? ""), (turnId) => send({ jsonrpc: "2.0", method: "session/update", params: { phase: "turn-started", turnId } }), (status) => send({ jsonrpc: "2.0", method: "session/update", params: { phase: "context-status", status } }), (activity) => send({ jsonrpc: "2.0", method: "session/update", params: { phase: "activity", activity } }));
           send({ jsonrpc: "2.0", method: "session/update", params: { phase: "completed", text: result.reply, turn: result.turn } });
           send({ jsonrpc: "2.0", id: request.id, result }); return;
         }

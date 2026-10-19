@@ -12,7 +12,8 @@ const root = mkdtempSync(join(tmpdir(), "certlab-forge-browser-"));
 const apiPort = process.env.CERTLAB_E2E_API_PORT ?? "8000";
 const webPort = process.env.CERTLAB_E2E_WEB_PORT ?? "5173";
 const port = Number(process.env.CERTLAB_E2E_FORGE_PORT ?? "4176");
-const runtime = new ForgeRuntime({ port, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.env.CERTLAB_FORGE_ROOT ?? "../../airic-forge", "seed/certlab"), webDistDir: resolve(process.env.CERTLAB_FORGE_ROOT ?? "../../airic-forge", "prototype/dist"), certLabUrl: `http://127.0.0.1:${apiPort}`, organizationId: "synthetic-browser-institution", allowedOrigin: `http://127.0.0.1:${process.env.CERTLAB_E2E_BUILT === "1" ? apiPort : webPort}`, publicUrl: `http://127.0.0.1:${port}`, initialAdminEmails: new Set() });
+const forgeRoot = resolve(process.env.CERTLAB_FORGE_ROOT ?? "../../airic-forge");
+const runtime = new ForgeRuntime({ port, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: join(forgeRoot, "seed/certlab"), webDistDir: join(forgeRoot, "apps/workbench/public"), certLabUrl: `http://127.0.0.1:${apiPort}`, organizationId: "synthetic-browser-institution", allowedOrigin: `http://127.0.0.1:${process.env.CERTLAB_E2E_BUILT === "1" ? apiPort : webPort}`, publicUrl: `http://127.0.0.1:${port}`, initialAdminEmails: new Set() });
 const catalog = runtime.app.catalog.bind(runtime.app);
 runtime.app.catalog = async (token) => {
   const candidate = await catalog(token);
@@ -27,7 +28,9 @@ runtime.app.identity = async (token) => {
   return actor;
 };
 const learnedId = "synthetic-browser-source-scope";
-const agents: AgentRunnerPort = { runWork: async ({ tools, context, userMessage, onText, signal, checkpoint, availableDocumentIds, loadDocument }) => {
+const agents: AgentRunnerPort = { runWork: async ({ tools, context, userMessage, onText, onModelStatus, signal, checkpoint, availableDocumentIds, loadDocument }) => {
+  onModelStatus?.();
+  await new Promise(resolve => setTimeout(resolve, 10));
   onText?.("合成 Agent 正在读取原目标。");
   if (userMessage === "learned") {
     if (!availableDocumentIds.includes(learnedId) || !(await loadDocument(learnedId)).includes("candidate")) throw new Error("SyntheticAdoptedKnowledgeMissing");
@@ -81,9 +84,9 @@ const agents: AgentRunnerPort = { runWork: async ({ tools, context, userMessage,
   if (userMessage === "material") {
     const invoke = (id: string, input: Record<string, unknown>) => tools.find((tool) => tool.capability.id === id)!.invoke(input);
     const listed = await invoke("asset.list", {});
-    const asset = (listed.items as Array<{ id: string; current_revision_id: string }>)[0];
+    const asset = (listed.items as Array<{ asset_id: string; revision_id: string }>)[0];
     if (!asset) throw new Error("SyntheticMaterialMissing");
-    const material = await invoke("asset.read", { revision_id: asset.current_revision_id, page: 2, include_image: true });
+    const material = await invoke("asset.read", { revision_id: asset.revision_id, page: 2, include_image: true });
     if (material.status !== "ready" || !material.image) throw new Error("SyntheticMaterialReadFailed");
     await checkpoint!({ summary: "已实际读取原 PDF 第二页，专业结果仍未验证。",
       eventIds: [String(material.observationEventId)], selfCheck: "来源固定原 revision；未把读取当作符合。",

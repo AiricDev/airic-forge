@@ -31,7 +31,7 @@ const agents: AgentRunnerPort = {runWork: async ({tools}) => {
 }};
 try {
   const useCases = new ForgeUseCases({accounts: runtime.db, works: runtime.db, om: runtime.om, reportWorkDefinitionId: runtime.config.reportWorkDefinitionId, app: runtime.app, organizationId: scene.organizationId, catalogs: runtime.db, agents, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: {hash: hashPassword, verify: verifyPassword}, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: runtime.config.initialAdminEmails});
-  const session = await useCases.bootstrap({token: scene.token, reportId: scene.reportId, goal: "Search source material and open its fixed native location; leave all assessments unchanged"});
+  const session = await useCases.bootstrap({token: scene.token, reportId: scene.reportId});
   const catalog = await useCases.importCatalog(session.ticket);
   await useCases.acceptCatalog(session.ticket, catalog.digest);
   const head = runtime.om.head(session.user.activeBranch);

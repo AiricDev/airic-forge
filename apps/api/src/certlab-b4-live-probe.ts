@@ -69,7 +69,7 @@ try {
     organizationId: scene.organizationId, catalogs: runtime.db, agents, sessions: runtime.sessions,
     passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword },
     trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: runtime.config.initialAdminEmails });
-  const session = await useCases.bootstrap({ token: scene.token, reportId: scene.reportId, goal: "Read original sources with the initial assessment OM and save an unconfirmed source-backed draft; leave the professional result undetermined" });
+  const session = await useCases.bootstrap({ token: scene.token, reportId: scene.reportId });
   const candidate = await useCases.importCatalog(session.ticket);
   assert.equal(candidate.capabilities.length, 31);
   await useCases.acceptCatalog(session.ticket, candidate.digest);

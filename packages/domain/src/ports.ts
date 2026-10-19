@@ -95,6 +95,8 @@ export interface WorkPort {
   turnsForWork(workId: string): MaybePromise<TurnRecord[]>;
   activeWork(ownerUserId: string, appId: string, workType: string, entityId: string): MaybePromise<Work | undefined>;
   createWork(ownerUserId: string, appId: string, workType: string, entityId: string, binding?: { goal: string; appUserId: string; selection?: Record<string, unknown> }): MaybePromise<Work>;
+  /** Atomically binds one durable report conversation; existing histories are selected, never merged. */
+  ensureReportWork(ownerUserId: string, appId: string, workType: string, entityId: string, binding: { goal: string; appUserId: string }): MaybePromise<Work>;
   createOrTouchSession(workId: string): MaybePromise<{ id: string }>;
   userForWork(workId: string): MaybePromise<string | undefined>;
   nextTurn(workId: string, omRevision: string, catalogDigest: string, contextDigest: string): MaybePromise<TurnRecord>;
@@ -220,6 +222,19 @@ export interface WorkAgentTool {
   invoke(input: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
+export interface WorkActivity {
+  id: string;
+  turnId?: string;
+  phase: "preparing" | "context" | "model" | "tool";
+  status: "running" | "completed" | "failed" | "cancelled" | "unknown";
+  label: string;
+  at: string;
+  startedAt: string;
+  capabilityId?: string;
+  detail?: string;
+  code?: string;
+}
+
 export interface AgentRunnerPort {
   runWork(input: {
     sessionId: string;
@@ -235,6 +250,7 @@ export interface AgentRunnerPort {
     checkpoint?: (input: WorkCheckpoint) => Promise<{ checkpointId: string }>;
     onText?: (text: string) => void;
     onContextStatus?: (status: "organizing" | "ready" | "failed") => void;
+    onModelStatus?: () => void;
     readHistory?: (offset: number, limit: number) => Promise<Array<Record<string, unknown>>>;
     inputTokens?: number;
     outputTokens?: number;

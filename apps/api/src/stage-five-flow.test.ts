@@ -49,7 +49,7 @@ test("single-report Work binds record number and current-Turn evidence through G
     const evidenceSessions = new InMemoryEvidenceSessionStore();
     const useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, app, catalogs: runtime.db, agents, sessions: new InMemoryAppSessionStore(), evidenceExtractor: new LocalEvidenceExtractor(), evidenceSessions, passwordSetups: new InMemoryPasswordSetupStore(), passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
     await assert.rejects(() => useCases.bootstrap({ token: "app-token", workType: "report-type-definition", entityId: "type-1" }), /UnsupportedAppContext/);
-    const session = await useCases.bootstrap({ token: "app-token", reportId: "report-1", goal: "Save draft" });
+    const session = await useCases.bootstrap({ token: "app-token", reportId: "report-1" });
     assert.equal(session.work.workType, "report-authoring");
     const candidate = await useCases.importCatalog(session.ticket);
     await useCases.acceptCatalog(session.ticket, candidate.digest);

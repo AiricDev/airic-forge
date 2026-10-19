@@ -41,7 +41,7 @@ test("three Reflection lenses preserve evidence and version, create only support
     runtime.db.saveCandidate(catalog, { paths: {} }); runtime.db.accept("certlab", catalog.digest, admin.id);
     const useCases = compose(runtime);
     const openWork = async (reportId: string) => {
-      const session = await useCases.bootstrap({ token: "token", reportId, goal: "Find evidence location" });
+      const session = await useCases.bootstrap({ token: "token", reportId });
       await useCases.startTurn(session.ticket, "Find the missing evidence location");
       return session;
     };
@@ -134,7 +134,7 @@ test("Reflection conversation starts with a message and reads only its Work traj
     const other = runtime.db.ensureUser("other@example.com", false);
     const catalog = await app.catalog("token");
     runtime.db.saveCandidate(catalog, { paths: {} }); runtime.db.accept("certlab", catalog.digest, author.id);
-    const session = await useCases.bootstrap({ token: "token", reportId: "report-1", goal: "Find evidence location" });
+    const session = await useCases.bootstrap({ token: "token", reportId: "report-1" });
     await useCases.startTurn(session.ticket, "Find the source location");
     await assert.rejects(() => useCases.startReflectionConversation(other.id, session.work.id, "Discuss the Work"), /WorkNotOwned/);
     await assert.rejects(() => useCases.startReflectionConversation(author.id, session.work.id, "/unknown Analyze"), /UnknownReflectionLens/);

@@ -45,7 +45,7 @@ try {
     return { text: "Synthetic assessment draft saved" };
   } };
   const useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, app, organizationId: scene.organizationId, catalogs: runtime.db, agents, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: runtime.config.initialAdminEmails });
-  const session = await useCases.bootstrap({ token: scene.token, reportId: scene.reportId, goal: "Synthetic assessment draft" });
+  const session = await useCases.bootstrap({ token: scene.token, reportId: scene.reportId });
   const catalog = await useCases.importCatalog(session.ticket);
   await useCases.acceptCatalog(session.ticket, catalog.digest);
   await useCases.startTurn(session.ticket, "Synthetic draft");
