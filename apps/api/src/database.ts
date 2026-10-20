@@ -1,8 +1,9 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { CapabilityCatalog, ForgeUser, OmDraft, OrganizationContribution, ProposalListFilters, ProposalRecord, ReflectionLens, ReflectionMessage, ReflectionOutcome, ReflectionRecord, ReflectionRun, TurnRecord, UserRole, Work, WorkFeedback, WorkFeedbackKind, WorkListFilters } from "@airic-forge/domain";
+import type { CapabilityCatalog, ForgeUser, OmDraft, OrganizationContribution, ReflectionLens, ReflectionMessage, ReflectionOutcome, ReflectionRecord, ReflectionRun, TurnRecord, UserRole, Work, WorkFeedback, WorkFeedbackKind, WorkListFilters } from "@airic-forge/domain";
 import { id, normalizeEmail } from "./ids.js";
+import type { OmWorkspace, GitToken } from "@airic-forge/domain";
 
 export class ForgeDatabase {
   readonly #db: DatabaseSync;
@@ -15,6 +16,43 @@ export class ForgeDatabase {
   }
 
   close(): void { this.#db.close(); }
+
+  legacyOmProposals(): Array<Record<string, unknown>> { return this.#db.prepare("SELECT * FROM proposals ORDER BY created_at, id").all() as Array<Record<string, unknown>>; }
+  omMigrationDone(source: string): boolean { return Boolean(this.#db.prepare("SELECT 1 FROM om_legacy_migrations WHERE source=?").get(source)); }
+  saveMigratedWorkspace(source: string, workspace: OmWorkspace): void {
+    this.#db.exec("BEGIN IMMEDIATE");
+    try {
+      this.saveWorkspace(workspace);
+      this.#db.prepare("INSERT INTO om_legacy_migrations (source) VALUES (?)").run(source);
+      this.#db.exec("COMMIT");
+    } catch (error) { this.#db.exec("ROLLBACK"); throw error; }
+  }
+
+  workspace(ownerUserId: string, scope: string): OmWorkspace | undefined {
+    const row = this.#db.prepare("SELECT snapshot_json FROM om_workspaces WHERE owner_user_id=? AND scope=?").get(ownerUserId, scope) as { snapshot_json: string } | undefined;
+    return row ? JSON.parse(row.snapshot_json) as OmWorkspace : undefined;
+  }
+  workspaces(ownerUserId: string): OmWorkspace[] {
+    return (this.#db.prepare("SELECT snapshot_json FROM om_workspaces WHERE owner_user_id=? ORDER BY scope").all(ownerUserId) as Array<{ snapshot_json: string }>).map((row) => JSON.parse(row.snapshot_json) as OmWorkspace);
+  }
+  saveWorkspace(workspace: OmWorkspace): void {
+    this.#db.prepare("INSERT INTO om_workspaces VALUES (?, ?, ?) ON CONFLICT(owner_user_id, scope) DO UPDATE SET snapshot_json=excluded.snapshot_json").run(workspace.ownerUserId, workspace.scope, JSON.stringify(workspace));
+  }
+  discardWorkspace(ownerUserId: string, scope: string): void {
+    const saved = this.workspace(ownerUserId, scope);
+    if (scope === "manual" && saved) for (const edit of saved.edits) this.#db.prepare("DELETE FROM om_drafts WHERE owner_user_id=? AND path=? AND content=?").run(ownerUserId, edit.path, edit.content);
+    this.#db.prepare("DELETE FROM om_workspaces WHERE owner_user_id=? AND scope=?").run(ownerUserId, scope);
+  }
+  gitTokens(ownerUserId: string): GitToken[] {
+    return (this.#db.prepare("SELECT * FROM git_tokens WHERE owner_user_id=? ORDER BY rowid DESC").all(ownerUserId) as Record<string, unknown>[]).map((row) => this.#gitToken(row));
+  }
+  saveGitToken(token: GitToken, secretDigest: string): void { this.#db.prepare("INSERT INTO git_tokens VALUES (?, ?, ?, ?, ?, NULL)").run(token.id, token.ownerUserId, token.name, secretDigest, token.expiresAt); }
+  gitTokenByDigest(secretDigest: string): GitToken | undefined {
+    const row = this.#db.prepare("SELECT * FROM git_tokens WHERE secret_digest=?").get(secretDigest) as Record<string, unknown> | undefined;
+    return row ? this.#gitToken(row) : undefined;
+  }
+  revokeGitToken(ownerUserId: string, tokenId: string, at: string): void { this.#db.prepare("UPDATE git_tokens SET revoked_at=? WHERE owner_user_id=? AND id=?").run(at, ownerUserId, tokenId); }
+  #gitToken(row: Record<string, unknown>): GitToken { return { id: String(row.id), ownerUserId: String(row.owner_user_id), name: String(row.name), expiresAt: String(row.expires_at), ...(row.revoked_at ? { revokedAt: String(row.revoked_at) } : {}) }; }
 
   #migrate(): void {
     this.#db.exec(`
@@ -42,6 +80,21 @@ export class ForgeDatabase {
         updated_at TEXT NOT NULL,
         PRIMARY KEY (owner_user_id, path)
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS om_workspaces (
+        owner_user_id TEXT NOT NULL REFERENCES users(id),
+        scope TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL,
+        PRIMARY KEY (owner_user_id, scope)
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS git_tokens (
+        id TEXT PRIMARY KEY,
+        owner_user_id TEXT NOT NULL REFERENCES users(id),
+        name TEXT NOT NULL,
+        secret_digest TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS om_legacy_migrations (source TEXT PRIMARY KEY) STRICT;
       CREATE TABLE IF NOT EXISTS works (
         id TEXT PRIMARY KEY,
         owner_user_id TEXT NOT NULL REFERENCES users(id),
@@ -211,6 +264,13 @@ export class ForgeDatabase {
     }
     const reflectionMessageColumns = new Set((this.#db.prepare("PRAGMA table_info(reflection_messages)").all() as Array<{ name: string }>).map((column) => column.name));
     if (!reflectionMessageColumns.has("context_json")) this.#db.exec("ALTER TABLE reflection_messages ADD COLUMN context_json TEXT");
+    const columns = this.#db.prepare("PRAGMA table_info(reflections)").all() as Array<{ name: string; type: string; notnull: number; pk: number; dflt_value: string | null }>;
+    if (columns.find((column) => column.name === "work_id")?.notnull) {
+      const definitions = columns.map((column) => `"${column.name}" ${column.type}${column.pk ? " PRIMARY KEY" : ""}${column.notnull && column.name !== "work_id" ? " NOT NULL" : ""}${column.dflt_value !== null ? ` DEFAULT ${column.dflt_value}` : ""}`);
+      this.#db.exec(`BEGIN; CREATE TABLE reflections_nullable (${definitions.join(", ")}) STRICT;
+        INSERT INTO reflections_nullable SELECT * FROM reflections;
+        DROP TABLE reflections; ALTER TABLE reflections_nullable RENAME TO reflections; COMMIT;`);
+    }
     const defaults = [
       ["domain-knowledge", "Summarize reusable domain knowledge grounded in the selected Work events. If evidence supports a durable fact, propose one Subject Knowledge markdown file with YAML front matter (id, title, summary, topics). The front matter id must equal the markdown filename stem, and the knowledge will be listed in the Work Definition's knowledge.available. Otherwise return analysis only."],
       ["delegation-gap", "Identify a repeatable delegation or method gap grounded in the selected Work events. If evidence supports a narrow behavioral improvement, propose an edit to a Work Definition markdown document. Otherwise return analysis only."],
@@ -219,19 +279,23 @@ export class ForgeDatabase {
     for (const [lensId, prompt] of defaults) this.#db.prepare("INSERT OR IGNORE INTO reflection_lenses (id, version, enabled, prompt) VALUES (?, 1, 1, ?)").run(lensId, prompt);
   }
 
-  draftsForUser(ownerUserId: string): OmDraft[] {
+  legacyOmDrafts(ownerUserId: string): OmDraft[] {
     return (this.#db.prepare("SELECT * FROM om_drafts WHERE owner_user_id=? ORDER BY updated_at DESC, path").all(ownerUserId) as Array<Record<string, unknown>>)
       .map((row) => ({ ownerUserId: String(row.owner_user_id), path: String(row.path), baseRevision: String(row.base_revision), content: String(row.content), updatedAt: String(row.updated_at) }));
   }
 
-  saveDraft(draft: OmDraft): void {
-    this.#db.prepare(`INSERT INTO om_drafts (owner_user_id, path, base_revision, content, updated_at) VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(owner_user_id, path) DO UPDATE SET base_revision=excluded.base_revision, content=excluded.content, updated_at=excluded.updated_at`)
-      .run(draft.ownerUserId, draft.path, draft.baseRevision, draft.content, draft.updatedAt);
+  draftsForUser(ownerUserId: string): OmDraft[] {
+    const draft = this.workspace(ownerUserId, "manual");
+    return draft ? draft.edits.filter((edit) => edit.content !== null).map((edit) => ({ ownerUserId, path: edit.path, content: edit.content!, baseRevision: draft.baseRevision, updatedAt: "" })) : [];
   }
-
+  saveDraft(draft: OmDraft): void {
+    const current = this.workspace(draft.ownerUserId, "manual");
+    if (current?.baseRevision && current.baseRevision !== draft.baseRevision) throw new Error("OmDraftBaseChanged");
+    this.saveWorkspace({ ownerUserId: draft.ownerUserId, scope: "manual", baseRevision: draft.baseRevision, summary: current?.summary || "Update personal OM", conflicts: [], edits: [...(current?.edits ?? []).filter((edit) => edit.path !== draft.path), { path: draft.path, content: draft.content }] });
+  }
   discardDraft(ownerUserId: string, path: string): void {
-    this.#db.prepare("DELETE FROM om_drafts WHERE owner_user_id=? AND path=?").run(ownerUserId, path);
+    const current = this.workspace(ownerUserId, "manual");
+    if (current) this.saveWorkspace({ ...current, edits: current.edits.filter((edit) => edit.path !== path) });
   }
 
   ensureUser(email: string, isInitialAdmin: boolean): ForgeUser {
@@ -325,19 +389,6 @@ export class ForgeDatabase {
     return { works: rows.map((row) => this.#work(row)), total };
   }
 
-  proposalsPage(filters: ProposalListFilters, offset: number, limit: number): { proposals: ProposalRecord[]; total: number } {
-    const clauses: string[] = []; const values: string[] = [];
-    if (filters.ownerUserId) { clauses.push("owner_user_id=?"); values.push(filters.ownerUserId); }
-    if (filters.status) { clauses.push("status=?"); values.push(filters.status); }
-    if (filters.source === "reflection") clauses.push("source LIKE 'reflection:%'");
-    else if (filters.source === "organization-sync") clauses.push("source='organization-sync'");
-    else if (filters.source === "personal") clauses.push("source NOT LIKE 'reflection:%' AND source<>'organization-sync'");
-    const where = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
-    const total = (this.#db.prepare(`SELECT COUNT(*) AS total FROM proposals${where}`).get(...values) as { total: number }).total;
-    const rows = this.#db.prepare(`SELECT * FROM proposals${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`).all(...values, limit, offset) as Record<string, unknown>[];
-    return { proposals: rows.map((row) => this.#proposal(row)), total };
-  }
-
   work(workId: string): Work | undefined {
     const row = this.#db.prepare("SELECT * FROM works WHERE id=?").get(workId) as Record<string, unknown> | undefined;
     return row ? this.#work(row) : undefined;
@@ -410,13 +461,13 @@ export class ForgeDatabase {
   private createReflection(input: Omit<ReflectionRecord, "id" | "status" | "outcome" | "analysis" | "attribution" | "suggestionMarkdown">): ReflectionRecord {
     const now = new Date().toISOString(); const reflectionId = id("rfl");
     this.#db.prepare("INSERT INTO reflections (id, work_id, owner_user_id, lens_id, question, status, created_at, updated_at, lens_version, lens_prompt, evidence_ids_json, om_revision) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)")
-      .run(reflectionId, input.workId, input.ownerUserId, input.lensId, input.question, now, now, input.lensVersion, input.lensPrompt, JSON.stringify(input.evidenceEventIds), input.omRevision);
+      .run(reflectionId, input.workId ?? null, input.ownerUserId, input.lensId, input.question, now, now, input.lensVersion, input.lensPrompt, JSON.stringify(input.evidenceEventIds), input.omRevision);
     return { ...input, id: reflectionId, status: "active" };
   }
   openReflection(input: Omit<ReflectionRecord, "id" | "status" | "outcome" | "analysis" | "attribution" | "suggestionMarkdown">, introduction: string): ReflectionRecord {
     this.#db.exec("BEGIN IMMEDIATE");
     try {
-      const existing = this.#db.prepare("SELECT * FROM reflections WHERE work_id=? ORDER BY created_at, rowid LIMIT 1").get(input.workId) as Record<string, unknown> | undefined;
+      const existing = input.workId ? this.#db.prepare("SELECT * FROM reflections WHERE work_id=? ORDER BY created_at, rowid LIMIT 1").get(input.workId) as Record<string, unknown> | undefined : undefined;
       const reflection = existing ? this.#reflection(existing) : this.createReflection(input);
       const hasMessages = this.#db.prepare("SELECT 1 FROM reflection_messages WHERE reflection_id=? LIMIT 1").get(reflection.id);
       if (!hasMessages) this.appendReflectionMessage(reflection.id, "agent", introduction);
@@ -463,6 +514,8 @@ export class ForgeDatabase {
     }
   }
   reflectionsForWork(workId: string): ReflectionRecord[] { return (this.#db.prepare("SELECT * FROM reflections WHERE work_id=? ORDER BY created_at DESC").all(workId) as Record<string, unknown>[]).map((row) => this.#reflection(row)); }
+  reflectionsForUser(ownerUserId: string): ReflectionRecord[] { return (this.#db.prepare("SELECT * FROM reflections WHERE owner_user_id=? ORDER BY updated_at DESC, id DESC").all(ownerUserId) as Record<string, unknown>[]).map((row) => this.#reflection(row)); }
+  setReflectionRevision(reflectionId: string, revision: string): void { this.#db.prepare("UPDATE reflections SET om_revision=? WHERE id=?").run(revision, reflectionId); }
   reflectionMessages(reflectionId: string): ReflectionMessage[] { return (this.#db.prepare("SELECT * FROM reflection_messages WHERE reflection_id=? ORDER BY at, rowid").all(reflectionId) as Record<string, unknown>[]).map((row) => ({ id: String(row.id), reflectionId, role: row.role as ReflectionMessage["role"], content: String(row.content), at: String(row.at), ...(row.context_json ? JSON.parse(String(row.context_json)) as Pick<ReflectionMessage, "lensId" | "lensVersion" | "citedEventIds"> : {}) })); }
   appendReflectionMessage(reflectionId: string, role: ReflectionMessage["role"], content: string, context?: { lensId: string; lensVersion: number; citedEventIds: string[] }): ReflectionMessage {
     const message = { id: id("msg"), reflectionId, role, content, at: new Date().toISOString(), ...context };
@@ -477,50 +530,10 @@ export class ForgeDatabase {
     this.#db.prepare("UPDATE reflections SET lens_id=?, lens_version=?, lens_prompt=?, evidence_ids_json=?, updated_at=? WHERE id=?")
       .run(lens.id, lens.version, lens.prompt, JSON.stringify(evidenceEventIds), new Date().toISOString(), reflectionId);
   }
-  proposalForReflection(reflectionId: string): ProposalRecord | undefined { const row = this.#db.prepare("SELECT * FROM proposals WHERE reflection_id=? ORDER BY created_at LIMIT 1").get(reflectionId) as Record<string, unknown> | undefined; return row ? this.#proposal(row) : undefined; }
-  proposalsForWork(workId: string): ProposalRecord[] { return (this.#db.prepare("SELECT * FROM proposals WHERE work_id=? ORDER BY created_at DESC, id DESC").all(workId) as Record<string, unknown>[]).map((row) => this.#proposal(row)); }
-
-  createProposal(input: ProposalRecord): ProposalRecord {
-    const now = new Date().toISOString(); const proposal = { id: input.id, work_id: input.workId ?? null, reflection_id: input.reflectionId ?? null, owner_user_id: input.ownerUserId, base_revision: input.baseRevision, branch_ref: input.branchRef, worktree_path: input.worktreePath, status: input.status, source: input.source, reason: input.reason, evidence: input.evidence, reviewed_revision: input.reviewedRevision ?? null, upstream_revision: input.upstreamRevision ?? null, created_at: now, updated_at: now };
-    this.#db.prepare("INSERT INTO proposals (id, work_id, reflection_id, owner_user_id, base_revision, branch_ref, worktree_path, status, source, reason, evidence, reviewed_revision, upstream_revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(...Object.values(proposal));
-    return input;
-  }
-
-  proposal(proposalId: string): ProposalRecord | undefined { const row = this.#db.prepare("SELECT * FROM proposals WHERE id=?").get(proposalId) as Record<string, unknown> | undefined; return row ? this.#proposal(row) : undefined; }
-  abandonReflectionProposal(proposalId: string, reflectionId: string, message: string): void {
-    this.#db.exec("BEGIN IMMEDIATE");
-    try {
-      const updated = this.#db.prepare("UPDATE proposals SET status='abandoned', reviewed_revision=NULL, updated_at=? WHERE id=? AND reflection_id=? AND status='open'").run(new Date().toISOString(), proposalId, reflectionId);
-      if (updated.changes !== 1) throw new Error("ProposalNotEditable");
-      this.#db.prepare("UPDATE reflections SET status='abandoned', updated_at=? WHERE id=?").run(new Date().toISOString(), reflectionId);
-      this.appendReflectionMessage(reflectionId, "agent", message);
-      this.#db.exec("COMMIT");
-    } catch (error) { this.#db.exec("ROLLBACK"); throw error; }
-  }
-  proposalsForUser(ownerUserId: string): ProposalRecord[] { return (this.#db.prepare("SELECT * FROM proposals WHERE owner_user_id=? ORDER BY created_at DESC").all(ownerUserId) as Record<string, unknown>[]).map((row) => this.#proposal(row)); }
-  updateProposalBase(proposalId: string, baseRevision: string): void { this.#db.prepare("UPDATE proposals SET base_revision=?, reviewed_revision=NULL, updated_at=? WHERE id=? AND status='open'").run(baseRevision, new Date().toISOString(), proposalId); }
-  setProposalReview(proposalId: string, revision: string | undefined): void { this.#db.prepare("UPDATE proposals SET reviewed_revision=?, updated_at=? WHERE id=? AND status='open'").run(revision ?? null, new Date().toISOString(), proposalId); }
-  setProposalMessage(proposalId: string, message: string, evidence: string): void { this.#db.prepare("UPDATE proposals SET reason=?, evidence=?, updated_at=? WHERE id=? AND status='open'").run(message, evidence, new Date().toISOString(), proposalId); }
-  adoptProposal(proposalId: string): void {
-    this.#db.exec("BEGIN IMMEDIATE");
-    try {
-      const row = this.#db.prepare("SELECT reflection_id, status FROM proposals WHERE id=?").get(proposalId) as { reflection_id: string | null; status: string } | undefined;
-      if (!row || row.status !== "open") throw new Error("ProposalNotEditable");
-      const now = new Date().toISOString();
-      this.#db.prepare("UPDATE proposals SET status='adopted', updated_at=? WHERE id=?").run(now, proposalId);
-      if (row.reflection_id) {
-        this.#db.prepare("UPDATE reflections SET status='completed', updated_at=? WHERE id=?").run(now, row.reflection_id);
-        this.appendReflectionMessage(row.reflection_id, "agent", "Proposal 已采纳，个人 OM 已生成新 commit。这段 Reflection 保留为历史记录。");
-      }
-      this.#db.exec("COMMIT");
-    } catch (error) { this.#db.exec("ROLLBACK"); throw error; }
-  }
-
   #user(row: Record<string, unknown>): ForgeUser { return { id: String(row.id), email: String(row.email), role: row.role as UserRole, passwordConfigured: typeof row.password_hash === "string", activeBranch: String(row.active_branch), createdAt: String(row.created_at) }; }
   #lens(row: Record<string, unknown>): ReflectionLens { return { id: String(row.id) as ReflectionLens["id"], version: Number(row.version), enabled: Number(row.enabled) === 1, prompt: String(row.prompt) }; }
-  #reflection(row: Record<string, unknown>): ReflectionRecord { return { id: String(row.id), workId: String(row.work_id), ownerUserId: String(row.owner_user_id), lensId: String(row.lens_id), lensVersion: Number(row.lens_version), lensPrompt: String(row.lens_prompt), question: String(row.question), evidenceEventIds: JSON.parse(String(row.evidence_ids_json)) as string[], omRevision: String(row.om_revision), status: String(row.status), ...(row.outcome ? { outcome: row.outcome as ReflectionOutcome } : {}), ...(row.analysis ? { analysis: String(row.analysis) } : {}), ...(row.attribution ? { attribution: String(row.attribution) } : {}), ...(row.suggestion_markdown ? { suggestionMarkdown: String(row.suggestion_markdown) } : {}) }; }
+  #reflection(row: Record<string, unknown>): ReflectionRecord { return { id: String(row.id), ...(row.work_id == null ? {} : { workId: String(row.work_id) }), ownerUserId: String(row.owner_user_id), lensId: String(row.lens_id), lensVersion: Number(row.lens_version), lensPrompt: String(row.lens_prompt), question: String(row.question), evidenceEventIds: JSON.parse(String(row.evidence_ids_json)) as string[], omRevision: String(row.om_revision), status: String(row.status), ...(row.outcome ? { outcome: row.outcome as ReflectionOutcome } : {}), ...(row.analysis ? { analysis: String(row.analysis) } : {}), ...(row.attribution ? { attribution: String(row.attribution) } : {}), ...(row.suggestion_markdown ? { suggestionMarkdown: String(row.suggestion_markdown) } : {}) }; }
   #work(row: Record<string, unknown>): Work { return { id: String(row.id), ownerUserId: String(row.owner_user_id), appId: String(row.app_id) as Work["appId"], workType: String(row.work_type) as Work["workType"], entityId: String(row.entity_id), ...(typeof row.entity_title === "string" ? { entityTitle: row.entity_title } : {}), ...(typeof row.goal === "string" ? { goal: row.goal } : {}), ...(typeof row.app_user_id === "string" ? { appUserId: row.app_user_id } : {}), ...(typeof row.selection_json === "string" ? { selection: JSON.parse(row.selection_json) as Record<string, unknown> } : {}), status: row.status === "completed" ? "completed" : "active", createdAt: String(row.created_at), updatedAt: String(row.updated_at) }; }
-  #proposal(row: Record<string, unknown>): ProposalRecord { return { id: String(row.id), ...(row.reflection_id == null ? {} : { reflectionId: String(row.reflection_id) }), ...(row.work_id == null ? {} : { workId: String(row.work_id) }), ownerUserId: String(row.owner_user_id), baseRevision: String(row.base_revision), branchRef: String(row.branch_ref), worktreePath: String(row.worktree_path), status: String(row.status), source: String(row.source), reason: String(row.reason), evidence: String(row.evidence), ...(row.reviewed_revision == null ? {} : { reviewedRevision: String(row.reviewed_revision) }), ...(row.upstream_revision == null ? {} : { upstreamRevision: String(row.upstream_revision) }) }; }
 
   createContribution(record: OrganizationContribution): void {
     this.#db.prepare("INSERT INTO organization_contributions (id, author_user_id, source_revision, base_main_revision, reason, evidence, status, selected_paths_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
@@ -564,9 +577,9 @@ export class ForgeDatabase {
     };
     return {
       works: count("SELECT COUNT(*) AS n FROM works"), completedWorks: count("SELECT COUNT(*) AS n FROM works WHERE status='completed'"), turns: count("SELECT COUNT(*) AS n FROM turns"), reflections: count("SELECT COUNT(*) AS n FROM reflections"),
-      personalProposals: count("SELECT COUNT(*) AS n FROM proposals WHERE source!='organization-sync'"), adoptedPersonalProposals: count("SELECT COUNT(*) AS n FROM proposals WHERE source!='organization-sync' AND status='adopted'"),
-      organizationContributions: count("SELECT COUNT(*) AS n FROM organization_contributions"), acceptedOrganizationContributions: count("SELECT COUNT(*) AS n FROM organization_contributions WHERE status='accepted'"), synchronizedProposals: count("SELECT COUNT(*) AS n FROM proposals WHERE source='organization-sync' AND status='adopted'"),
-      medianPersonalProposalHours: medianHours("SELECT created_at AS start_at, updated_at AS end_at FROM proposals WHERE source!='organization-sync' AND status='adopted'"),
+      legacyPersonalProposals: count("SELECT COUNT(*) AS n FROM proposals WHERE source!='organization-sync'"), legacyAdoptedPersonalProposals: count("SELECT COUNT(*) AS n FROM proposals WHERE source!='organization-sync' AND status='adopted'"),
+      organizationContributions: count("SELECT COUNT(*) AS n FROM organization_contributions"), acceptedOrganizationContributions: count("SELECT COUNT(*) AS n FROM organization_contributions WHERE status='accepted'"), legacySynchronizedProposals: count("SELECT COUNT(*) AS n FROM proposals WHERE source='organization-sync' AND status='adopted'"),
+      legacyMedianPersonalProposalHours: medianHours("SELECT created_at AS start_at, updated_at AS end_at FROM proposals WHERE source!='organization-sync' AND status='adopted'"),
       medianOrganizationReviewHours: medianHours("SELECT created_at AS start_at, accepted_at AS end_at FROM organization_contributions WHERE status='accepted' AND accepted_at IS NOT NULL"),
     };
   }

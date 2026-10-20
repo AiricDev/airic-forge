@@ -29,7 +29,7 @@ import PeopleIcon from "@mui/icons-material/People";
 import SettingsIcon from "@mui/icons-material/Settings";
 import AssessmentIcon from "@mui/icons-material/Assessment";
 import PsychologyIcon from "@mui/icons-material/Psychology";
-import type { AuthResult, Proposal, User } from "./types";
+import type { AuthResult, User } from "./types";
 import { command } from "./api";
 import { useCommand, useResource } from "./hooks";
 import { Feedback, ResourceState } from "./ui";
@@ -49,8 +49,13 @@ const WorkDetailPage = lazy(() =>
 const OmPage = lazy(() =>
   import("./pages/OmPage").then((m) => ({ default: m.OmPage })),
 );
-const ProposalsPage = lazy(() =>
-  import("./pages/ProposalsPage").then((m) => ({ default: m.ProposalsPage })),
+const ReflectionsPage = lazy(() =>
+  import("./pages/ReflectionsPage").then((m) => ({
+    default: m.ReflectionsPage,
+  })),
+);
+const GitAccessPage = lazy(() =>
+  import("./pages/GitAccessPage").then((m) => ({ default: m.GitAccessPage })),
 );
 const ContributionsPage = lazy(() =>
   import("./pages/ContributionsPage").then((m) => ({
@@ -167,7 +172,8 @@ const primary = [
   { view: "dashboard", label: "工作台", icon: DashboardIcon },
   { view: "om", label: "Operating Model", icon: DescriptionIcon },
   { view: "works", label: "Work 与轨迹", icon: WorkHistoryIcon },
-  { view: "proposals", label: "提议", icon: CompareArrowsIcon },
+  { view: "reflections", label: "改进工作方式", icon: CompareArrowsIcon },
+  { view: "git-access", label: "本地 agent 与 Git", icon: CompareArrowsIcon },
 ] as const;
 const admin = [
   { view: "governance", label: "组织治理", icon: AdminPanelSettingsIcon },
@@ -195,7 +201,6 @@ function Workbench({
   const [mobile, setMobile] = useState(false);
   const [menu, setMenu] = useState<HTMLElement | null>(null);
   const [branch, setBranch] = useState(user.id);
-  const [proposalId, setProposalId] = useState("");
   const [contributionId, setContributionId] = useState("");
   const title =
     n.view === "work-detail"
@@ -214,13 +219,6 @@ function Workbench({
       setBranch(id);
       n.navigate("om");
     });
-  const openProposal = (p: Proposal) => {
-    if (p.reflectionId && p.workId) n.openWork(p.workId, "reflection");
-    else {
-      setProposalId(p.id);
-      n.navigate("proposals");
-    }
-  };
   const content = (
     <>
       <Toolbar>
@@ -239,7 +237,6 @@ function Workbench({
               (view === "om" && n.view === "organization")
             }
             onClick={() => {
-              if (view === "proposals") setProposalId("");
               navigate(view);
             }}
           >
@@ -406,7 +403,6 @@ function Workbench({
                 user={user}
                 navigation={n}
                 openOm={() => openOm(user.id)}
-                openProposal={openProposal}
               />
             )}
             {n.view === "works" && (
@@ -425,20 +421,12 @@ function Workbench({
                 users={users.data?.users ?? []}
                 branch={branch}
                 selectBranch={setBranch}
-                openSync={(id) => {
-                  setProposalId(id);
-                  n.navigate("proposals");
-                }}
               />
             )}
-            {n.view === "proposals" && (
-              <ProposalsPage
-                user={user}
-                users={users.data?.users ?? []}
-                navigation={n}
-                initialId={proposalId}
-              />
+            {n.view === "reflections" && (
+              <ReflectionsPage navigation={n} user={user} />
             )}
+            {n.view === "git-access" && <GitAccessPage />}
             {user.role === "admin" && (
               <>
                 {n.view === "governance" && (

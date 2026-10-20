@@ -32,7 +32,7 @@ import { useResource, useCommand } from "../hooks";
 import { PageHeading, ResourceState, Feedback, CodeBlock } from "../ui";
 import { WorkConversation } from "../Conversation";
 import { ReflectionChat } from "../ReflectionChat";
-import { ProposalReview } from "../ProposalReview";
+import { OmDraftReview } from "../OmDraftReview";
 import { useDirty } from "../UnsavedChanges";
 import { feedbackLabel } from "../labels";
 export function WorkDetailPage({
@@ -58,7 +58,6 @@ export function WorkDetailPage({
   const [retry, setRetry] = useState(0);
   const [note, setNote] = useState("");
   const [kind, setKind] = useState<WorkFeedbackKind>("avoidable-correction");
-  const [proposalId, setProposalId] = useState("");
   const [reflectionRunning, setReflectionRunning] = useState(false);
   const evaluation = useCommand();
   const owner = history.data?.work.ownerUserId === user.id;
@@ -213,7 +212,7 @@ export function WorkDetailPage({
                         这个 Work 的 Reflection
                       </Typography>
                       <Typography>
-                        每个 Work 有一个持续对话；Proposal
+                        每个 Work 有一个持续对话；OM 草稿
                         是该对话形成的工作成果。
                       </Typography>
                       <Chip
@@ -248,43 +247,14 @@ export function WorkDetailPage({
                   </Paper>
                   <Paper sx={{ p: 2, minWidth: 0 }}>
                     <Stack spacing={2}>
-                      <Typography variant="h6">Proposal 实时预览</Typography>
-                      {detail.reflection.attribution && (
-                        <Typography>
-                          归因：{detail.reflection.attribution}
-                        </Typography>
-                      )}
-                      {reflectionRunning && (
-                        <Alert severity="info">
-                          Reflection
-                          正在执行。候选改动可读取，运行结束后可校验、审阅和采纳。
-                        </Alert>
-                      )}
-                      {detail.proposal ? (
-                        <>
-                          <Typography>{detail.proposal.reason}</Typography>
-                          <Typography variant="caption">
-                            {detail.proposal.id} · {detail.proposal.status}
-                          </Typography>
-                          <Button
-                            onClick={() => setProposalId(detail.proposal!.id)}
-                          >
-                            查看差异并审阅
-                          </Button>
-                          {proposalId === detail.proposal.id && (
-                            <ProposalReview
-                              id={proposalId}
-                              canWrite={owner && !reflectionRunning}
-                              onChanged={refreshReflection}
-                            />
-                          )}
-                        </>
-                      ) : (
-                        <Typography color="text.secondary">
-                          尚未形成 Proposal。可以继续讨论 Work，或用 lens
-                          分析轨迹。
-                        </Typography>
-                      )}
+                      <OmDraftReview
+                        scope={`reflection:${detail.reflection.id}`}
+                        initialDraft={detail.draft}
+                        canWrite={owner}
+                        busy={reflectionRunning}
+                        refreshKey={detail}
+                        onChanged={refreshReflection}
+                      />
                       {detail.reflection.suggestionMarkdown && (
                         <>
                           <Typography variant="h6">API Suggestion</Typography>

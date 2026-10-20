@@ -5,6 +5,7 @@ const list = (value: string | undefined) => new Set((value ?? "").split(",").map
 export interface ForgeConfig {
   port: number;
   bindHost?: string;
+  trustedProxy?: string;
   projectDir: string;
   dataDir: string;
   seedProjectDir: string;
@@ -28,6 +29,7 @@ export function loadConfig(env = process.env): ForgeConfig {
   return {
     port: Number(env.FORGE_PORT ?? 4175),
     bindHost: env.FORGE_BIND_HOST,
+    trustedProxy: env.FORGE_TRUST_PROXY,
     projectDir: resolve(env.FORGE_PROJECT_DIR ?? "./runtime/certlab/project"),
     dataDir: resolve(env.FORGE_DATA_DIR ?? "./runtime/certlab/data"),
     seedProjectDir: resolve(env.FORGE_SEED_PROJECT_DIR ?? "./seed/certlab"),

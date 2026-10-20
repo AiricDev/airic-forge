@@ -71,13 +71,6 @@ export type WorkPage = {
   total: number;
   totalPages: number;
 };
-export type ProposalPage = {
-  proposals: Proposal[];
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
-};
 export type Turn = {
   id: string;
   sequence: number;
@@ -135,26 +128,6 @@ export type CatalogOverview = {
   accepted: Catalog | null;
   candidates: Catalog[];
 };
-export type Proposal = {
-  id: string;
-  ownerUserId: string;
-  workId?: string;
-  reflectionId?: string;
-  baseRevision: string;
-  status: string;
-  source: string;
-  reason: string;
-  evidence: string;
-  reviewedRevision?: string;
-  upstreamRevision?: string;
-};
-export type ProposalDetail = {
-  proposal: Proposal;
-  activeRevision: string;
-  changedPaths: string[];
-  conflicts: string[];
-  diff: string;
-};
 export type Contribution = {
   id: string;
   authorUserId: string;
@@ -192,7 +165,7 @@ export type ReflectionLens = {
 };
 export type Reflection = {
   id: string;
-  workId: string;
+  workId?: string;
   lensId: string;
   lensVersion: number;
   question: string;
@@ -216,7 +189,7 @@ export type ReflectionMessage = {
 export type ReflectionDetail = {
   reflection: Reflection;
   messages: ReflectionMessage[];
-  proposal?: Proposal;
+  draft?: import("./OmDraftReview").OmWorkspace;
 };
 
 export type ReflectionRun = {
@@ -239,7 +212,6 @@ export type ReflectionRun = {
     name: string;
     status: "running" | "completed" | "failed";
   }>;
-  proposalId?: string;
   agentMessageId?: string;
   error?: string;
   createdAt: string;

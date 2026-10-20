@@ -8,3 +8,5 @@ export * from "./work-progress.js";
 export * from "./materials.js";
 
 export * from "./work-context.js";
+export * from "./om-changes.js";
+export * from "./git-access.js";

@@ -36,7 +36,8 @@ test("single-report Work binds record number and current-Turn evidence through G
       return { text: "Still available" };
     }
     seenEvidence = evidence?.[0]?.text ?? "";
-    assert.equal(tools.length, ids.length);
+    assert.deepEqual(tools.map((tool) => tool.capability.id), runtime.om.workDefinition(runtime.om.head("main"), "report-authoring").capabilities.allowed);
+    assert(tools.every((tool) => ids.includes(tool.capability.id)));
     await assert.rejects(() => tools[0].invoke({ report_id: "other" }), /CommandTargetMismatch/);
     const save = tools.find((tool) => tool.capability.id === "assessment.save-draft")!;
     await assert.rejects(() => save.invoke({ assessment_id: "assessment-1", expected_record_no: 0 }), /ExpectedRecordNoMismatch/);

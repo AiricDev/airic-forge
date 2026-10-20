@@ -3,12 +3,13 @@ import test from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { omFixture } from "./om-test-fixture.js";
 import { ForgeUseCases } from "@airic-forge/domain";
 import { testCatalog } from "./certlab-test-catalog.js";
 import { ForgeRuntime } from "./runtime.js";
 import type { ForgeConfig } from "./config.js";
 import { buildServer } from "./server.js";
-import { createTestProposal } from "./test-proposal-fixture.js";
+import { createTestOmCommit } from "./test-proposal-fixture.js";
 
 test("administrator selectively accepts personal OM and member sync preserves old HEAD", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-six-"));
@@ -25,13 +26,12 @@ test("administrator selectively accepts personal OM and member sync preserves ol
     const memberBranch = runtime.om.ensureUserBranch(member.id);
     const initialMain = runtime.om.head("main");
     const oldMemberHead = runtime.om.head(memberBranch.branch);
-    const source = createTestProposal(runtime, author.id, "Improve policy and method", "Work reference");
     const policyPath = "work-definitions/report-authoring/policy.md";
     const methodPath = "work-definitions/report-authoring/method.md";
-    await useCases.writePersonalProposal(author.id, source.id, policyPath, runtime.om.document(source.baseRevision, policyPath) + "\n\nShared organization policy.\n");
-    await useCases.writePersonalProposal(author.id, source.id, methodPath, runtime.om.document(source.baseRevision, methodPath) + "\n\nPrivate author method.\n");
-    const sourceReview = await useCases.reviewPersonalProposal(author.id, source.id);
-    const authorRevision = (await useCases.adoptPersonalProposal(author.id, source.id, "Author improvement", sourceReview.reviewedRevision)).revision;
+    const authorRevision = (await createTestOmCommit(runtime, author.id, [
+      { path: policyPath, content: runtime.om.document(oldMemberHead, policyPath) + "\nShared organization policy.\n" },
+      { path: methodPath, content: runtime.om.document(oldMemberHead, methodPath) + "\nPrivate author method.\n" },
+    ], "Author improvement")).revision;
     assert.equal(runtime.om.head("main"), initialMain);
     await assert.rejects(() => useCases.compareOrganizationSource(member.id, author.id), /Forbidden/);
     const comparison = await useCases.compareOrganizationSource(admin.id, author.id);
@@ -50,16 +50,15 @@ test("administrator selectively accepts personal OM and member sync preserves ol
     assert.ok((await useCases.organizationOm(member.id)).files.includes(policyPath));
     assert.match((await useCases.organizationOmFile(member.id, policyPath)).content, /Shared organization policy/);
     assert.match(runtime.om.document(accepted.revision, policyPath), /Shared organization policy/);
-    const sync = await useCases.createOrganizationSync(member.id);
+    const sync = await runtime.omChanges.sync(member.id);
     assert.equal(runtime.om.head(memberBranch.branch), oldMemberHead);
-    assert.equal(sync.proposal.upstreamRevision, accepted.revision);
-    const syncReview = await useCases.reviewPersonalProposal(member.id, sync.proposal.id);
-    const synced = await useCases.adoptPersonalProposal(member.id, sync.proposal.id, "Sync organization", syncReview.reviewedRevision);
+    assert.equal(sync.upstreamRevision, accepted.revision);
+    const synced = await runtime.omChanges.commit(member.id, "sync", sync.digest, "sync-member-request");
     assert.match(runtime.om.document(synced.revision, policyPath), /Shared organization policy/);
     assert.equal(runtime.om.containsRevision(memberBranch.branch, oldMemberHead), true);
     assert.equal(runtime.om.includesRevision(memberBranch.branch, accepted.revision), true);
     assert.equal((await useCases.personalOm(member.id, member.id, oldMemberHead)).revision, oldMemberHead);
-    await assert.rejects(() => useCases.createOrganizationSync(member.id), /OrganizationAlreadyCurrent/);
+    await assert.rejects(() => runtime.omChanges.sync(member.id), /OrganizationAlreadyCurrent/);
     const work = runtime.db.createWork(member.id, "certlab", "report-authoring", "report-1");
     await assert.rejects(() => useCases.addWorkFeedback(author.id, work.id, "avoidable-correction", "Wrong owner"), /Forbidden/);
     await useCases.addWorkFeedback(member.id, work.id, "required-human-decision", "Report approval belongs to a human");
@@ -68,7 +67,7 @@ test("administrator selectively accepts personal OM and member sync preserves ol
     await assert.rejects(() => useCases.measurementBaseline(member.id), /Forbidden/);
     const baseline = await useCases.measurementBaseline(admin.id);
     assert.equal(baseline.activity.acceptedOrganizationContributions, 1);
-    assert.equal(baseline.activity.synchronizedProposals, 1);
+    assert.equal(runtime.db.workspace(member.id, "sync"), undefined);
     assert.equal(baseline.feedback["required-human-decision"], 1);
     assert.equal(baseline.feedback["avoidable-correction"], 1);
   } finally { runtime.db.close(); rmSync(root, { recursive: true, force: true }); }
@@ -95,39 +94,27 @@ test("a reviewed organization candidate cannot overwrite a newer main HEAD", asy
   } finally { runtime.db.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test("organization sync conflict stays in proposal until member resolves and adopts it", () => {
-  const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-six-conflict-"));
-  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
-  const runtime = new ForgeRuntime(config);
+test("organization sync preserves conflicts in a draft until resolved and directly committed", async () => {
+  const f = omFixture();
   try {
-    const author = runtime.om.ensureUserBranch("author");
-    const member = runtime.om.ensureUserBranch("member");
-    const base = runtime.om.head("main");
     const path = "work-definitions/report-authoring/policy.md";
-    const original = runtime.om.document(base, path);
-    const authorDraft = runtime.om.createProposal("author", "author-conflict", base);
-    runtime.om.writeProposalFile(authorDraft.worktree, path, `${original}\nOrganization wording.\n`);
-    runtime.om.commitProposal(authorDraft.worktree, "Organization wording");
-    runtime.om.adoptProposal(author.branch, author.worktree, authorDraft.branch, base, {});
-    const candidate = runtime.om.prepareContribution("conflict-main", runtime.om.head(author.branch), base, base, [path], "Organization wording");
-    const mainRevision = runtime.om.acceptContribution(candidate.branch, base);
-    const memberDraft = runtime.om.createProposal("member", "member-conflict", base);
-    runtime.om.writeProposalFile(memberDraft.worktree, path, `${original}\nMember wording.\n`);
-    runtime.om.commitProposal(memberDraft.worktree, "Member wording");
-    const personalRevision = runtime.om.adoptProposal(member.branch, member.worktree, memberDraft.branch, base, {});
-    const sync = runtime.om.createProposal("member", "sync-conflict", personalRevision);
-    assert.throws(() => runtime.om.synchronizeProposal(sync.worktree, personalRevision, mainRevision), /ProposalRebaseConflict/);
-    assert.equal(runtime.om.head(member.branch), personalRevision);
-    assert.deepEqual(runtime.om.proposalConflicts(sync.worktree), [path]);
-    runtime.om.writeProposalFile(sync.worktree, path, `${original}\nOrganization wording.\nMember wording.\n`);
-    runtime.om.synchronizeProposal(sync.worktree, personalRevision, mainRevision);
-    assert.deepEqual(runtime.om.proposalConflicts(sync.worktree), []);
-    const synced = runtime.om.adoptSynchronizedProposal(member.branch, member.worktree, sync.branch, personalRevision, mainRevision, {});
-    assert.match(runtime.om.document(synced, path), /Organization wording\.\nMember wording/);
-    assert.equal(runtime.om.containsRevision(member.branch, personalRevision), true);
-  } finally { runtime.db.close(); rmSync(root, { recursive: true, force: true }); }
+    const base = f.runtime.om.head("main");
+    const original = f.runtime.om.document(base, path);
+    const author = await createTestOmCommit(f.runtime, f.owner.id, [{ path, content: original + "\nOrganization wording.\n" }], "Organization wording");
+    const candidate = f.runtime.om.prepareContribution("conflict-main", author.revision, base, base, [path], "Organization wording");
+    const main = f.runtime.om.acceptContribution(candidate.branch, base);
+    const personal = await createTestOmCommit(f.runtime, f.other.id, [{ path, content: original + "\nMember wording.\n" }], "Member wording");
+    const sync = await f.runtime.omChanges.sync(f.other.id);
+    assert.deepEqual(sync.conflicts, [path]);
+    assert.equal(f.runtime.om.head(`users/${f.other.id}`), personal.revision);
+    await assert.rejects(() => f.runtime.omChanges.commit(f.other.id, "sync", sync.digest, "sync-conflict-request"), /OmMergeConflict/);
+    const resolved = await f.runtime.omChanges.save(f.other.id, "sync", { baseRevision: personal.revision, summary: "Keep both wordings", edits: [{ path, content: original + "\nOrganization wording.\nMember wording.\n" }] });
+    const committed = await f.runtime.omChanges.commit(f.other.id, "sync", resolved.digest, "resolved-sync-request");
+    assert.match(f.runtime.om.document(committed.revision, path), /Organization wording\.\nMember wording/);
+    assert(f.runtime.om.includesRevision(`users/${f.other.id}`, main));
+    assert(f.runtime.om.includesRevision(`users/${f.other.id}`, personal.revision));
+  } finally { await f.close(); }
 });
-
 test("organization HTTP routes expose main to members while keeping private evidence and baseline administrative", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-six-http-"));
   const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };

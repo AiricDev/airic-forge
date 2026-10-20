@@ -18,7 +18,7 @@ function gate() {
 async function fixture(agent: ReflectionAgentPort) {
   const root = mkdtempSync(join(tmpdir(), "forge-stream-"));
   const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve("../../seed/certlab"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set(), webDistDir: join(root, "web") });
-  Object.assign(runtime, { useCases: new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omDrafts: runtime.db, app: runtime.app, catalogs: runtime.db, agents: { runWork: async () => ({ text: "" }) }, reflectionAgent: agent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: new Set() }) });
+  Object.assign(runtime, { useCases: new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omChanges: runtime.omChanges, omDrafts: runtime.db, app: runtime.app, catalogs: runtime.db, agents: { runWork: async () => ({ text: "" }) }, reflectionAgent: agent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: new Set() }) });
   const owner = runtime.db.ensureUser("stream-owner@example.invalid", false);
   const other = runtime.db.ensureUser("stream-other@example.invalid", false);
   const admin = runtime.db.ensureUser("stream-admin@example.invalid", true);
@@ -111,36 +111,30 @@ test("stop preserves a written candidate, excludes governance, and never records
   const f = await fixture({ analyze: async (input) => {
     const events = await input.readTrajectory!(0, 1);
     const path = "subject-knowledge/stream-note.md";
-    await input.writeProposalFile!(path, "---\nid: stream-note\ntitle: Source\nsummary: Source\ntopics: [evidence]\n---\n\nPreserve sources.\n", [events[0].id], "Preserve sources");
+    await input.writeDraftFile!(path, "---\nid: stream-note\ntitle: Source\nsummary: Source\ntopics: [evidence]\n---\n\nPreserve sources.\n", [events[0].id], "Preserve sources");
     input.onProgress?.({ type: "text.delta", text: "Partial answer" });
     entered.release();
     await finish.promise;
-    await input.writeProposalFile!(path, "Must not overwrite", [events[0].id], "Must not write");
+    await input.writeDraftFile!(path, "Must not overwrite", [events[0].id], "Must not write");
     throw new Error("Must not reach");
   } });
   try {
     const { run } = await f.runtime.useCases.startReflectionRun(f.owner.id, f.reflection.id, "/domain-knowledge Save lesson", "request-stop");
     await entered.promise;
-    const proposal = f.runtime.db.proposalForReflection(f.reflection.id)!;
-    const before = f.runtime.om.proposalFile(proposal.worktreePath, "subject-knowledge/stream-note.md");
-    await f.runtime.sessions.put({ ticket: "stream-ticket", forgeUserId: f.owner.id, workId: f.reflection.workId, sessionId: "session", expiresAt: new Date(Date.now() + 60_000).toISOString(), appToken: "unused-fixture", reportId: "report" });
-    for (const operation of [
-      () => f.runtime.useCases.reviewPersonalProposal(f.owner.id, proposal.id),
-      () => f.runtime.useCases.rebasePersonalProposal(f.owner.id, proposal.id),
-      () => f.runtime.useCases.abandonPersonalProposal(f.owner.id, proposal.id),
-      () => f.runtime.useCases.writePersonalProposal(f.owner.id, proposal.id, "subject-knowledge/stream-note.md", "changed"),
-      () => f.runtime.useCases.adoptPersonalProposal(f.owner.id, proposal.id, "adopt", "revision"),
-      () => f.runtime.useCases.writeProposal("stream-ticket", proposal.id, "subject-knowledge/stream-note.md", "changed"),
-      () => f.runtime.useCases.adoptProposal("stream-ticket", proposal.id, "adopt"),
-    ]) await assert.rejects(operation, /ReflectionAlreadyRunning/);
-    await assert.rejects(() => f.runtime.useCases.reviewPersonalProposal(f.admin.id, proposal.id), /ProposalNotEditable/);
-    await assert.rejects(() => f.runtime.useCases.writeProposal("invalid-ticket", proposal.id, "subject-knowledge/stream-note.md", "changed"), /AppSessionExpired/);
+    const scope = `reflection:${f.reflection.id}`;
+    const before = f.runtime.db.workspace(f.owner.id, scope)!;
+    for (const action of [
+      () => f.runtime.omChanges.discard(f.owner.id, scope),
+      () => f.runtime.omChanges.rebase(f.owner.id, scope),
+      () => f.runtime.omChanges.commit(f.owner.id, scope, "digest", "commit-stop-request"),
+    ]) await assert.rejects(() => f.runtime.useCases.mutateOmDraft(f.owner.id, scope, async () => { await action(); }), /ReflectionAlreadyRunning/);
+    await assert.rejects(() => f.runtime.useCases.mutateOmDraft(f.admin.id, scope, async () => {}), /ReflectionNotOwned/);
     assert.equal((await f.runtime.useCases.cancelReflectionRun(f.owner.id, f.reflection.id, run.id)).status, "cancelling");
     finish.release();
     assert.equal((await f.runtime.useCases.reflectionRuns!.wait(f.reflection.id, run.id)).status, "cancelled");
-    assert.equal(f.runtime.om.proposalFile(proposal.worktreePath, "subject-knowledge/stream-note.md"), before);
+    assert.deepEqual(f.runtime.db.workspace(f.owner.id, scope), before);
     assert.equal(f.runtime.db.reflectionMessages(f.reflection.id).length, 2);
-    assert.equal(f.runtime.db.proposal(proposal.id)?.status, "open");
+    assert(f.runtime.db.workspace(f.owner.id, scope)?.edits.some((edit) => edit.path === "subject-knowledge/stream-note.md"));
     assert.equal(f.runtime.db.reflection(f.reflection.id)?.status, "active");
   } finally { finish.release(); await f.close(); }
 });

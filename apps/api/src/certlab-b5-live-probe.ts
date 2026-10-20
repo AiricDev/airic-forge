@@ -59,14 +59,14 @@ const reflectionAgent: ReflectionAgentPort = { analyze: async (request) => {
   if (request.lens.id === "conversation") return { outcome: "analysis", analysis: "Insufficient to establish professional improvement; retain the evidence.", attribution: "", citedEventIds: cited };
   if (request.lens.id === "api-suggestion") return { outcome: "api-suggestion", analysis: "A scoped source comparison query may help.", attribution: "Actual original source observations.", citedEventIds: cited, suggestionMarkdown: "# Synthetic API suggestion\n\nRead-only, authenticated, revision-pinned; not a published capability." };
   if (request.lens.id === "delegation-gap") {
-    await assert.rejects(() => request.writeProposalFile!(knowledgePath, learned(knowledgeId), cited, "Wrong lens"), /InvalidReflectionProposal/);
+    await assert.rejects(() => request.writeDraftFile!(knowledgePath, learned(knowledgeId), cited, "Wrong lens"), /InvalidReflectionChange/);
     const path = "work-definitions/certification-assessment/method.md";
-    return { outcome: "proposal", analysis: "Keep original source limitations before concluding.", attribution: "Actual feedback and source observations.", citedEventIds: cited, edits: [{ path, content: request.documents.find((doc) => doc.path === path)!.content + "\n\nSynthetic method candidate; human confirmation remains required.\n" }] };
+    return { outcome: "changes", analysis: "Keep original source limitations before concluding.", attribution: "Actual feedback and source observations.", citedEventIds: cited, edits: [{ path, content: request.documents.find((doc) => doc.path === path)!.content + "\n\nSynthetic method candidate; human confirmation remains required.\n" }] };
   }
-  await assert.rejects(() => request.writeProposalFile!("work-definitions/certification-assessment/policy.md", "Not allowed", cited, "Wrong lens"), /InvalidReflectionProposal/);
-  return { outcome: "proposal", analysis: "Propose source-scope knowledge, not a professional conclusion.", attribution: "Actual original-source event, business receipts and engineer correction.", citedEventIds: cited, edits: [{ path: knowledgePath, content: learned(knowledgeId) }, { path: precedentPath, content: learned(precedentId) }] };
+  await assert.rejects(() => request.writeDraftFile!("work-definitions/certification-assessment/policy.md", "Not allowed", cited, "Wrong lens"), /InvalidReflectionChange/);
+  return { outcome: "changes", analysis: "Propose source-scope knowledge, not a professional conclusion.", attribution: "Actual original-source event, business receipts and engineer correction.", citedEventIds: cited, edits: [{ path: knowledgePath, content: learned(knowledgeId) }, { path: precedentPath, content: learned(precedentId) }] };
 } };
-const compose = (runtime: ForgeRuntime) => new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omDrafts: runtime.db, organization: runtime.db, measurements: runtime.db, reportWorkDefinitionId: config.reportWorkDefinitionId, organizationId: config.organizationId, app: runtime.app, catalogs: runtime.db, agents, reflectionAgent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
+const compose = (runtime: ForgeRuntime) => new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omChanges: runtime.omChanges, omDrafts: runtime.db, organization: runtime.db, measurements: runtime.db, reportWorkDefinitionId: config.reportWorkDefinitionId, organizationId: config.organizationId, app: runtime.app, catalogs: runtime.db, agents, reflectionAgent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
 let runtime = new ForgeRuntime(config);
 Object.assign(runtime, { useCases: compose(runtime) });
 let server = buildServer(runtime);
@@ -92,19 +92,20 @@ try {
   await useCases.checkpointFeedback(session.ticket, { checkpointId: original.progress.checkpoint!.id, kind: "method", note: "Preserve original revision and limits; no reading establishes conformance." }, "synthetic-b5-method");
   const reflection = await http(`/api/v1/works/${session.work.id}/reflection/open`, {});
   const analyze = (message: string) => http(`/api/v1/reflections/${reflection.reflection.id}/messages`, { message });
-  assert.equal((await analyze("Discuss limitations without inventing a reusable rule")).proposal, undefined);
-  assert.equal((await analyze("/api-suggestion A revision-scoped comparison")).proposal, undefined);
+  assert.equal((await analyze("Discuss limitations without inventing a reusable rule")).draft.edits.length, 0);
+  assert.equal((await analyze("/api-suggestion A revision-scoped comparison")).draft.edits.length, 0);
   const domain = await analyze("/domain-knowledge Propose scoped source knowledge");
-  const proposal = await http(`/api/v1/proposals/${domain.proposal.id}`);
-  assert(proposal.changedPaths.includes(knowledgePath) && proposal.changedPaths.includes(precedentPath));
+  const draftUrl = `/api/v1/om/workspaces/${encodeURIComponent(domain.draft.scope)}`;
+  const draft = await http(draftUrl);
+  const changedPaths = draft.edits.map((edit: { path: string }) => edit.path);
+  assert(changedPaths.includes(knowledgePath) && changedPaths.includes(precedentPath));
   assert.equal(runtime.om.head(session.user.activeBranch), m1);
   assert.equal(original.turns[0].omRevision, m1);
   const other = runtime.db.ensureUser("synthetic-other@example.invalid", false);
   const otherCookie = `forge_session=${runtime.webSessions.issue(other.id)}`;
-  assert.equal((await http(`/api/v1/proposals/${domain.proposal.id}/adopt`, { title: "Unauthorized" }, "POST", { Cookie: otherCookie }, 409)).error, "Forbidden");
-  const review = await http(`/api/v1/proposals/${domain.proposal.id}/review`, {});
-  await http(`/api/v1/proposals/${domain.proposal.id}/adopt`, { title: "Wrong review", reviewedRevision: "wrong" }, "POST", {}, 409);
-  const adopted = await http(`/api/v1/proposals/${domain.proposal.id}/adopt`, { title: "Preserve source scope", reviewedRevision: review.reviewedRevision });
+  await http(`${draftUrl}/commit`, { digest: draft.digest, requestId: "unauthorized-b5" }, "POST", { Cookie: otherCookie }, 403);
+  await http(`${draftUrl}/commit`, { digest: "wrong", requestId: "wrong-digest-b5" }, "POST", {}, 409);
+  const adopted = await http(`${draftUrl}/commit`, { digest: draft.digest, requestId: "scoped-source-b5" });
   assert.notEqual(adopted.revision, m1);
   const personal = runtime.om.ensureUserBranch(session.user.id);
   const methodPath = "work-definitions/certification-assessment/method.md";
@@ -116,10 +117,10 @@ try {
   await useCases.startTurn(methodSession.ticket, "Check method candidate");
   const methodReflection = await http(`/api/v1/works/${methodSession.work.id}/reflection/open`, {});
   const method = await http(`/api/v1/reflections/${methodReflection.reflection.id}/messages`, { message: "/delegation-gap Preserve original limitations" });
-  assert(method.proposal);
-  await http(`/api/v1/proposals/${method.proposal.id}/abandon`, {});
+  assert(method.draft.edits.length);
+  await http(`/api/v1/om/workspaces/${encodeURIComponent(method.draft.scope)}`, undefined, "DELETE");
   const share = await useCases.createOrganizationContribution(session.user.id, session.user.id, "Share scoped candidate knowledge", "Actual Work references");
-  const sharedReview = await useCases.reviewOrganizationContribution(session.user.id, share.id, proposal.changedPaths);
+  const sharedReview = await useCases.reviewOrganizationContribution(session.user.id, share.id, changedPaths);
   const shared = await useCases.acceptOrganizationContribution(session.user.id, share.id, sharedReview.reviewedRevision!);
   assert.equal(runtime.om.head(session.user.activeBranch), adopted.revision);
   await http("/api/v1/om/organization", undefined, "GET", { Cookie: otherCookie });
@@ -139,7 +140,7 @@ try {
   assert.equal(resumed.passwordSetupRequired, false);
   assert.equal(resumed.activeRevision, adopted.revision);
   await http("/api/v1/auth/login", { email: session.user.email, password: "Synthetic-learning-password-123" });
-  assert.equal((await http(`/api/v1/proposals/${domain.proposal.id}`)).proposal.status, "adopted");
+  assert.equal(runtime.om.head(session.user.activeBranch), adopted.revision);
   const history = await runtime.useCases.sessionHistory(resumed.ticket);
   await runtime.useCases.checkpointFeedback(resumed.ticket, { checkpointId: history.progress.checkpoint!.id, kind: "resume", note: "Restarted and re-read original facts." }, "synthetic-b5-restart");
   await runtime.useCases.startTurn(resumed.ticket, "Continue the original goal after restart");
@@ -148,5 +149,5 @@ try {
   assert.equal(restored.turns[0].omRevision, m1);
   assert(!JSON.stringify(restored).includes(scene.token));
   assert(!JSON.stringify(restored).includes(marker));
-  process.stdout.write(JSON.stringify({ status: "passed", commands, initialOmUsed: true, actualWorkReceiptsAndFeedbackCited: true, threeLensesSeparated: true, nestedStableIdsAndPrecedentsReviewed: true, noAutomaticAdoption: true, authorReviewRequired: true, adoptedNextTurnSameWork: true, oldTurnAndEventsUnchanged: true, privateDraftExcluded: true, organizationMain: shared.revision, mainDoesNotOverwritePersonal: true, privateWorkNotShared: true, foreignRootRejected: true, restartRequiresBootstrapAndLogin: true, adoptedVersionSurvivesRestart: true, tokenAbsentFromHistory: true, manualConfirmationPreserved: true, modelQualityNotClaimed: true }));
+  process.stdout.write(JSON.stringify({ status: "passed", commands, initialOmUsed: true, actualWorkReceiptsAndFeedbackCited: true, optionalLensesScoped: true, nestedStableIdsAndPrecedentsReviewed: true, noAutomaticAdoption: true, ownerCommitConfirmationRequired: true, adoptedNextTurnSameWork: true, oldTurnAndEventsUnchanged: true, privateDraftExcluded: true, organizationMain: shared.revision, mainDoesNotOverwritePersonal: true, privateWorkNotShared: true, foreignRootRejected: true, restartRequiresBootstrapAndLogin: true, adoptedVersionSurvivesRestart: true, tokenAbsentFromHistory: true, manualConfirmationPreserved: true, modelQualityNotClaimed: true }));
 } finally { await server.close(); runtime.db.close(); rmSync(root, { recursive: true, force: true }); }

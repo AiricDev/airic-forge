@@ -154,7 +154,7 @@ export function useReflectionRun(reflectionId: string, onChanged: () => void) {
         await readReflectionStream(response, (next, type) => {
           if (control.signal.aborted || next.id !== runId) return;
           accept(next);
-          if (type === "proposal.updated") changed.current();
+          if (type === "draft.updated") changed.current();
           finished = !runIsActive(next);
         });
         if (finished || control.signal.aborted) return;

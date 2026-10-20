@@ -60,13 +60,6 @@ test("Work list is paginated and detail keeps the original ownership boundary", 
     const workId = combined[0]!.id;
     assert.equal((await app.inject({ method: "GET", url: `/works/${workId}` })).statusCode, 200);
     assert.equal((await app.inject({ method: "GET", url: `/api/v1/works/${workId}`, headers: cookie(owner.id) })).statusCode, 200);
-    assert.equal((await app.inject({ method: "GET", url: `/api/v1/works/${workId}/proposals`, headers: cookie(owner.id) })).json().proposals.length, 0);
-    runtime.db.createProposal({ id: "prp-from-work", workId, ownerUserId: owner.id, baseRevision: "base", branchRef: "proposals/prp-from-work", worktreePath: join(root, "candidate"), status: "open", source: "reflection:test", reason: "Observed evidence", evidence: "event-1" });
-    runtime.db.createProposal({ id: "prp-from-other-work", workId: combined[1]!.id, ownerUserId: owner.id, baseRevision: "base", branchRef: "proposals/prp-from-other-work", worktreePath: join(root, "other-candidate"), status: "open", source: "reflection:test", reason: "Other evidence", evidence: "event-2" });
-    const linked = await app.inject({ method: "GET", url: `/api/v1/works/${workId}/proposals`, headers: cookie(owner.id) });
-    assert.equal(linked.statusCode, 200);
-    assert.deepEqual(linked.json().proposals.map((proposal: { id: string }) => proposal.id), ["prp-from-work"]);
-    assert.equal((await app.inject({ method: "GET", url: `/api/v1/works/${workId}/proposals`, headers: cookie(stranger.id) })).statusCode, 403);
     runtime.db.completeWork(owned[0]!.id);
     runtime.db.createWork(owner.id, "certlab", "report-type-definition", "report-type-1");
     const filteredWorks = await app.inject({ method: "GET", url: `/api/v1/works?page=1&ownerId=${owner.id}&workType=report-authoring&status=completed`, headers: cookie(admin.id) });
@@ -77,12 +70,5 @@ test("Work list is paginated and detail keeps the original ownership boundary", 
     assert.equal((await app.inject({ method: "GET", url: "/api/v1/works?page=1", headers: cookie(owner.id) })).statusCode, 403);
     assert.equal((await app.inject({ method: "GET", url: `/api/v1/works?page=1&ownerId=${stranger.id}`, headers: cookie(owner.id) })).statusCode, 403);
     assert.equal((await app.inject({ method: "GET", url: "/api/v1/works?page=1&status=invalid", headers: cookie(admin.id) })).statusCode, 400);
-    runtime.db.createProposal({ id: "prp-sync", ownerUserId: owner.id, baseRevision: "base", branchRef: "proposals/prp-sync", worktreePath: join(root, "sync-candidate"), status: "open", source: "organization-sync", reason: "Sync", evidence: "" });
-    const filteredProposals = await app.inject({ method: "GET", url: `/api/v1/proposals?page=1&ownerId=${owner.id}&status=open&source=reflection`, headers: cookie(admin.id) });
-    assert.equal(filteredProposals.statusCode, 200);
-    assert.equal(filteredProposals.json().total, 2);
-    assert.equal((await app.inject({ method: "GET", url: "/api/v1/proposals?page=1&source=organization-sync", headers: cookie(admin.id) })).json().total, 1);
-    assert.equal((await app.inject({ method: "GET", url: "/api/v1/proposals?page=1", headers: cookie(owner.id) })).statusCode, 403);
-    assert.equal((await app.inject({ method: "GET", url: "/api/v1/proposals?page=1&source=invalid", headers: cookie(admin.id) })).statusCode, 400);
   } finally { await app.close(); runtime.db.close(); rmSync(root, { recursive: true, force: true }); }
 });

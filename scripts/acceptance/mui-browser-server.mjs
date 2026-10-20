@@ -7,7 +7,7 @@ import { ForgeRuntime } from '../../apps/api/dist/runtime.js';
 import { buildServer } from '../../apps/api/dist/server.js';
 import { hashPassword, verifyPassword } from '../../apps/api/dist/auth.js';
 import { systemPort } from '../../apps/api/dist/system-port.js';
-import { createTestProposal } from '../../apps/api/dist/test-proposal-fixture.js';
+import { createTestOmCommit } from '../../apps/api/dist/test-proposal-fixture.js';
 import { testCatalog } from '../../apps/api/dist/certlab-test-catalog.js';
 const root = mkdtempSync(join(tmpdir(), 'airic-mui-e2e-'));
 const port = Number(process.env.FORGE_E2E_PORT || 4189);
@@ -57,13 +57,13 @@ const reflectionAgent = { analyze: async (input) => {
   }
   if (input.lens.id === 'domain-knowledge') {
     const id = input.reflectionId.replaceAll('_', '-');
-    await input.writeProposalFile?.(`subject-knowledge/${id}.md`, `---\nid: ${id}\ntitle: Evidence location\nsummary: Keep source locations.\ntopics: [evidence]\n---\n\nKeep source locations for every extracted fact.\n`, ids, '记录每条事实的证据位置');
-    return { outcome: 'proposal', analysis: '应保留证据位置。', attribution: '这个 Work 中出现了证据定位问题。', proposalMessage: '记录每条事实的证据位置', citedEventIds: ids, edits: [] };
+    await input.writeDraftFile?.(`subject-knowledge/${id}.md`, `---\nid: ${id}\ntitle: Evidence location\nsummary: Keep source locations.\ntopics: [evidence]\n---\n\nKeep source locations for every extracted fact.\n`, ids, '记录每条事实的证据位置');
+    return { outcome: 'changes', analysis: '应保留证据位置。', attribution: '这个 Work 中出现了证据定位问题。', changeSummary: '记录每条事实的证据位置', citedEventIds: ids, edits: [] };
   }
   if (input.lens.id === 'api-suggestion') return { outcome: 'api-suggestion', analysis: '需要证据位置能力。', attribution: '能力缺口', citedEventIds: ids, suggestionMarkdown: '# API Suggestion\n\nAdd report.evidence-location.' };
   return { outcome: 'analysis', analysis: '可以继续讨论这个 Work。', attribution: '', citedEventIds: ids };
 } };
-runtime.useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omDrafts: runtime.db, organization: runtime.db, measurements: runtime.db, app: runtime.app, organizationId: runtime.config.organizationId, catalogs: runtime.db, agents: { runWork: async () => ({ text: 'Fixture response' }) }, reflectionAgent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: new Set() });
+runtime.useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omChanges: runtime.omChanges, omDrafts: runtime.db, organization: runtime.db, measurements: runtime.db, app: runtime.app, organizationId: runtime.config.organizationId, catalogs: runtime.db, agents: { runWork: async () => ({ text: 'Fixture response' }) }, reflectionAgent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: new Set() });
 const password = 'MUI-browser-password-123';
 const setupUser = runtime.db.ensureUser('mui-setup@example.invalid', false);
 runtime.om.ensureUserBranch(setupUser.id);
@@ -78,10 +78,8 @@ const catalog = { ...testCatalog('mui-accepted'), id: 'mui-catalog' };
 runtime.db.saveCandidate(catalog, { paths: {} }); runtime.db.accept('certlab', catalog.digest, admin.id);
 runtime.db.saveCandidate({ ...catalog, id: 'mui-candidate', digest: 'mui-candidate', capabilities: [...catalog.capabilities, { id: 'report.evidence-location', kind: 'query', title: 'Evidence location', description: '证据位置', inputSchema: {}, outputSchema: {} }] }, { paths: {} });
 const policy = 'work-definitions/report-authoring/policy.md';
-const source = createTestProposal(runtime, owner.id, '分享证据定位方法', 'Work reference');
-await runtime.useCases.writePersonalProposal(owner.id, source.id, policy, runtime.om.document(source.baseRevision, policy) + '\n\nPreserve evidence source locations.\n');
-const sourceReview = await runtime.useCases.reviewPersonalProposal(owner.id, source.id);
-await runtime.useCases.adoptPersonalProposal(owner.id, source.id, 'Shared policy', sourceReview.reviewedRevision);
+const base = runtime.om.head(`users/${owner.id}`);
+await createTestOmCommit(runtime, owner.id, [{ path: policy, content: runtime.om.document(base, policy) + '\n\nPreserve evidence source locations.\n' }], 'Shared policy');
 const contribution = await runtime.useCases.createOrganizationContribution(admin.id, owner.id, '分享证据定位方法', 'Work reference');
 // Leave this contribution open for the full governance flow in the browser.
 for (let index = 0; index < 45; index++) {

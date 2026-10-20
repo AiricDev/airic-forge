@@ -26,12 +26,12 @@ it("preserves the server status and message and handles empty success", async ()
     vi
       .fn()
       .mockResolvedValueOnce(
-        new Response('{"error":"ProposalBaseChanged"}', { status: 409 }),
+        new Response('{"error":"ActiveRevisionChanged"}', { status: 409 }),
       )
       .mockResolvedValueOnce(new Response(null, { status: 204 })),
   );
   await expect(command("/adopt")).rejects.toEqual(
-    new ApiError("ProposalBaseChanged", 409),
+    new ApiError("ActiveRevisionChanged", 409),
   );
   await expect(command("/logout")).resolves.toBeUndefined();
 });

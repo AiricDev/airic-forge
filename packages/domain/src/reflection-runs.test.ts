@@ -72,19 +72,19 @@ test("cancellation waits for an in-flight operation, preserves partial text and 
   await Promise.resolve();
   assert.equal(runs.cancel(input.reflectionId, run.id).status, "cancelling");
   assert.equal(runs.cancel(input.reflectionId, run.id).status, "cancelling");
-  await assert.rejects(() => runs.mutateProposal(input.reflectionId, async () => undefined), /ReflectionAlreadyRunning/);
+  await assert.rejects(() => runs.mutateDraft(input.reflectionId, async () => undefined), /ReflectionAlreadyRunning/);
   barrier.release();
   const settled = await runs.wait(input.reflectionId, run.id);
   assert.equal(settled.status, "cancelled");
   assert.equal(settled.text, "Partial");
   assert.equal(settled.agentMessageId, undefined);
-  await runs.mutateProposal(input.reflectionId, async () => undefined);
+  await runs.mutateDraft(input.reflectionId, async () => undefined);
 });
 
 test("Proposal mutation excludes starting a run, completion wins after the commit boundary", async () => {
   const { runs } = fixture();
   const barrier = gate();
-  const mutation = runs.mutateProposal(input.reflectionId, async () => barrier.promise);
+  const mutation = runs.mutateDraft(input.reflectionId, async () => barrier.promise);
   assert.throws(() => runs.start(input, async () => undefined), /ReflectionAlreadyRunning/);
   barrier.release();
   await mutation;
@@ -123,7 +123,7 @@ test("acceptance holds the mutation lock, deduplicates concurrent requests, and 
   const barrier = gate();
   const first = runs.startPrepared(input, async () => barrier.promise, async () => "agent");
   const second = runs.startPrepared(input, async () => { throw new Error("Must not validate twice"); }, async () => "agent");
-  await assert.rejects(() => runs.mutateProposal(input.reflectionId, async () => undefined), /ReflectionAlreadyRunning/);
+  await assert.rejects(() => runs.mutateDraft(input.reflectionId, async () => undefined), /ReflectionAlreadyRunning/);
   assert.equal(records.size, 0);
   barrier.release();
   const accepted = await first;

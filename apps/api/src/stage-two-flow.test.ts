@@ -39,7 +39,8 @@ test("accepted catalog and real Git/SQLite/JSONL keep a report command and its T
   const agents: AgentRunnerPort = { runWork: async ({ context, documents, tools, onText }) => {
     assert.equal((context.resource as Record<string, unknown>).projectId, "project-1");
     assert.deepEqual(documents.map((item) => item.id), ["policy", "method", "recovery"]);
-    assert.deepEqual(tools.map((item) => item.capability.id), ids);
+    assert.deepEqual(tools.map((item) => item.capability.id), runtime.om.workDefinition(runtime.om.head("main"), "report-authoring").capabilities.allowed);
+    assert(tools.every((tool) => ids.includes(tool.capability.id)));
     const output = await tools.find((item) => item.capability.id === "assessment.save-draft")!.invoke({ assessment_id: "assessment-1", data: {}, expected_record_no: 3 });
     assert.equal(output.status, "committed");
     onText?.("Saved");

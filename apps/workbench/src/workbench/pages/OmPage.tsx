@@ -20,9 +20,9 @@ import type {
   OmFile,
   OmManifest,
   OmSnapshot,
-  ProposalDetail,
   User,
 } from "../types";
+import { OmDraftReview } from "../OmDraftReview";
 import { command } from "../api";
 import { useCommand, useResource } from "../hooks";
 import {
@@ -61,14 +61,13 @@ export function OmPage({
   users,
   branch,
   selectBranch,
-  openSync,
 }: {
   user: User;
   users: User[];
   branch: string;
   selectBranch: (value: string) => void;
-  openSync: (id: string) => void;
 }) {
+  const [scope, setScope] = useState("manual");
   const [revision, setRevision] = useState("");
   const [path, setPath] = useState("");
   const [editing, setEditing] = useState(false);
@@ -88,6 +87,9 @@ export function OmPage({
     commits: OmCommit[];
   }>(`${base}/history`);
   const own = branch === user.id;
+  const workspaces = useResource<{
+    workspaces: Array<{ scope: string; summary: string }>;
+  }>(own ? "/api/v1/om/workspaces" : null);
   const drafts = useResource<{
     drafts: OmDraft[];
   }>(own ? `${base}/drafts` : null);
@@ -184,10 +186,9 @@ export function OmPage({
               disabled={c.busy}
               onClick={() =>
                 void c.run(async () => {
-                  const d = await command<ProposalDetail>(
-                    "/api/v1/organization/sync",
-                  );
-                  openSync(d.proposal.id);
+                  await command("/api/v1/om/sync");
+                  setScope("sync");
+                  selectBranch(user.id);
                 })
               }
             >
@@ -273,8 +274,7 @@ export function OmPage({
                     <Typography color="text.secondary">暂无草稿</Typography>
                   )}
                   <Typography variant="body2" color="text.secondary">
-                    草稿不影响运行时；新的 OM 版本由 Reflection Proposal
-                    采纳产生。
+                    草稿不影响运行时，确认提交后才会形成新版本。
                   </Typography>
                 </>
               )}
@@ -369,8 +369,7 @@ export function OmPage({
               {editing ? (
                 <>
                   <Alert severity="info">
-                    草稿不影响运行时；只有采纳 Reflection Proposal 才会形成新 OM
-                    版本。
+                    草稿不影响运行时；确认提交后才会形成新 OM 版本。
                   </Alert>
                   <TextField
                     label={`编辑 ${path}`}
@@ -409,6 +408,42 @@ export function OmPage({
             </Stack>
           </Paper>
         </Box>
+      )}
+      {own && (
+        <Paper sx={{ p: 3 }}>
+          <TextField
+            select
+            fullWidth
+            label="草稿来源"
+            value={scope}
+            onChange={(event) => guard(() => setScope(event.target.value))}
+          >
+            <MenuItem value="manual">手动编辑草稿</MenuItem>
+            <MenuItem value="sync">组织同步草稿</MenuItem>
+            {workspaces.data?.workspaces
+              .filter(
+                (draft) => draft.scope !== "manual" && draft.scope !== "sync",
+              )
+              .map((draft) => (
+                <MenuItem key={draft.scope} value={draft.scope}>
+                  {draft.scope} · {draft.summary}
+                </MenuItem>
+              ))}
+          </TextField>
+          <OmDraftReview
+            key={scope}
+            scope={scope}
+            canWrite={own}
+            refreshKey={drafts.data}
+            onChanged={() => {
+              snapshot.reload();
+              history.reload();
+              drafts.reload();
+              file.reload();
+              workspaces.reload();
+            }}
+          />
+        </Paper>
       )}
       <ConfirmDialog
         open={discard}

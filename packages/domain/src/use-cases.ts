@@ -1,8 +1,9 @@
 import { isAllowedOmDocumentPath, isAllowedProposalPath, validateWorkDefinition } from "./operating-model.js";
 import { materialObservation } from "./materials.js";
 import { assembleWorkMemory, pinnedWorkFacts, conversationMessages, CONTEXT_POLICY_VERSION, type WorkContextPorts } from "./work-context.js";
-import type { AccountPort, AgentRunnerPort, AppSessionPort, AppPort, AppCommandLocator, CatalogPort, EvidenceExtractorPort, EvidenceSessionPort, MeasurementPort, OmDraftPort, OperatingModelPort, OrganizationContributionPort, PasswordCodecPort, PasswordSetupPort, ProposalListFilters, ProposalRecord, ReflectionAgentPort, ReflectionRunStore, ReflectionLens, ReflectionRecord, SessionGrant, SystemPort, TrajectoryPort, WorkFeedbackKind, WorkListFilters, WorkPort, WorkAgentTool, WorkActivity } from "./ports.js";
+import type { AccountPort, AgentRunnerPort, AppSessionPort, AppPort, AppCommandLocator, CatalogPort, EvidenceExtractorPort, EvidenceSessionPort, MeasurementPort, OmDraftPort, OperatingModelPort, OrganizationContributionPort, PasswordCodecPort, PasswordSetupPort, ReflectionAgentPort, ReflectionRunStore, ReflectionLens, ReflectionRecord, SessionGrant, SystemPort, TrajectoryPort, WorkFeedbackKind, WorkListFilters, WorkPort, WorkAgentTool, WorkActivity } from "./ports.js";
 
+import { PersonalOmChanges } from "./om-changes.js";
 import { ReflectionRuns, type ReflectionExecution } from "./reflection-runs.js";
 
 const lenses = new Set(["domain-knowledge", "delegation-gap", "api-suggestion"]);
@@ -16,7 +17,9 @@ export class ForgeUseCases {
   private readonly workRuns = new Map<string, { controller: AbortController; done: Promise<void>; finish: () => void }>();
   private readonly runningReflections = new Set<string>();
   readonly reflectionRuns?: ReflectionRuns;
-  constructor(private readonly ports: { accounts: AccountPort; works: WorkPort; om: OperatingModelPort; reportWorkDefinitionId?: string; omDrafts?: OmDraftPort; organization?: OrganizationContributionPort; measurements?: MeasurementPort; app: AppPort; organizationId?: string; catalogs: CatalogPort; agents: AgentRunnerPort; reflectionAgent?: ReflectionAgentPort; reflectionRunStore?: ReflectionRunStore; sessions: AppSessionPort; evidenceExtractor?: EvidenceExtractorPort; evidenceSessions?: EvidenceSessionPort; passwordSetups: PasswordSetupPort; passwordCodec: PasswordCodecPort; trajectories: TrajectoryPort; system: SystemPort; initialAdminEmails: Set<string>; workContext?: WorkContextPorts; }) {
+  readonly omChanges?: PersonalOmChanges;
+  constructor(private readonly ports: { accounts: AccountPort; works: WorkPort; om: OperatingModelPort; omChanges?: PersonalOmChanges; reportWorkDefinitionId?: string; omDrafts?: OmDraftPort; organization?: OrganizationContributionPort; measurements?: MeasurementPort; app: AppPort; organizationId?: string; catalogs: CatalogPort; agents: AgentRunnerPort; reflectionAgent?: ReflectionAgentPort; reflectionRunStore?: ReflectionRunStore; sessions: AppSessionPort; evidenceExtractor?: EvidenceExtractorPort; evidenceSessions?: EvidenceSessionPort; passwordSetups: PasswordSetupPort; passwordCodec: PasswordCodecPort; trajectories: TrajectoryPort; system: SystemPort; initialAdminEmails: Set<string>; workContext?: WorkContextPorts; }) {
+    this.omChanges = ports.omChanges;
     if (ports.reflectionRunStore) this.reflectionRuns = new ReflectionRuns(ports.reflectionRunStore, ports.system);
   }
 
@@ -534,8 +537,31 @@ export class ForgeUseCases {
 
   async reflectionDetail(actorUserId: string, reflectionId: string) {
     const reflection = await this.readableReflection(actorUserId, reflectionId);
-    const [messages, proposal] = await Promise.all([this.ports.works.reflectionMessages(reflectionId), this.ports.works.proposalForReflection(reflectionId)]);
-    return { reflection, messages, proposal };
+    const messages = await this.ports.works.reflectionMessages(reflectionId);
+    const draft = this.omChanges ? await this.omChanges.read(reflection.ownerUserId, `reflection:${reflectionId}`) : undefined;
+    return { reflection, messages, draft };
+  }
+
+  async personalReflections(actorUserId: string) {
+    if (!await this.ports.accounts.userById(actorUserId)) throw new Error("Unauthorized");
+    return this.ports.works.reflectionsForUser(actorUserId);
+  }
+  async openPersonalReflection(actorUserId: string, question: string) {
+    if (!await this.ports.accounts.userById(actorUserId)) throw new Error("Unauthorized");
+    if (typeof question !== "string" || !question.trim() || question.length > 4000) throw new Error("ReflectionMessageRequired");
+    await this.ports.om.ensureUserBranch(actorUserId);
+    const omRevision = await this.ports.om.head(`users/${actorUserId}`);
+    const reflection = await this.ports.works.openReflection({ ownerUserId: actorUserId, lensId: "conversation", lensVersion: 0, lensPrompt: "", question: question.trim(), evidenceEventIds: [], omRevision }, "可以在这里讨论工作方法和领域知识。明确要求修改时，我会准备 OM 草稿；只有你确认提交后才会生效。");
+    return this.reflectionDetail(actorUserId, reflection.id);
+  }
+  async mutateOmDraft<T>(actorUserId: string, scope: string, action: () => Promise<T>): Promise<T> {
+    const reflectionId = scope.startsWith("reflection:") ? scope.slice(11) : undefined;
+    if (reflectionId) {
+      const reflection = await this.readableReflection(actorUserId, reflectionId);
+      if (reflection.ownerUserId !== actorUserId) throw new Error("ReflectionNotOwned");
+      if (this.runningReflections.has(reflectionId)) throw new Error("ReflectionAlreadyRunning");
+    }
+    return this.reflectionRuns ? this.reflectionRuns.mutateDraft(reflectionId, action) : action();
   }
 
   async openWorkReflection(actorUserId: string, workId: string) {
@@ -617,7 +643,7 @@ export class ForgeUseCases {
   private async prepareReflection(actorUserId: string, reflectionId: string, message: string): Promise<ReflectionPreparation> {
     const reflection = await this.readableReflection(actorUserId, reflectionId);
     if (reflection.ownerUserId !== actorUserId) throw new Error("ReflectionNotOwned");
-    if (reflection.status === "abandoned" || reflection.status === "completed") throw new Error("ReflectionClosed");
+    if (reflection.status === "abandoned") throw new Error("ReflectionClosed");
     if (typeof message !== "string" || !message.trim() || message.length > 4000) throw new Error("ReflectionMessageRequired");
     const conversational = reflection.lensId === "conversation" || (await this.ports.works.reflectionMessages(reflectionId)).some((item) => item.role === "user" && /^\/(?:lens\s+)?(?:domain-knowledge|delegation-gap|api-suggestion)(?:\s|$)/.test(item.content));
     const invokedLens = conversational ? await this.reflectionCommand(message) : undefined;
@@ -625,33 +651,19 @@ export class ForgeUseCases {
   }
 
   private async executeReflection(actorUserId: string, reflectionId: string, message: string, execution?: ReflectionExecution, preparation?: ReflectionPreparation) {
-    const { reflection, conversational, invokedLens } = preparation ?? await this.prepareReflection(actorUserId, reflectionId, message);
+    const { reflection, invokedLens } = preparation ?? await this.prepareReflection(actorUserId, reflectionId, message);
+    if (!this.omChanges) throw new Error("OmChangesUnavailable");
     if (this.runningReflections.has(reflectionId)) throw new Error("ReflectionAlreadyRunning");
     this.runningReflections.add(reflectionId);
     try {
       execution?.signal.throwIfAborted();
       if (!execution) await this.ports.works.appendReflectionMessage(reflectionId, "user", message.trim());
-      const events = await this.ports.trajectories.read(reflection.workId);
-      const selected = conversational ? [] : reflection.evidenceEventIds.map((id) => events.find((event) => event.id === id));
-      if (selected.some((event) => !event)) throw new Error("ReflectionEvidenceMismatch");
-      if (!conversational && selected.length === 0) {
-        const analysis = "未选择 Work 轨迹证据。请从该 Work 选择事件后重新发起 Reflection；当前分析已保存，未创建 Proposal。";
-        execution?.commit();
-        execution?.onProgress({ type: "text.replace", text: analysis });
-        await this.ports.works.appendReflectionMessage(reflectionId, "agent", analysis);
-        await this.ports.works.setReflectionResult(reflectionId, { status: "insufficient_evidence", outcome: "analysis", analysis, attribution: "无来源事件" });
-        return this.reflectionDetail(actorUserId, reflectionId);
-      }
-      if (!this.ports.reflectionAgent) throw new Error("ReflectionAgentNotConfigured");
-      let proposal = await this.ports.works.proposalForReflection(reflectionId);
-      const sourceWork = await this.ports.works.work(reflection.workId);
-      if (!sourceWork) throw new Error("WorkNotFound");
-      const workDefinitionId = this.workDefinitionId(sourceWork.workType);
-      const files = await this.ports.om.listFiles(reflection.omRevision);
-      const relevant = files.filter((path) => path.startsWith(`work-definitions/${workDefinitionId}/`) || path.startsWith("subject-knowledge/") || path.startsWith("precedents/"));
-      const documents = await Promise.all(relevant.map(async (path) => ({ path, content: await this.ports.om.document(reflection.omRevision, path) })));
-      const lens: ReflectionLens = conversational ? invokedLens ?? { id: "conversation", version: 0, enabled: true, prompt: "Discuss the user's Work and answer without proposing an OM change unless a lens command is invoked." } : { id: reflection.lensId as ReflectionLens["id"], version: reflection.lensVersion, enabled: true, prompt: reflection.lensPrompt };
-      const disclosed = new Set((selected as NonNullable<typeof selected[number]>[]).map((event) => event.id));
+      const scope = `reflection:${reflectionId}`;
+      const draft = await this.omChanges.read(actorUserId, scope);
+      await this.ports.works.setReflectionRevision(reflectionId, draft.baseRevision);
+      const events = reflection.workId ? await this.ports.trajectories.read(reflection.workId) : [];
+      const selected = reflection.evidenceEventIds.map((id) => events.find((event) => event.id === id)).filter((event) => event !== undefined);
+      const disclosed = new Set(selected.map((event) => event.id));
       const readTrajectory = async (offset: number, limit: number) => {
         execution?.signal.throwIfAborted();
         if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 20) throw new Error("InvalidTrajectoryPage");
@@ -660,85 +672,58 @@ export class ForgeUseCases {
         for (const event of page) disclosed.add(event.id);
         return page;
       };
-      const allowedPath = (path: string) => isAllowedProposalPath(path) && (lens.id === "domain-knowledge" ? /^(subject-knowledge|precedents)\//.test(path) : lens.id === "delegation-gap" && path.startsWith(`work-definitions/${workDefinitionId}/`));
-      const readProposalFile = async (path: string) => {
+      const sourceWork = reflection.workId ? await this.ports.works.work(reflection.workId) : undefined;
+      const files = await this.ports.om.listFiles(draft.baseRevision);
+      const documents = await Promise.all(files.map(async (path) => ({ path, content: await this.ports.om.document(draft.baseRevision, path) })));
+      const lens: ReflectionLens = invokedLens ?? { id: "conversation", version: 0, enabled: true, prompt: "Discuss improvements to the owner's Operating Model. Prepare draft edits only when the user explicitly requests a change. Never commit automatically." };
+      const readDraftFile = async (path: string) => {
         execution?.signal.throwIfAborted();
-        if (!allowedPath(path)) throw new Error("InvalidReflectionProposal");
-        return proposal ? this.ports.om.proposalFile(proposal.worktreePath, path) : this.ports.om.document(reflection.omRevision, path);
+        if (!isAllowedOmDocumentPath(path)) throw new Error("OmPathNotAllowed");
+        const edit = (await this.omChanges!.read(actorUserId, scope)).edits.find((edit) => edit.path === path);
+        return edit ? edit.content ?? "" : this.ports.om.document(draft.baseRevision, path);
       };
-      const writeProposalFile = async (path: string, content: string, citedEventIds: string[], proposalMessage: string) => {
+      const writeDraftFile = async (path: string, content: string, citedEventIds: string[], summary: string) => {
         execution?.signal.throwIfAborted();
-        if (!allowedPath(path) || !content.trim() || content.length > 100_000 || !proposalMessage.trim() || proposalMessage.length > 1000) throw new Error("InvalidReflectionProposal");
-        if (!Array.isArray(citedEventIds) || !citedEventIds.length || citedEventIds.some((id) => !disclosed.has(id))) throw new Error("ReflectionEvidenceMismatch");
-        if (proposal?.status === "adopted") throw new Error("ReflectionProposalAlreadyAdopted");
-        if (!proposal) {
-          const proposalId = this.ports.system.id("prp");
-          const proposalGit = await this.ports.om.createProposal(actorUserId, proposalId, reflection.omRevision);
-          proposal = await this.ports.works.createProposal({ id: proposalId, reflectionId, workId: reflection.workId, ownerUserId: actorUserId, baseRevision: reflection.omRevision, branchRef: proposalGit.branch, worktreePath: proposalGit.worktree, status: "open", source: `reflection:${reflectionId}`, reason: proposalMessage.trim(), evidence: citedEventIds.join(",") });
-        }
-        await this.ports.om.writeProposalFile(proposal.worktreePath, path, content);
-        if (lens.id === "domain-knowledge") await this.ports.om.makeKnowledgeAvailable(proposal.worktreePath, workDefinitionId, [path]);
-        await this.ports.works.setProposalMessage(proposal.id, proposalMessage.trim(), citedEventIds.join(","));
-        proposal = { ...proposal, reason: proposalMessage.trim(), evidence: citedEventIds.join(",") };
-        await this.ports.works.setProposalReview(proposal.id, undefined);
-        execution?.onProgress({ type: "proposal.updated", proposalId: proposal.id });
+        const lensAllows = lens.id === "conversation"
+          || lens.id === "domain-knowledge" && /^(subject-knowledge|precedents)\//.test(path)
+          || lens.id === "delegation-gap" && path.startsWith(sourceWork ? `work-definitions/${this.workDefinitionId(sourceWork.workType)}/` : "work-definitions/");
+        if (!isAllowedOmDocumentPath(path) || !lensAllows || citedEventIds.some((id) => !disclosed.has(id))) throw new Error("InvalidReflectionChange");
+        const current = await this.omChanges!.read(actorUserId, scope);
+        let edits = [...current.edits.filter((edit) => edit.path !== path), { path, content }];
+        if (sourceWork) edits = this.omChanges!.routeKnowledge(draft.baseRevision, edits, this.workDefinitionId(sourceWork.workType)) as typeof edits;
+        await this.omChanges!.save(actorUserId, scope, { baseRevision: draft.baseRevision, edits, summary });
+        execution?.onProgress({ type: "draft.updated" });
       };
-      const privateDrafts = this.ports.omDrafts && ["domain-knowledge", "delegation-gap"].includes(lens.id)
-        ? (await this.ports.omDrafts.draftsForUser(actorUserId)).filter((draft) => draft.baseRevision === reflection.omRevision && allowedPath(draft.path)).map(({ path, content, baseRevision }) => ({ path, content, baseRevision }))
-        : [];
-      const result = await this.ports.reflectionAgent.analyze({ reflectionId, lens, question: message.trim(), messages: await this.ports.works.reflectionMessages(reflectionId), evidence: selected as NonNullable<typeof selected[number]>[], ...(conversational ? { readTrajectory } : {}), ...(["domain-knowledge", "delegation-gap"].includes(lens.id) ? { readProposalFile, writeProposalFile } : {}), omRevision: reflection.omRevision, documents, privateDrafts, signal: execution?.signal, onProgress: execution?.onProgress });
+      if (!this.ports.reflectionAgent) throw new Error("ReflectionAgentNotConfigured");
+      const result = await this.ports.reflectionAgent.analyze({
+        reflectionId, lens, question: message.trim(), messages: await this.ports.works.reflectionMessages(reflectionId),
+        evidence: selected, ...(reflection.workId ? { readTrajectory } : {}),
+        ...(lens.id !== "api-suggestion" ? { readDraftFile, writeDraftFile } : {}),
+        omRevision: draft.baseRevision, documents,
+        signal: execution?.signal, onProgress: execution?.onProgress,
+      });
       execution?.signal.throwIfAborted();
-      if (!result.analysis.trim() || !Array.isArray(result.citedEventIds) || result.citedEventIds.some((id) => !disclosed.has(id))) throw new Error("ReflectionEvidenceMismatch");
-      if (lens.id === "conversation" && result.outcome !== "analysis") throw new Error("ReflectionLensRequired");
-      if (result.outcome !== "analysis" && (!result.attribution.trim() || !result.citedEventIds.length)) throw new Error("ReflectionAttributionRequired");
-      if (result.outcome === "proposal") {
-        if (lens.id === "api-suggestion" || (result.edits?.length && result.edits.some((edit) => !allowedPath(edit.path))) || (!result.edits?.length && !proposal)) throw new Error("InvalidReflectionProposal");
-        for (const edit of result.edits ?? []) await writeProposalFile(edit.path, edit.content, result.citedEventIds, result.proposalMessage?.trim() || result.attribution);
-        if (!proposal) throw new Error("InvalidReflectionProposal");
-        execution?.signal.throwIfAborted();
-        const unifiedMessage = result.proposalMessage?.trim() || proposal.reason || result.attribution;
-        if (unifiedMessage !== proposal.reason || result.citedEventIds.join(",") !== proposal.evidence) {
-          await this.ports.works.setProposalMessage(proposal.id, unifiedMessage, result.citedEventIds.join(","));
-          await this.ports.works.setProposalReview(proposal.id, undefined);
-        }
+      if (!result.analysis.trim() || result.citedEventIds.some((id) => !disclosed.has(id))) throw new Error("ReflectionEvidenceMismatch");
+      if (result.outcome === "changes") {
+        for (const edit of result.edits ?? []) await writeDraftFile(edit.path, edit.content, result.citedEventIds, result.changeSummary?.trim() || result.attribution);
+        if (!(await this.omChanges.read(actorUserId, scope)).edits.length) throw new Error("InvalidReflectionChange");
       }
       if (result.outcome === "api-suggestion" && (lens.id !== "api-suggestion" || !result.suggestionMarkdown?.trim())) throw new Error("InvalidApiSuggestion");
       execution?.commit();
       execution?.onProgress({ type: "text.replace", text: result.analysis });
       await this.ports.works.appendReflectionMessage(reflectionId, "agent", result.analysis, { lensId: lens.id, lensVersion: lens.version, citedEventIds: result.citedEventIds });
-      if (conversational && invokedLens) await this.ports.works.setReflectionContext(reflectionId, invokedLens, result.citedEventIds);
-      await this.ports.works.setReflectionResult(reflectionId, { status: conversational ? "active" : "completed", outcome: result.outcome, analysis: result.analysis, attribution: result.attribution, ...(result.outcome === "api-suggestion" ? { suggestionMarkdown: result.suggestionMarkdown } : {}) });
+      if (invokedLens) await this.ports.works.setReflectionContext(reflectionId, invokedLens, result.citedEventIds);
+      await this.ports.works.setReflectionResult(reflectionId, { status: "active", outcome: result.outcome, analysis: result.analysis, attribution: result.attribution, ...(result.outcome === "api-suggestion" ? { suggestionMarkdown: result.suggestionMarkdown } : {}) });
       return this.reflectionDetail(actorUserId, reflectionId);
     } catch (error) {
       if (!execution?.signal.aborted) await this.ports.works.setReflectionResult(reflectionId, { status: "failed" });
       throw error;
     } finally { this.runningReflections.delete(reflectionId); }
   }
-
   async reflectionSuggestion(actorUserId: string, reflectionId: string) {
     const reflection = await this.readableReflection(actorUserId, reflectionId);
     if (!reflection.suggestionMarkdown) throw new Error("ApiSuggestionNotFound");
     return reflection.suggestionMarkdown;
-  }
-
-  async writeProposal(ticket: string, proposalId: string, path: string, content: string) {
-    const session = await this.appSession(ticket);
-    await this.ownedProposal(session, proposalId);
-    return this.withProposalMutation(proposalId, async () => {
-      const proposal = await this.ownedProposal(session, proposalId);
-      await this.ports.om.writeProposalFile(proposal.worktreePath, path, content);
-      await this.ports.works.setProposalReview(proposalId, undefined);
-      return { changedPaths: await this.ports.om.proposalChanges(proposal.worktreePath) };
-    });
-  }
-
-  async adoptProposal(ticket: string, proposalId: string, title: string) {
-    const session = await this.appSession(ticket);
-    await this.ownedProposal(session, proposalId);
-    return this.withProposalMutation(proposalId, async () => {
-      const proposal = await this.ownedProposal(session, proposalId);
-      return this.adoptReviewedProposal(proposal, title, proposal.reviewedRevision);
-    });
   }
 
   async organizationOm(actorUserId: string, requestedRevision?: string) {
@@ -792,7 +777,7 @@ export class ForgeUseCases {
   async measurementBaseline(actorUserId: string) {
     await this.requireAdmin(actorUserId);
     const [activity, feedback] = await Promise.all([this.measurementPort().activityCounts(), this.measurementPort().feedbackCounts()]);
-    return { activity, feedback, interpretation: "活动数量不能证明能力改善。反馈来自用户自报；制定目标前需要按工作类型、任务难度、能力目录和模型配置选取可比样本。" };
+    return { activity: { ...activity, personalOmCommits: await this.ports.om.personalCommitCount?.() ?? 0 }, feedback, interpretation: "活动数量不能证明能力改善。反馈来自用户自报；制定目标前需要按工作类型、任务难度、能力目录和模型配置选取可比样本。" };
   }
 
   async compareOrganizationSource(actorUserId: string, authorUserId: string) {
@@ -843,7 +828,7 @@ export class ForgeUseCases {
     const trailer = (value: string) => value.replace(/\s+/g, " ").trim().slice(0, 500);
     const message = ["Accept selected organization OM contribution", "", `AiricForge-Contribution: ${record.id}`, `AiricForge-Author: ${record.authorUserId}`, `AiricForge-Source-Revision: ${record.sourceRevision}`, `AiricForge-Reason: ${trailer(record.reason)}`, `AiricForge-Base: ${mainRevision}`].join("\n");
     const candidate = await this.ports.om.prepareContribution(id, record.sourceRevision, comparison.baseRevision, mainRevision, selectedPaths, message);
-    await this.validateProposalCandidate(candidate.revision);
+    await this.validateOmCandidate(candidate.revision);
     await organization.reviewContribution(id, selectedPaths, candidate.branch, candidate.worktree, candidate.revision, mainRevision);
     return { ...record, status: "reviewed" as const, selectedPaths, candidateBranch: candidate.branch, reviewedRevision: candidate.revision };
   }
@@ -862,112 +847,10 @@ export class ForgeUseCases {
     }
     if (activeMain !== record.baseMainRevision) throw new Error("OrganizationReviewStale");
     if (await this.ports.om.head(record.candidateBranch) !== reviewedRevision || (await this.ports.om.proposalChanges(record.candidateWorktree!)).length) throw new Error("ContributionChangedAfterReview");
-    await this.validateProposalCandidate(reviewedRevision);
+    await this.validateOmCandidate(reviewedRevision);
     const revision = await this.ports.om.acceptContribution(record.candidateBranch, record.baseMainRevision);
     await organization.acceptContribution(id, revision);
     return { revision };
-  }
-
-  async createOrganizationSync(actorUserId: string) {
-    const user = await this.ports.accounts.userById(actorUserId);
-    if (!user) throw new Error("Unauthorized");
-    const workspace = await this.ports.om.ensureUserBranch(user.id);
-    const baseRevision = await this.ports.om.head(workspace.branch);
-    const upstreamRevision = await this.ports.om.head("main");
-    if (baseRevision === upstreamRevision || await this.ports.om.includesRevision(workspace.branch, upstreamRevision)) throw new Error("OrganizationAlreadyCurrent");
-    const id = this.ports.system.id("prp");
-    const git = await this.ports.om.createProposal(user.id, id, baseRevision);
-    const proposal = await this.ports.works.createProposal({ id, ownerUserId: user.id, baseRevision, branchRef: git.branch, worktreePath: git.worktree, status: "open", source: "organization-sync", reason: "Synchronize organization OM", evidence: "", upstreamRevision });
-    try { await this.ports.om.synchronizeProposal(git.worktree, baseRevision, upstreamRevision); }
-    catch (error) { if (!(error instanceof Error && error.message.startsWith("ProposalRebaseConflict"))) throw error; }
-    return this.personalProposal(actorUserId, proposal.id);
-  }
-
-  async personalProposals(actorUserId: string, ownerUserId: string) {
-    await this.authorizedOmOwner(actorUserId, ownerUserId);
-    return this.ports.works.proposalsForUser(ownerUserId);
-  }
-
-  async listProposals(actorUserId: string, filters: ProposalListFilters, page = 1) {
-    if (!Number.isSafeInteger(page) || page < 1 || page > 100_000) throw new Error("InvalidProposalPage");
-    if (filters.status && !["open", "adopted", "abandoned"].includes(filters.status)) throw new Error("InvalidProposalFilter");
-    if (filters.source && !["personal", "reflection", "organization-sync"].includes(filters.source)) throw new Error("InvalidProposalFilter");
-    if (filters.ownerUserId) await this.authorizedOmOwner(actorUserId, filters.ownerUserId);
-    else await this.requireAdmin(actorUserId);
-    const pageSize = 20;
-    const { proposals, total } = await this.ports.works.proposalsPage(filters, (page - 1) * pageSize, pageSize);
-    return { proposals, page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
-  }
-
-  async personalProposal(actorUserId: string, proposalId: string) {
-    const proposal = await this.readableProposal(actorUserId, proposalId);
-    const activeRevision = await this.ports.om.head(`users/${proposal.ownerUserId}`);
-    return { proposal, activeRevision, reflectionRunning: Boolean(proposal.reflectionId && (this.reflectionRuns?.busy(proposal.reflectionId) || this.runningReflections.has(proposal.reflectionId))), changedPaths: await this.ports.om.proposalChangedPaths(proposal.worktreePath, proposal.baseRevision), conflicts: await this.ports.om.proposalConflicts(proposal.worktreePath), diff: await this.ports.om.proposalDiff(proposal.worktreePath, proposal.baseRevision) };
-  }
-
-  async personalProposalFile(actorUserId: string, proposalId: string, path: string) {
-    const proposal = await this.readableProposal(actorUserId, proposalId);
-    return { path, content: await this.ports.om.proposalFile(proposal.worktreePath, path) };
-  }
-
-  async writePersonalProposal(actorUserId: string, proposalId: string, path: string, content: string) {
-    return this.withProposalMutation(proposalId, async () => {
-      const proposal = await this.editableProposal(actorUserId, proposalId);
-      await this.ports.om.writeProposalFile(proposal.worktreePath, path, content);
-      await this.ports.works.setProposalReview(proposalId, undefined);
-      return this.personalProposal(actorUserId, proposalId);
-    }, actorUserId);
-  }
-
-  async reviewPersonalProposal(actorUserId: string, proposalId: string) {
-    return this.withProposalMutation(proposalId, async () => {
-      const proposal = await this.editableProposal(actorUserId, proposalId);
-      if (await this.ports.om.head(`users/${actorUserId}`) !== proposal.baseRevision) throw new Error("ActiveRevisionChanged: rebase required");
-      if (proposal.upstreamRevision && await this.ports.om.head("main") !== proposal.upstreamRevision) throw new Error("OrganizationRevisionChanged: restart synchronization");
-      if ((await this.ports.om.proposalConflicts(proposal.worktreePath)).length) throw new Error("ProposalRebaseConflict");
-      const changedPaths = await this.ports.om.proposalChangedPaths(proposal.worktreePath, proposal.baseRevision);
-      if (!changedPaths.length) throw new Error("ProposalHasNoChanges");
-      if (changedPaths.some((path) => !isAllowedProposalPath(path))) throw new Error("ProposalPathNotAllowed");
-      if ((await this.ports.om.proposalChanges(proposal.worktreePath)).length) await this.ports.om.commitProposal(proposal.worktreePath, "Review AiricForge Proposal");
-      const candidate = await this.ports.om.head(proposal.branchRef);
-      await this.validateProposalCandidate(candidate);
-      await this.ports.works.setProposalReview(proposalId, candidate);
-      return { reviewedRevision: candidate, ...(await this.personalProposal(actorUserId, proposalId)) };
-    }, actorUserId);
-  }
-
-  async adoptPersonalProposal(actorUserId: string, proposalId: string, title: string, reviewedRevision: string) {
-    return this.withProposalMutation(proposalId, async () => {
-      const proposal = await this.editableProposal(actorUserId, proposalId);
-      return this.adoptReviewedProposal(proposal, title, reviewedRevision);
-    }, actorUserId);
-  }
-
-  async abandonPersonalProposal(actorUserId: string, proposalId: string) {
-    return this.withProposalMutation(proposalId, async () => {
-      const proposal = await this.editableProposal(actorUserId, proposalId);
-      if (!proposal.reflectionId) throw new Error("OnlyReflectionProposalCanBeAbandoned");
-      await this.ports.works.abandonReflectionProposal(proposal.id, proposal.reflectionId, "Proposal 已放弃，未创建 OM commit。Reflection 对话保留为历史记录。");
-      return this.personalProposal(actorUserId, proposalId);
-    }, actorUserId);
-  }
-
-  async rebasePersonalProposal(actorUserId: string, proposalId: string) {
-    return this.withProposalMutation(proposalId, async () => {
-      const proposal = await this.editableProposal(actorUserId, proposalId);
-      const activeRevision = await this.ports.om.head(`users/${actorUserId}`);
-      if (proposal.upstreamRevision) {
-        if (await this.ports.om.head("main") !== proposal.upstreamRevision || activeRevision !== proposal.baseRevision) throw new Error("OrganizationRevisionChanged: restart synchronization");
-        await this.ports.works.setProposalReview(proposalId, undefined);
-        await this.ports.om.synchronizeProposal(proposal.worktreePath, proposal.baseRevision, proposal.upstreamRevision);
-        return this.personalProposal(actorUserId, proposalId);
-      }
-      if (activeRevision === proposal.baseRevision) return this.personalProposal(actorUserId, proposalId);
-      await this.ports.works.setProposalReview(proposalId, undefined);
-      await this.ports.om.rebaseProposal(proposal.worktreePath, proposal.baseRevision, activeRevision);
-      await this.ports.works.updateProposalBase(proposalId, activeRevision);
-      return this.personalProposal(actorUserId, proposalId);
-    }, actorUserId);
   }
 
   async completeWork(ticket: string, workId: string): Promise<void> { const session = await this.appSession(ticket); if (session.workId !== workId) throw new Error("WorkNotOwned"); await this.assertActiveWork(session); await this.ports.works.completeWork(session.workId); await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId, type: "message", at: this.ports.system.now(), payload: { kind: "work.completed", sessionId: session.sessionId } }); }
@@ -998,12 +881,6 @@ export class ForgeUseCases {
     await this.authorizedOmOwner(actorUserId, work.ownerUserId);
     const [turns, events] = await Promise.all([this.ports.works.turnsForWork(workId), this.ports.trajectories.read(workId)]);
     return { work, turns, events };
-  }
-  async workProposals(actorUserId: string, workId: string) {
-    const work = await this.ports.works.work(workId);
-    if (!work) throw new Error("WorkNotFound");
-    await this.authorizedOmOwner(actorUserId, work.ownerUserId);
-    return this.ports.works.proposalsForWork(workId);
   }
   async personalOm(actorUserId: string, ownerUserId: string, requestedRevision?: string) {
     const owner = await this.authorizedOmOwner(actorUserId, ownerUserId);
@@ -1043,7 +920,11 @@ export class ForgeUseCases {
     if (!snapshot.files.includes(path)) throw new Error("OmFileNotFound");
     if (!this.ports.omDrafts) throw new Error("OmDraftsUnavailable");
     const draft = { ownerUserId, path, content, baseRevision, updatedAt: this.ports.system.now() };
-    await this.ports.omDrafts.saveDraft(draft);
+    if (this.omChanges) {
+      const workspace = await this.omChanges.read(actorUserId, "manual");
+      await this.omChanges.save(actorUserId, "manual", { baseRevision, summary: workspace.summary || "Update personal OM", edits: [...workspace.edits.filter((edit) => edit.path !== path), { path, content }] });
+    }
+    else await this.ports.omDrafts.saveDraft(draft);
     return draft;
   }
 
@@ -1052,7 +933,11 @@ export class ForgeUseCases {
     await this.personalOm(actorUserId, ownerUserId);
     if (!isAllowedProposalPath(path)) throw new Error("InvalidOmPath");
     if (!this.ports.omDrafts) throw new Error("OmDraftsUnavailable");
-    await this.ports.omDrafts.discardDraft(ownerUserId, path);
+    if (this.omChanges) {
+      const workspace = await this.omChanges.read(actorUserId, "manual");
+      if (workspace.edits.length) await this.omChanges.save(actorUserId, "manual", { baseRevision: workspace.baseRevision, summary: workspace.summary, edits: workspace.edits.filter((edit) => edit.path !== path) });
+    }
+    else await this.ports.omDrafts.discardDraft(ownerUserId, path);
   }
 
   private async omManifest(snapshot: { revision: string; files: string[] }, path: string) {
@@ -1082,7 +967,7 @@ export class ForgeUseCases {
     }
     return [...latest.values()].filter((item) => item.status === "pending" || item.status === "unknown");
   }
-  private async validateProposalCandidate(candidate: string): Promise<void> {
+  private async validateOmCandidate(candidate: string): Promise<void> {
     const catalog = await this.ports.catalogs.accepted("certlab");
     if (!catalog) throw new Error("CapabilityCatalogNotAccepted");
     const issues = await this.ports.om.knowledgeIssues(candidate);
@@ -1100,55 +985,12 @@ export class ForgeUseCases {
     }
     if (issues.length) throw new Error(`InvalidOperatingModel: ${issues.map((issue) => `${issue.path} ${issue.message}`).join("; ")}`);
   }
-  private async adoptReviewedProposal(proposal: ProposalRecord, title: string, reviewedRevision?: string) {
-    const commitTitle = proposal.reflectionId ? proposal.reason.replace(/\s+/g, " ").trim().slice(0, 160) : title.trim();
-    if (!commitTitle) throw new Error("ProposalTitleRequired");
-    if (!reviewedRevision || proposal.reviewedRevision !== reviewedRevision) throw new Error("ProposalReviewRequired");
-    if (await this.ports.om.head(`users/${proposal.ownerUserId}`) !== proposal.baseRevision) throw new Error("ActiveRevisionChanged: rebase required");
-    if (await this.ports.om.head(proposal.branchRef) !== reviewedRevision || (await this.ports.om.proposalChanges(proposal.worktreePath)).length) throw new Error("ProposalChangedAfterReview");
-    const changedPaths = await this.ports.om.proposalChangedPaths(proposal.worktreePath, proposal.baseRevision);
-    if (!changedPaths.length || changedPaths.some((path) => !isAllowedProposalPath(path))) throw new Error("InvalidProposalChanges");
-    await this.validateProposalCandidate(reviewedRevision);
-    const userWorkspace = await this.ports.om.ensureUserBranch(proposal.ownerUserId);
-    const trailer = (value: string) => value.replace(/\s+/g, " ").trim().slice(0, 500);
-    const trailers = {
-      "AiricForge-Proposal": proposal.id,
-      "AiricForge-Title": trailer(commitTitle),
-      ...(proposal.reflectionId ? { "AiricForge-Reflection": proposal.reflectionId } : {}),
-      "AiricForge-Source": trailer(proposal.source),
-      "AiricForge-Reason": trailer(proposal.reason),
-      ...(proposal.evidence ? { "AiricForge-Evidence": trailer(proposal.evidence) } : {}),
-      "AiricForge-Base": proposal.baseRevision,
-    };
-    const revision = proposal.upstreamRevision
-      ? await this.ports.om.adoptSynchronizedProposal(userWorkspace.branch, userWorkspace.worktree, proposal.branchRef, proposal.baseRevision, proposal.upstreamRevision, trailers)
-      : await this.ports.om.adoptProposal(userWorkspace.branch, userWorkspace.worktree, proposal.branchRef, proposal.baseRevision, trailers);
-    await this.ports.works.adoptProposal(proposal.id);
-    return { revision, title: commitTitle };
-  }
-  private async readableProposal(actorUserId: string, proposalId: string): Promise<ProposalRecord> {
-    const proposal = await this.ports.works.proposal(proposalId);
-    if (!proposal) throw new Error("ProposalNotFound");
-    await this.authorizedOmOwner(actorUserId, proposal.ownerUserId);
-    return proposal;
-  }
   private async readableReflection(actorUserId: string, reflectionId: string): Promise<ReflectionRecord> {
     const reflection = await this.ports.works.reflection(reflectionId);
     if (!reflection) throw new Error("ReflectionNotFound");
     await this.authorizedOmOwner(actorUserId, reflection.ownerUserId);
     return reflection;
   }
-  private async withProposalMutation<T>(proposalId: string, mutation: () => Promise<T>, actorUserId?: string) {
-    const proposal = actorUserId === undefined ? await this.ports.works.proposal(proposalId) : await this.editableProposal(actorUserId, proposalId);
-    if (proposal?.reflectionId && this.runningReflections.has(proposal.reflectionId)) throw new Error("ReflectionAlreadyRunning");
-    return this.reflectionRuns ? this.reflectionRuns.mutateProposal(proposal?.reflectionId, mutation) : mutation();
-  }
-  private async editableProposal(actorUserId: string, proposalId: string): Promise<ProposalRecord> {
-    const proposal = await this.readableProposal(actorUserId, proposalId);
-    if (proposal.ownerUserId !== actorUserId || proposal.status !== "open") throw new Error("ProposalNotEditable");
-    return proposal;
-  }
-  private async ownedProposal(session: SessionGrant, proposalId: string): Promise<ProposalRecord> { const proposal = await this.ports.works.proposal(proposalId); if (!proposal || proposal.ownerUserId !== session.forgeUserId || proposal.workId !== session.workId || proposal.status !== "open") throw new Error("ProposalNotOwned"); return proposal; }
   private async assertActiveWork(session: SessionGrant): Promise<void> {
     const work = await this.ports.works.work(session.workId);
     if (!work || work.status !== "active" || work.ownerUserId !== session.forgeUserId || work.appId !== "certlab" || work.entityId !== (session.entityId ?? session.reportId)) throw new Error("WorkCompleted");

@@ -95,7 +95,7 @@ export class ReflectionRuns {
             if (index >= 0) current.tools[index] = progress.tool;
             else if (current.tools.length < 256) current.tools.push(progress.tool);
           }
-          if (progress.type === "proposal.updated") current.proposalId = progress.proposalId;
+
           this.publish(current, progress.type);
         },
         commit: () => { control.controller.signal.throwIfAborted(); control.committing = true; },
@@ -145,7 +145,7 @@ export class ReflectionRuns {
     return () => { listeners.delete(listener); if (!listeners.size) this.listeners.delete(runId); };
   }
 
-  async mutateProposal<T>(reflectionId: string | undefined, mutation: () => Promise<T>) {
+  async mutateDraft<T>(reflectionId: string | undefined, mutation: () => Promise<T>) {
     if (!reflectionId) return mutation();
     if (this.busy(reflectionId)) throw new Error("ReflectionAlreadyRunning");
     this.locks.add(reflectionId);

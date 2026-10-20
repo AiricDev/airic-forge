@@ -7,7 +7,6 @@ import { hashPassword } from "./auth.js";
 import type { ForgeConfig } from "./config.js";
 import { ForgeRuntime } from "./runtime.js";
 import { buildServer } from "./server.js";
-import { createTestProposal } from "./test-proposal-fixture.js";
 
 test("two users are isolated; an admin can inspect without becoming the OM owner; restart keeps revisions", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-one-"));
@@ -60,22 +59,15 @@ test("two users are isolated; an admin can inspect without becoming the OM owner
     const savedDraft = await app.inject({ method: "PUT", url: `/api/v1/om/users/${alice.id}/drafts`, headers: { cookie: aliceCookie }, payload: { path: draftPath, content: draftContent, baseRevision: aliceOm.json().revision } });
     assert.equal(savedDraft.statusCode, 200);
     assert.equal((await runtime.useCases.personalOm(alice.id, alice.id)).activeRevision, aliceOm.json().revision);
-    assert.equal(runtime.db.proposalsForUser(alice.id).length, 0);
     assert.equal((await app.inject({ method: "GET", url: `/api/v1/om/users/${bob.id}`, headers: { cookie: aliceCookie } })).statusCode, 403);
     assert.equal((await app.inject({ method: "GET", url: "/api/v1/users", headers: { cookie: aliceCookie } })).statusCode, 403);
     assert.equal((await app.inject({ method: "GET", url: `/api/v1/works/${bobWork.id}`, headers: { cookie: aliceCookie } })).statusCode, 403);
     assert.equal((await app.inject({ method: "POST", url: "/api/v1/proposals", headers: { cookie: aliceCookie }, payload: { source: "manual", reason: "Check ownership" } })).statusCode, 404);
-    const proposalId = createTestProposal(runtime, alice.id, "Check ownership", "test").id;
-    const bobCookie = await login("bob@example.com");
-    assert.equal((await app.inject({ method: "GET", url: `/api/v1/users/${alice.id}/proposals`, headers: { cookie: bobCookie } })).statusCode, 403);
-    assert.equal((await app.inject({ method: "GET", url: `/api/v1/proposals/${proposalId}`, headers: { cookie: bobCookie } })).statusCode, 403);
-    assert.equal((await app.inject({ method: "PATCH", url: `/api/v1/proposals/${proposalId}/files`, headers: { cookie: bobCookie }, payload: { path: "work-definitions/report-authoring/policy.md", content: "bad" } })).statusCode, 403);
     const adminCookie = await login("admin@example.com");
     const inspected = await app.inject({ method: "GET", url: `/api/v1/om/users/${bob.id}`, headers: { cookie: adminCookie } });
     assert.equal(inspected.statusCode, 200);
     assert.equal(inspected.json().owner.id, bob.id);
     assert.equal((await app.inject({ method: "GET", url: "/api/v1/users", headers: { cookie: adminCookie } })).json().users.length, 3);
-    assert.equal((await app.inject({ method: "GET", url: `/api/v1/proposals/${proposalId}`, headers: { cookie: adminCookie } })).json().proposal.ownerUserId, alice.id);
     const history = await app.inject({ method: "GET", url: `/api/v1/works/${bobWork.id}`, headers: { cookie: adminCookie } });
     assert.equal(history.statusCode, 200);
     assert.equal(history.json().work.ownerUserId, bob.id);

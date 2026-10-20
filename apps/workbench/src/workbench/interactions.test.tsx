@@ -6,7 +6,6 @@ import {
   renderHook,
   screen,
   waitFor,
-  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -18,7 +17,7 @@ import {
   useDirty,
   useUnsavedChanges,
 } from "./UnsavedChanges";
-import { ProposalReview } from "./ProposalReview";
+import { OmDraftReview } from "./OmDraftReview";
 import { AuthPage } from "./AuthPage";
 afterEach(() => vi.unstubAllGlobals());
 const json = (data: unknown, status = 200) =>
@@ -117,22 +116,21 @@ it("offers continue and discard without saving and restores focus", async () => 
   expect(screen.getByText("已经离开")).toBeVisible();
   expect(screen.getByLabelText("编辑")).toHaveValue("");
 });
-it("keeps a failed adoption dialog open and never exposes a Reflection file editor", async () => {
-  const proposal = {
-    proposal: {
-      id: "p1",
-      ownerUserId: "u",
-      reflectionId: "r",
-      baseRevision: "head",
-      reviewedRevision: "reviewed",
-      status: "open",
-      reason: "Evidence-backed improvement",
-      evidence: "event-1",
-    },
+it("keeps a failed direct commit readable without introducing an approval entity", async () => {
+  const draft = {
+    ownerUserId: "u",
+    scope: "manual",
+    baseRevision: "head",
     activeRevision: "head",
-    changedPaths: ["policy.md"],
+    digest: "digest",
+    summary: "Improve method",
     conflicts: [],
-    diff: "+ improvement",
+    edits: [
+      {
+        path: "work-definitions/report-authoring/policy.md",
+        content: "Improved policy",
+      },
+    ],
   };
   vi.stubGlobal(
     "fetch",
@@ -140,9 +138,11 @@ it("keeps a failed adoption dialog open and never exposes a Reflection file edit
       .fn()
       .mockImplementation((path: string) =>
         Promise.resolve(
-          path.endsWith("/adopt")
-            ? json({ error: "ProposalBaseChanged" }, 409)
-            : json(proposal),
+          path.endsWith("/commit")
+            ? json({ error: "ActiveRevisionChanged" }, 409)
+            : path.includes("/file?")
+              ? json({ content: "Original policy" })
+              : json(draft),
         ),
       ),
   );
@@ -150,18 +150,16 @@ it("keeps a failed adoption dialog open and never exposes a Reflection file edit
   render(
     <ThemeProvider theme={theme}>
       <UnsavedChangesProvider>
-        <ProposalReview id="p1" canWrite />
+        <OmDraftReview scope="manual" canWrite />
       </UnsavedChangesProvider>
     </ThemeProvider>,
   );
-  await user.click(await screen.findByRole("button", { name: "确认采纳" }));
-  const dialog = screen.getByRole("dialog");
-  await user.click(within(dialog).getByRole("button", { name: "确认采纳" }));
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-    "ProposalBaseChanged",
+  await user.click(await screen.findByRole("button", { name: "确认并提交" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "ActiveRevisionChanged",
   );
-  expect(screen.getByRole("dialog")).toBeVisible();
-  expect(screen.queryByLabelText("OM 文件内容")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("提交后内容")).toHaveValue("Improved policy");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 it("keeps authentication input after failure and validates password confirmation", async () => {
   const fetch = vi

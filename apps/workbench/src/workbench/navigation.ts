@@ -9,12 +9,14 @@ export type View =
   | "measurements"
   | "works"
   | "work-detail"
-  | "proposals"
+  | "reflections"
+  | "git-access"
   | "lenses"
   | "users"
   | "settings"
   | "capabilities";
 export type WorkRoute = {
+  reflectionId?: string;
   page: number;
   owner: string;
   workType: string;
@@ -27,6 +29,9 @@ export function readWorkRoute(): WorkRoute {
   const query = new URLSearchParams(window.location.search);
   const page = Number(query.get("page") || 1);
   return {
+    reflectionId:
+      /^\/reflections\/([a-zA-Z0-9_-]+)$/.exec(window.location.pathname)?.[1] ??
+      "",
     page: Number.isSafeInteger(page) && page > 0 && page <= 100_000 ? page : 1,
     owner: query.get("owner") || "",
     workType: query.get("workType") || "",
@@ -54,9 +59,11 @@ export function useNavigation() {
   const [view, setView] = useState<View>(
     initial.workId
       ? "work-detail"
-      : window.location.pathname === "/works"
-        ? "works"
-        : "dashboard",
+      : window.location.pathname.startsWith("/reflections")
+        ? "reflections"
+        : window.location.pathname === "/works"
+          ? "works"
+          : "dashboard",
   );
   const { guard, isDirty } = useUnsavedChanges();
   const position = useRef(
@@ -87,9 +94,11 @@ export function useNavigation() {
       setView(
         next.workId
           ? "work-detail"
-          : window.location.pathname === "/works"
-            ? "works"
-            : "dashboard",
+          : window.location.pathname.startsWith("/reflections")
+            ? "reflections"
+            : window.location.pathname === "/works"
+              ? "works"
+              : "dashboard",
       );
     };
     window.addEventListener("popstate", pop);
@@ -98,7 +107,11 @@ export function useNavigation() {
   const navigate = (next: View, nextRoute = route) =>
     guard(() => {
       const url =
-        next === "works" || next === "work-detail" ? workUrl(nextRoute) : "/";
+        next === "works" || next === "work-detail"
+          ? workUrl(nextRoute)
+          : next === "reflections"
+            ? `/reflections${nextRoute.reflectionId ? `/${nextRoute.reflectionId}` : ""}`
+            : "/";
       window.history.pushState({ forgePosition: ++position.current }, "", url);
       setRoute(nextRoute);
       setView(next);

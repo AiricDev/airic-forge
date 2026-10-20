@@ -1,114 +1,51 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
-import { ForgeUseCases, type AgentRunnerPort, type AppPort } from "@airic-forge/domain";
-import { testCatalog, acknowledgeCheckpoint } from "./certlab-test-catalog.js";
-import { hashPassword, verifyPassword } from "./auth.js";
-import { InMemoryAppSessionStore } from "./app-session-store.js";
-import type { ForgeConfig } from "./config.js";
-import { InMemoryPasswordSetupStore } from "./password-setup-store.js";
-import { ForgeRuntime } from "./runtime.js";
-import { systemPort } from "./system-port.js";
-import { createTestProposal } from "./test-proposal-fixture.js";
-
-test("personal Proposals keep active HEAD stable until reviewed adoption; stale peer rebases and next Turn uses new HEAD", async () => {
-  const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-three-"));
-  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
-  const catalog = testCatalog("digest");
-  const app: AppPort = {
-    identity: async () => ({ appId: "certlab", appUserId: "author", email: "author@example.com", displayName: "Author" }),
-    catalog: async () => catalog, openApi: async () => ({}),
-    reportContext: async (_token, reportId) => ({ resource: { namespace: "certlab", resourceType: "report", resourceId: reportId } }),
-    query: async () => ({}), submitCommand: async () => ({ status: "rejected" }), receipt: async () => undefined,
-  };
-  const observedPolicies: string[] = [];
-  const agents: AgentRunnerPort = { runWork: async ({ documents }) => { observedPolicies.push(documents.find((item) => item.id === "policy")?.content ?? ""); return { text: "Checked" }; } };
-  const compose = (runtime: ForgeRuntime) => new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, app, catalogs: runtime.db, agents, sessions: new InMemoryAppSessionStore(), passwordSetups: new InMemoryPasswordSetupStore(), passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
-  const runtime = new ForgeRuntime(config);
+import { ForgeDatabase } from "./database.js";
+import { omFixture } from "./om-test-fixture.js";
+const path = "work-definitions/report-authoring/policy.md";
+test("manual drafts commit directly, preserve history, survive restart and retry idempotently", async () => {
+  const f = omFixture();
   try {
-    const author = runtime.db.ensureUser("author@example.com", false);
-    const other = runtime.db.ensureUser("other@example.com", false);
-    runtime.om.ensureUserBranch(other.id);
-    const useCases = compose(runtime);
-    runtime.db.saveCandidate(catalog, { paths: {} }); runtime.db.accept("certlab", catalog.digest, author.id);
-    const session = await useCases.bootstrap({ token: "token", reportId: "report-1" });
-    const oldTurn = await useCases.startTurn(session.ticket, "Read the current policy");
-    const base = oldTurn.turn.omRevision;
-    const first = createTestProposal(runtime, author.id, "Clarify policy", "Work report-1");
-    const second = createTestProposal(runtime, author.id, "Clarify method", "Work report-1");
-    assert.equal(first.baseRevision, base); assert.equal(second.baseRevision, base);
-    await assert.rejects(() => useCases.personalProposal(other.id, first.id), /Forbidden/);
-    await assert.rejects(() => useCases.writePersonalProposal(other.id, first.id, "work-definitions/report-authoring/policy.md", "bad"), /Forbidden/);
-    const policyPath = "work-definitions/report-authoring/policy.md";
-    const methodPath = "work-definitions/report-authoring/method.md";
-    const policy = (await useCases.personalProposalFile(author.id, first.id, policyPath)).content;
-    const method = (await useCases.personalProposalFile(author.id, second.id, methodPath)).content;
-    await useCases.writePersonalProposal(author.id, first.id, policyPath, `${policy}\n\nStage 3 reviewed policy.\n`);
-    await useCases.writePersonalProposal(author.id, second.id, methodPath, `${method}\n\nStage 3 reviewed method.\n`);
-    assert.equal(runtime.om.head(`users/${author.id}`), base);
-    assert.equal(runtime.om.head(`users/${other.id}`), runtime.om.head("main"));
-    const firstReview = await useCases.reviewPersonalProposal(author.id, first.id);
-    const secondReview = await useCases.reviewPersonalProposal(author.id, second.id);
-    assert.match(firstReview.diff, /Stage 3 reviewed policy/);
-    await assert.rejects(() => useCases.adoptPersonalProposal(author.id, first.id, "Adopt", "wrong-revision"), /ProposalReviewRequired/);
-    const adoptedFirst = await useCases.adoptPersonalProposal(author.id, first.id, "Clarify policy", firstReview.reviewedRevision);
-    assert.notEqual(adoptedFirst.revision, base);
-    const history = await useCases.personalOmHistory(author.id, author.id);
-    assert.equal(history[0]?.revision, adoptedFirst.revision);
-    assert.ok(!history.some((item) => item.revision === firstReview.reviewedRevision));
-    assert.equal((await useCases.personalOm(author.id, author.id, base)).revision, base);
-    assert.doesNotMatch((await useCases.personalOmFile(author.id, author.id, policyPath, base)).content, /Stage 3 reviewed policy/);
-    assert.match((await useCases.personalOmFile(author.id, author.id, policyPath, adoptedFirst.revision)).content, /Stage 3 reviewed policy/);
-    await assert.rejects(() => useCases.personalOm(other.id, author.id, base), /Forbidden/);
-    await assert.rejects(() => useCases.personalOm(author.id, author.id, "0".repeat(40)), /OmRevisionNotReachable/);
-    await assert.rejects(() => useCases.personalOm(author.id, author.id, firstReview.reviewedRevision), /OmRevisionNotReachable/);
-    await assert.rejects(() => useCases.adoptPersonalProposal(author.id, second.id, "Clarify method", secondReview.reviewedRevision), /ActiveRevisionChanged/);
-    assert.equal((await useCases.personalProposal(author.id, second.id)).proposal.status, "open");
-    const rebased = await useCases.rebasePersonalProposal(author.id, second.id);
-    assert.equal(rebased.proposal.baseRevision, adoptedFirst.revision);
-    assert.equal(rebased.proposal.reviewedRevision, undefined);
-    const reviewedAgain = await useCases.reviewPersonalProposal(author.id, second.id);
-    const adoptedSecond = await useCases.adoptPersonalProposal(author.id, second.id, "Clarify method", reviewedAgain.reviewedRevision);
-    assert.notEqual(adoptedSecond.revision, adoptedFirst.revision);
-    await acknowledgeCheckpoint(useCases, session.ticket);
-    const newTurn = await useCases.startTurn(session.ticket, "Read the updated policy");
-    assert.equal(newTurn.turn.omRevision, adoptedSecond.revision);
-    assert.equal(oldTurn.turn.omRevision, base);
-    assert.doesNotMatch(observedPolicies[0], /Stage 3 reviewed policy/);
-    assert.match(observedPolicies[1], /Stage 3 reviewed policy/);
-    const third = createTestProposal(runtime, author.id, "Add another WD", "Schema check");
-    await useCases.writePersonalProposal(author.id, third.id, "subject-knowledge/inspection-guidance.md", `---\nid: inspection-guidance\ntitle: Inspection guidance\nsummary: Facts needed for inspection\ntopics: [inspection]\n---\n\nKeep source locations with report facts.\n`);
-    await useCases.writePersonalProposal(author.id, third.id, "work-definitions/inspection-check/work.yml", `schemaVersion: 1\nid: inspection-check\ntitle: Inspection check\ndescription: Check report facts.\ncapabilities:\n  allowed: [report.context]\ndocuments: []\nknowledge:\n  bootstrap: []\n  available: [inspection-guidance]\ncompletion:\n  mode: user\n  requiredCapabilities: []\n`);
-    const thirdReview = await useCases.reviewPersonalProposal(author.id, third.id);
-    const adoptedThird = await useCases.adoptPersonalProposal(author.id, third.id, "Add inspection check", thirdReview.reviewedRevision);
-    assert.equal(runtime.om.workDefinition(adoptedThird.revision, "inspection-check").title, "Inspection check");
-    const invalid = createTestProposal(runtime, author.id, "Try invalid knowledge", "Validation gate");
-    await useCases.writePersonalProposal(author.id, invalid.id, "subject-knowledge/invalid.md", "# Missing front matter\n");
-    await assert.rejects(() => useCases.reviewPersonalProposal(author.id, invalid.id), /InvalidOperatingModel.*front matter/);
-    assert.equal((await useCases.personalProposal(author.id, invalid.id)).proposal.reviewedRevision, undefined);
-    assert.equal(runtime.om.head(`users/${author.id}`), adoptedThird.revision);
-    const userWorkspace = runtime.om.ensureUserBranch(author.id).worktree;
-    writeFileSync(join(userWorkspace, policyPath), `${readFileSync(join(userWorkspace, policyPath), "utf8")}\nExternal HEAD commit.\n`);
-    const external = spawnSync("git", ["add", policyPath], { cwd: userWorkspace, encoding: "utf8" });
-    assert.equal(external.status, 0, external.stderr);
-    const committed = spawnSync("git", ["commit", "-m", "External policy edit", "-m", "Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>"], { cwd: userWorkspace, encoding: "utf8" });
-    assert.equal(committed.status, 0, committed.stderr);
-    const externalHead = runtime.om.head(`users/${author.id}`);
-    assert.notEqual(externalHead, adoptedThird.revision);
-    await acknowledgeCheckpoint(useCases, session.ticket);
-    const externalTurn = await useCases.startTurn(session.ticket, "Read the external policy change");
-    assert.equal(externalTurn.turn.omRevision, externalHead);
-    assert.match(observedPolicies[2], /External HEAD commit/);
-    runtime.db.close();
-    const restarted = new ForgeRuntime(config);
-    try {
-      const restored = compose(restarted);
-      assert.equal((await restored.personalProposal(author.id, second.id)).proposal.status, "adopted");
-      assert.equal((await restored.workHistory(author.id, session.work.id)).turns[0].omRevision, base);
-      assert.equal(restarted.om.head(`users/${author.id}`), externalHead);
-    } finally { restarted.db.close(); }
-  } finally { rmSync(root, { recursive: true, force: true }); }
+    const base = f.runtime.om.head(`users/${f.owner.id}`);
+    const turnWork = f.runtime.db.createWork(f.owner.id, "certlab", "report-authoring", "report-1");
+    const oldTurn = f.runtime.db.nextTurn(turnWork.id, base, "catalog", "context");
+    const draft = await f.save(f.owner.id, "manual", path, f.runtime.om.document(base, path) + "\nReviewed rule.\n");
+    assert.equal(f.runtime.om.head(`users/${f.owner.id}`), base);
+    await assert.rejects(() => f.runtime.omChanges.commit(f.owner.id, "manual", "wrong", "manual-request"), /OmDraftChanged/);
+    const committed = await f.runtime.omChanges.commit(f.owner.id, "manual", draft.digest, "manual-request");
+    assert.notEqual(committed.revision, base);
+    assert.equal((await f.runtime.omChanges.commit(f.owner.id, "manual", draft.digest, "manual-request")).revision, committed.revision);
+    assert.match(f.runtime.om.document(committed.revision, path), /Reviewed rule/);
+    assert.doesNotMatch(f.runtime.om.document(base, path), /Reviewed rule/);
+    assert.equal(f.runtime.om.history(`users/${f.owner.id}`).length, 2, "no extra review/adoption commits");
+    assert.equal(f.runtime.db.turnsForWork(turnWork.id)[0].omRevision, oldTurn.omRevision);
+    assert.equal((await f.runtime.useCases.personalOm(f.owner.id, f.owner.id)).activeRevision, committed.revision);
+    await assert.rejects(() => f.runtime.omChanges.own(f.admin.id, f.owner.id), /Forbidden/);
+    await assert.rejects(() => f.runtime.useCases.personalOm(f.other.id, f.owner.id), /Forbidden/);
+    const reopened = new ForgeDatabase(f.config.dataDir);
+    try { assert.equal(reopened.workspace(f.owner.id, "manual"), undefined); } finally { reopened.close(); }
+  } finally { await f.close(); }
+});
+test("stale drafts are preserved, can merge or resolve conflicts, and invalid content never advances HEAD", async () => {
+  const f = omFixture();
+  try {
+    const base = f.runtime.om.head(`users/${f.owner.id}`);
+    const original = f.runtime.om.document(base, path);
+    const first = await f.save(f.owner.id, "manual", path, original + "\nFirst rule.\n");
+    await f.save(f.owner.id, "archive:peer", path, original + "\nSecond rule.\n");
+    const active = await f.runtime.omChanges.commit(f.owner.id, "manual", first.digest, "first-rule-request");
+    const stale = await f.runtime.omChanges.read(f.owner.id, "archive:peer");
+    await assert.rejects(() => f.runtime.omChanges.commit(f.owner.id, stale.scope, stale.digest, "stale-rule-request"), /ActiveRevisionChanged/);
+    const merged = await f.runtime.omChanges.rebase(f.owner.id, stale.scope);
+    assert.deepEqual(merged.conflicts, [path]);
+    await assert.rejects(() => f.runtime.omChanges.commit(f.owner.id, stale.scope, merged.digest, "merge-rule-request"), /OmMergeConflict/);
+    const resolved = await f.runtime.omChanges.save(f.owner.id, stale.scope, { baseRevision: active.revision, summary: "Keep both rules", edits: [{ path, content: original + "\nFirst rule.\nSecond rule.\n" }] });
+    const result = await f.runtime.omChanges.commit(f.owner.id, stale.scope, resolved.digest, "resolved-rule-request");
+    assert.match(f.runtime.om.document(result.revision, path), /First rule\.\nSecond rule/);
+    const bad = await f.save(f.owner.id, "manual", "subject-knowledge/invalid.md", "# Missing metadata");
+    await assert.rejects(() => f.runtime.omChanges.commit(f.owner.id, "manual", bad.digest, "invalid-rule-request"), /InvalidOperatingModel/);
+    assert.equal(f.runtime.om.head(`users/${f.owner.id}`), result.revision);
+    assert.equal(f.runtime.db.workspace(f.owner.id, "manual")?.edits.length, 1);
+    await assert.rejects(() => f.save(f.owner.id, "archive:bad", "../private.md", "not allowed"), /InvalidOmDraft/);
+  } finally { await f.close(); }
 });

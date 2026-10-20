@@ -9,7 +9,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import type { OmSnapshot, Proposal, User, WorkPage } from "../types";
+import type { OmSnapshot, User, WorkPage } from "../types";
 import type { Navigation } from "../navigation";
 import { useResource } from "../hooks";
 import { PageHeading, ResourceState } from "../ui";
@@ -17,12 +17,10 @@ export function DashboardPage({
   user,
   navigation: n,
   openOm,
-  openProposal,
 }: {
   user: User;
   navigation: Navigation;
   openOm: () => void;
-  openProposal: (p: Proposal) => void;
 }) {
   const om = useResource<OmSnapshot>(
     `/api/v1/om/users/${encodeURIComponent(user.id)}`,
@@ -30,17 +28,11 @@ export function DashboardPage({
   const works = useResource<WorkPage>(
     `/api/v1/users/${encodeURIComponent(user.id)}/works?page=1`,
   );
-  const proposals = useResource<{
-    proposals: Proposal[];
-  }>(`/api/v1/users/${encodeURIComponent(user.id)}/proposals`);
-  const open =
-    proposals.data?.proposals.filter((p) => p.status === "open").slice(0, 5) ??
-    [];
   return (
     <Stack spacing={3}>
       <PageHeading
         title={`你好，${user.email}`}
-        description="继续你的 Work，处理待审阅的 Proposal，或查看当前生效的个人 OM。"
+        description="继续 Work，讨论改进工作方式，或查看当前生效的个人 OM。"
       />
       <Box
         sx={{
@@ -96,30 +88,11 @@ export function DashboardPage({
         </Paper>
       </Box>
       <Paper sx={{ p: 3 }}>
-        <Stack
-          direction="row"
-          sx={{
-            justifyContent: "space-between",
-          }}
-        >
-          <Typography variant="h6">需要继续处理的 Proposal</Typography>
-          <Button onClick={() => n.navigate("proposals")}>全部提议</Button>
-        </Stack>
-        <ResourceState {...proposals} retry={proposals.reload} />
-        <List>
-          {open.map((p) => (
-            <ListItemButton key={p.id} onClick={() => openProposal(p)}>
-              <ListItemText
-                primary={p.reason}
-                secondary={`${p.id} · ${p.source}`}
-              />
-              <Chip label="待采纳" color="warning" />
-            </ListItemButton>
-          ))}
-        </List>
-        {proposals.data && !open.length && (
-          <Typography color="text.secondary">没有待审阅的 Proposal</Typography>
-        )}
+        <Typography variant="h6">改进工作方式</Typography>
+        <Button onClick={() => n.navigate("reflections")}>
+          开始或继续讨论
+        </Button>
+        <Button onClick={() => n.navigate("git-access")}>使用本地 agent</Button>
       </Paper>
       <Paper sx={{ p: 3 }}>
         <Stack

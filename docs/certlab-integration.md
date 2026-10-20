@@ -346,3 +346,15 @@ Work runner 区分 `AgentOutputLimitReached`（模型以 length 停止，包含�
 真实失败回合 trn_ad3b0f89ee2db32082c1dd37 未记录终态用量，无法回溯判定是 length 还是空 stop。该回合确实加载新版写作约定、第9章导航及9.6.1–9.6.3先例，没有调用业务写命令。真实 SDK 合成本地服务回归见 `apps/api/src/pi-work-agent-response.test.ts`：长度截断有/无正文、空 stop、正常 stop、敏感内容不进入日志、每种响应只请求一次。未以历史报告重放外部模型或修改当前报告。
 
 验证：pnpm build、pnpm check 和 pnpm test 通过（domain 23、workbench 14、API 96）。本次修复只归属模型适配器的终态校验和脱敏运维诊断，未改变 Work/业务权限或自动重试策略；从错误沿 runner→SDK terminal message 可定位，Missing Path / Boundary Bypass / Unowned Capability 均 not-found（high），未发现需另建职责或架构指导的具体风险。
+
+### Verification results and generic work paths
+
+CertLab's catalog now includes `verification.context` and `verification.save-draft`
+(`verification.save:{report_id}` receipts). These use the existing accepted catalog,
+report-scoped command and receipt recovery protocol. Human recording/withdrawal is
+not an Agent capability; verification records are evidence, not a third work-item type.
+TestTask can carry a method, conditions, configuration and checkpoint criteria;
+Finding can carry clarification purpose, source results and closure verification.
+No generic Agent execution/loading behavior changes: the CertLab OM common
+`work-paths` document selects the method, and standard/edition chapters reference it.
+An OM source edit does not adopt the new snapshot or accept a changed runtime catalog.

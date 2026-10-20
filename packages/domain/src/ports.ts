@@ -19,23 +19,23 @@ export interface SessionGrant {
   selection?: Record<string, unknown>;
 }
 
-export type ReflectionOutcome = "analysis" | "proposal" | "api-suggestion";
+export type ReflectionOutcome = "analysis" | "changes" | "api-suggestion";
 export interface ReflectionLens { id: "conversation" | "domain-knowledge" | "delegation-gap" | "api-suggestion"; version: number; enabled: boolean; prompt: string; }
-export interface ReflectionRecord { id: string; workId: string; ownerUserId: string; lensId: string; lensVersion: number; lensPrompt: string; question: string; evidenceEventIds: string[]; omRevision: string; status: string; outcome?: ReflectionOutcome; analysis?: string; attribution?: string; suggestionMarkdown?: string; }
+export interface ReflectionRecord { id: string; workId?: string; ownerUserId: string; lensId: string; lensVersion: number; lensPrompt: string; question: string; evidenceEventIds: string[]; omRevision: string; status: string; outcome?: ReflectionOutcome; analysis?: string; attribution?: string; suggestionMarkdown?: string; }
 export interface ReflectionMessage { id: string; reflectionId: string; role: "user" | "agent"; content: string; at: string; lensId?: string; lensVersion?: number; citedEventIds?: string[]; }
-export interface ReflectionAgentResult { outcome: ReflectionOutcome; analysis: string; attribution: string; citedEventIds: string[]; edits?: Array<{ path: string; content: string }>; suggestionMarkdown?: string; proposalMessage?: string; }
+export interface ReflectionAgentResult { outcome: ReflectionOutcome; analysis: string; attribution: string; citedEventIds: string[]; edits?: Array<{ path: string; content: string }>; suggestionMarkdown?: string; changeSummary?: string; }
 export type ReflectionToolName = "read_work_trajectory" | "read_candidate_file" | "write_candidate_file";
 export interface ReflectionToolStatus { id: string; name: ReflectionToolName; status: "running" | "completed" | "failed"; }
 export type ReflectionProgress =
   | { type: "text.delta"; text: string }
   | { type: "text.replace"; text: string }
   | { type: "tool.status"; tool: ReflectionToolStatus }
-  | { type: "proposal.updated"; proposalId: string };
+  | { type: "draft.updated" };
 export type ReflectionRunStatus = "running" | "cancelling" | "completed" | "failed" | "cancelled" | "interrupted";
 export interface ReflectionRun {
   id: string; reflectionId: string; ownerUserId: string; requestId: string; message: string;
   userMessage: ReflectionMessage; status: ReflectionRunStatus; sequence: number;
-  text: string; tools: ReflectionToolStatus[]; proposalId?: string; agentMessageId?: string;
+  text: string; tools: ReflectionToolStatus[]; agentMessageId?: string;
   error?: string; createdAt: string; updatedAt: string;
 }
 export interface ReflectionRunEvent { version: 1; runId: string; sequence: number; type: ReflectionProgress["type"] | "snapshot" | "run.status" | "completed" | "failed" | "cancelled"; run: ReflectionRun; }
@@ -48,9 +48,7 @@ export interface ReflectionRunStore {
   saveReflectionRun(run: ReflectionRun): void;
   interruptReflectionRuns(now: string): void;
 }
-export interface ProposalRecord { id: string; reflectionId?: string; workId?: string; ownerUserId: string; baseRevision: string; branchRef: string; worktreePath: string; status: string; source: string; reason: string; evidence: string; reviewedRevision?: string; upstreamRevision?: string; }
 export interface WorkListFilters { ownerUserId?: string; workType?: Work["workType"]; status?: Work["status"]; }
-export interface ProposalListFilters { ownerUserId?: string; status?: "open" | "adopted" | "abandoned"; source?: "personal" | "reflection" | "organization-sync"; }
 export interface OrganizationContribution { id: string; authorUserId: string; sourceRevision: string; baseMainRevision: string; reason: string; evidence: string; status: "open" | "reviewed" | "accepted"; selectedPaths: string[]; candidateBranch?: string; candidateWorktree?: string; reviewedRevision?: string; acceptedRevision?: string; createdAt: string; }
 export interface OrganizationContributionPort {
   createContribution(record: OrganizationContribution): MaybePromise<void>;
@@ -64,7 +62,7 @@ export interface WorkFeedback { id: string; workId: string; ownerUserId: string;
 export interface MeasurementPort {
   recordFeedback(feedback: WorkFeedback): MaybePromise<void>;
   feedbackForWork(workId: string): MaybePromise<WorkFeedback[]>;
-  activityCounts(): MaybePromise<{ works: number; completedWorks: number; turns: number; reflections: number; personalProposals: number; adoptedPersonalProposals: number; organizationContributions: number; acceptedOrganizationContributions: number; synchronizedProposals: number; medianPersonalProposalHours: number | null; medianOrganizationReviewHours: number | null }>;
+  activityCounts(): MaybePromise<{ works: number; completedWorks: number; turns: number; reflections: number; legacyPersonalProposals: number; legacyAdoptedPersonalProposals: number; organizationContributions: number; acceptedOrganizationContributions: number; legacySynchronizedProposals: number; legacyMedianPersonalProposalHours: number | null; medianOrganizationReviewHours: number | null }>;
   feedbackCounts(): MaybePromise<Record<WorkFeedbackKind, number>>;
 }
 export interface TurnRecord { id: string; workId: string; sequence: number; status: string; omRevision: string; catalogDigest: string; contextDigest: string; startedAt: string; }
@@ -89,7 +87,6 @@ export interface AccountPort {
 
 export interface WorkPort {
   worksPage(filters: WorkListFilters, offset: number, limit: number): MaybePromise<{ works: Work[]; total: number }>;
-  proposalsPage(filters: ProposalListFilters, offset: number, limit: number): MaybePromise<{ proposals: ProposalRecord[]; total: number }>;
   work(workId: string): MaybePromise<Work | undefined>;
   setWorkEntityTitle(workId: string, title: string): MaybePromise<void>;
   turnsForWork(workId: string): MaybePromise<TurnRecord[]>;
@@ -108,23 +105,16 @@ export interface WorkPort {
   openReflection(input: Omit<ReflectionRecord, "id" | "status" | "outcome" | "analysis" | "attribution" | "suggestionMarkdown">, introduction: string): MaybePromise<ReflectionRecord>;
   reflection(reflectionId: string): MaybePromise<ReflectionRecord | undefined>;
   reflectionsForWork(workId: string): MaybePromise<ReflectionRecord[]>;
+  reflectionsForUser(ownerUserId: string): MaybePromise<ReflectionRecord[]>;
+  setReflectionRevision(reflectionId: string, revision: string): MaybePromise<void>;
   reflectionMessages(reflectionId: string): MaybePromise<ReflectionMessage[]>;
   appendReflectionMessage(reflectionId: string, role: ReflectionMessage["role"], content: string, context?: { lensId: string; lensVersion: number; citedEventIds: string[] }): MaybePromise<ReflectionMessage>;
   setReflectionResult(reflectionId: string, result: { status: string; outcome?: ReflectionOutcome; analysis?: string; attribution?: string; suggestionMarkdown?: string }): MaybePromise<void>;
   setReflectionContext(reflectionId: string, lens: ReflectionLens, evidenceEventIds: string[]): MaybePromise<void>;
-  proposalForReflection(reflectionId: string): MaybePromise<ProposalRecord | undefined>;
-  proposalsForWork(workId: string): MaybePromise<ProposalRecord[]>;
-  createProposal(proposal: ProposalRecord): MaybePromise<ProposalRecord>;
-  proposal(proposalId: string): MaybePromise<ProposalRecord | undefined>;
-  proposalsForUser(ownerUserId: string): MaybePromise<ProposalRecord[]>;
-  updateProposalBase(proposalId: string, baseRevision: string): MaybePromise<void>;
-  setProposalReview(proposalId: string, revision: string | undefined): MaybePromise<void>;
-  setProposalMessage(proposalId: string, message: string, evidence: string): MaybePromise<void>;
-  adoptProposal(proposalId: string): MaybePromise<void>;
-  abandonReflectionProposal(proposalId: string, reflectionId: string, message: string): MaybePromise<void>;
 }
 
 export interface OperatingModelPort {
+  personalCommitCount?(): MaybePromise<number>;
   initialize(): MaybePromise<void>;
   ensureUserBranch(userId: string): MaybePromise<{ branch: string; worktree: string }>;
   head(branch: string): MaybePromise<string>;
@@ -258,7 +248,7 @@ export interface AgentRunnerPort {
 }
 
 export interface ReflectionAgentPort {
-  analyze(input: { reflectionId: string; lens: ReflectionLens; question: string; messages: ReflectionMessage[]; evidence: TrajectoryEvent[]; readTrajectory?: (offset: number, limit: number) => Promise<TrajectoryEvent[]>; readProposalFile?: (path: string) => Promise<string>; writeProposalFile?: (path: string, content: string, citedEventIds: string[], message: string) => Promise<void>; omRevision: string; documents: Array<{ path: string; content: string }>; privateDrafts?: Array<{ path: string; content: string; baseRevision: string }>; signal?: AbortSignal; onProgress?: (event: ReflectionProgress) => void }): Promise<ReflectionAgentResult>;
+  analyze(input: { reflectionId: string; lens: ReflectionLens; question: string; messages: ReflectionMessage[]; evidence: TrajectoryEvent[]; readTrajectory?: (offset: number, limit: number) => Promise<TrajectoryEvent[]>; readDraftFile?: (path: string) => Promise<string>; writeDraftFile?: (path: string, content: string, citedEventIds: string[], message: string) => Promise<void>; omRevision: string; documents: Array<{ path: string; content: string }>; privateDrafts?: Array<{ path: string; content: string; baseRevision: string }>; signal?: AbortSignal; onProgress?: (event: ReflectionProgress) => void }): Promise<ReflectionAgentResult>;
 }
 
 export interface AppSessionPort { put(session: SessionGrant): MaybePromise<void>; get(ticket: string): MaybePromise<SessionGrant | undefined>; claim(ticket: string): MaybePromise<SessionGrant | undefined>; remove(ticket: string): MaybePromise<void>; }

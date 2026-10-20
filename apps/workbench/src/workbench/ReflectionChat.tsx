@@ -132,7 +132,7 @@ const AgentMessage = () => <ChatMessage user={false} />;
 const toolName: Record<string, string> = {
   read_work_trajectory: "读取 Work 轨迹",
   read_candidate_file: "读取候选文件",
-  write_candidate_file: "更新 Proposal 候选",
+  write_candidate_file: "更新 OM 草稿",
 };
 
 export function ReflectionChat({
@@ -421,7 +421,7 @@ export function ReflectionChat({
                   </Stack>
                 </Box>
                 <Typography variant="caption" color="text.secondary">
-                  Enter 发送 · Shift+Enter 换行。离开页面不会停止运行；Proposal
+                  Enter 发送 · Shift+Enter 换行。离开页面不会停止运行；OM 改动
                   需要作者审阅和确认采纳。
                 </Typography>
               </>

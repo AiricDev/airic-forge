@@ -8,6 +8,7 @@ export async function acknowledgeCheckpoint(useCases: ForgeUseCases, ticket: str
 }
 
 export const initialCapabilityIds = [
+  "verification.context", "verification.save-draft",
   "basis.context", "fact.history", "requirement.context", "fact.save-draft",
   "report.context", "assessment.context", "assessment.history", "command.receipt",
   "assessment.start", "assessment.save-draft", "assessment.reverify",
@@ -19,6 +20,7 @@ export const initialCapabilityIds = [
 ];
 export function testCatalog(digest = "accepted"): CapabilityCatalog {
   const scopes: Record<string, string> = {
+    "verification.save-draft": "verification.save:{report_id}",
     "fact.save-draft": "fact.save_draft:{report_id}",
     "assessment.start": "assessment.start",
     "assessment.save-draft": "assessment.save_draft",

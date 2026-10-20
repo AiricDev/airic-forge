@@ -10,17 +10,18 @@
 
 ## 页面与职责
 
-- `src/workbench/WorkspaceApp.tsx`：登录、账户菜单、MUI 导航和按需加载。主导航提供工作台、个人 OM、Work 与轨迹、提议；管理员另有组织治理、能力目录、组织贡献、用户、实例设置、成效基线及 Lens 管理。
+- `src/workbench/WorkspaceApp.tsx`：登录、账户菜单、MUI 导航和按需加载。主导航提供工作台、个人 OM、Work 与轨迹、改进工作方式、本地 agent 与 Git；管理员另有组织治理、能力目录、组织贡献、用户、实例设置、成效基线及 Lens 管理。
 - `pages/WorkListPage.tsx` / `pages/WorkDetailPage.tsx`：报告名称、筛选、分页、Work 对话和 Reflection 入口，以及显式结果评价。
 - `ReflectionChat.tsx` / `reflection-stream.ts`：连续 Reflection 对话、三种 Lens、SSE 快照、工具状态、停止、恢复和原请求 ID 核对。浏览器断开只移除观察者，运行由服务端管理；权限失效停止自动连接。状态通知在最新回复附近显示，不记录或渲染私有推理。
 - `Conversation.tsx` / `trajectory.ts`：原始 Work 轨迹的展示投影。历史流式片段按 Turn 合并；完成 Turn 使用其最终回答；引用原片段时仍能定位到原事件。存储历史不改写。
-- `ProposalReview.tsx` / `pages/ProposalsPage.tsx`：来源、归因、差异、结构/能力检查、过期基准 Rebase、显式确认采纳或放弃。Reflection 运行期间禁用治理写操作，服务端继续执行互斥检查。
+- `OmDraftReview.tsx`：提交前后差异、编辑、删除、丢弃、过期基准合并与直接确认提交。Reflection 运行期间禁用该讨论的草稿写操作，服务端继续执行互斥检查。
+- `pages/ReflectionsPage.tsx` / `pages/GitAccessPage.tsx`：独立讨论及个人 Git 令牌创建、撤销和 clone 指引。
 - `pages/OmPage.tsx`：个人及组织 OM 树、固定版本阅读、结构化 WD、历史与私有草稿。草稿保存不改变 active HEAD。
 - `api.ts` / `hooks.ts`：同源 Cookie、稳定错误、读取竞态和提交状态。组件不自行决定专业授权；后端用例是唯一权限和治理判定来源。
 
-管理员可查看他人的 Work、Reflection、OM 和候选差异。发起/继续 Reflection、停止运行和采纳个人 Proposal 仍由原作者执行；界面明确显示只读原因。个人采纳和组织吸收走原有流程，不由界面代行。
+管理员可查看他人的 Work、Reflection 和 OM。发起/继续 Reflection、停止运行和提交个人 OM 仍由原作者执行；界面明确显示只读原因。组织贡献治理保持不变。
 
-普通问答不自动形成 Proposal；只有证据支持的 Lens 分析才可能形成候选。API Suggestion 可导出，但不会自动增加工具。Markdown 禁止原始 HTML、内嵌图片和不安全链接。
+普通问答不自动改 OM；用户明确要求即可准备草稿，Lens 可选。API Suggestion 可导出，但不会自动增加工具。Markdown 禁止原始 HTML、内嵌图片和不安全链接。Git 接入、部署和旧数据迁移见 [个人 OM](personal-om-changes.md)。
 
 ## 验证
 

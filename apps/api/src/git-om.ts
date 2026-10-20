@@ -5,7 +5,7 @@ import { parse, stringify } from "yaml";
 import { isAllowedOmDocumentPath, isAllowedProposalPath, type ValidationIssue, type WorkDefinition } from "@airic-forge/domain";
 
 const run = (cwd: string, args: string[]): string => {
-  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  const result = spawnSync("git", args, { cwd, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" }, encoding: "utf8" });
   if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.trim()}`);
   return result.stdout.trim();
 };
@@ -162,7 +162,7 @@ export class GitOperatingModel {
   }
 
   proposalChanges(worktree: string): string[] {
-    const result = spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: worktree, encoding: "utf8" });
+    const result = spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: worktree, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" }, encoding: "utf8" });
     if (result.status !== 0) throw new Error(`git status failed: ${result.stderr.trim()}`);
     return result.stdout.split("\n").filter(Boolean).map((line) => line.slice(3));
   }

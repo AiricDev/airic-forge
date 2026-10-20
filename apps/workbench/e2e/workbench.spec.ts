@@ -68,7 +68,7 @@ test("real API pagination, filters, detail refresh and return location", async (
   await screenshot(page, "work-list");
 });
 
-test("Reflection citations reveal earlier Turns, resume history, and adopt a read-only proposal", async ({
+test("Reflection citations reveal earlier Turns and commit confirmed draft changes", async ({
   page,
 }) => {
   await login(page);
@@ -90,21 +90,13 @@ test("Reflection citations reveal earlier Turns, resume history, and adopt a rea
   await screenshot(page, "work-detail");
   await page.getByRole("button", { name: "返回 Reflection 对话" }).click();
   await expect(source).toBeVisible();
-  await page.getByRole("button", { name: "查看差异并审阅" }).click();
-  await expect(page.getByLabel("OM 文件内容")).toHaveCount(0);
-  await screenshot(page, "proposal-review");
-  await page.getByRole("button", { name: "校验并审阅", exact: true }).click();
-  await page.getByRole("button", { name: "确认采纳", exact: true }).click();
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "确认采纳" })
-    .click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByLabel("提交后内容")).toBeVisible();
+  await page.getByRole("button", { name: "确认并提交", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "这个 Work 的 Reflection" }),
+    page.getByText("OM 已提交，后续工作将使用新版本。"),
   ).toBeVisible();
   await page.reload();
-  await expect(page.getByText("已完成", { exact: true })).toBeVisible();
+  await expect(page.getByText("暂无未提交改动。")).toBeVisible();
 });
 
 test("OM drafts keep HEAD, guard navigation, restore focus and support keyboard tree navigation", async ({
@@ -143,10 +135,10 @@ test("OM drafts keep HEAD, guard navigation, restore focus and support keyboard 
   await screenshot(page, "personal-om");
   await page.getByRole("button", { name: "编辑草稿", exact: true }).click();
   await page.getByLabel(/^编辑 work-definitions/).fill("uncommitted");
-  await nav(page, "提议");
+  await nav(page, "改进工作方式");
   await page.getByRole("button", { name: "放弃修改" }).click();
   await expect(
-    page.getByRole("heading", { name: "提议", exact: true }),
+    page.getByRole("heading", { name: "改进工作方式", exact: true }),
   ).toBeVisible();
 });
 
@@ -297,7 +289,7 @@ test("catalog failure retains Dialog and restores focus; all administrative page
     ["实例设置", "settings"],
     ["成效基线", "measurements"],
     ["Lens 管理", "lenses"],
-    ["提议", "proposals"],
+    ["改进工作方式", "reflections"],
   ] as const) {
     await nav(page, label);
     await expect(
@@ -344,7 +336,7 @@ test("catalog failure retains Dialog and restores focus; all administrative page
   ).toBeVisible();
 });
 
-test("real organization review and adoption enables a member sync Proposal", async ({
+test("real organization review enables a directly committed member sync", async ({
   page,
   browser,
 }) => {
@@ -366,8 +358,10 @@ test("real organization review and adoption enables a member sync Proposal", asy
   await member.getByRole("combobox", { name: "OM 分支" }).click();
   await member.getByRole("option", { name: "main · 组织 OM" }).click();
   await member.getByRole("button", { name: "同步到我的 OM 草稿" }).click();
+  await expect(member.getByRole("heading", { name: "OM 改动" })).toBeVisible();
+  await member.getByRole("button", { name: "确认并提交", exact: true }).click();
   await expect(
-    member.getByRole("heading", { name: "Proposal 审阅" }),
+    member.getByText("OM 已提交，后续工作将使用新版本。"),
   ).toBeVisible();
   await context.close();
 });
@@ -405,39 +399,30 @@ test("ordinary user ownership and narrow-screen navigation remain accessible", a
   await adminContext.close();
 });
 
-test("stale Reflection Proposal must rebase and re-review; abandonment preserves HEAD", async ({
+test("stale Reflection drafts require merge and discarding preserves HEAD", async ({
   page,
 }) => {
   await login(page);
   const id = await work(page, "mui-report-3");
   await page.goto(`/works/${id}?tab=reflection`);
-  await page.getByRole("button", { name: "查看差异并审阅" }).click();
   await expect(
-    page.getByText("基准已变化；需要 Rebase 到当前 HEAD 并重新审阅。"),
+    page.getByText("当前 OM 已更新。请合并最新版本，解决冲突后重新确认。"),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "校验并审阅", exact: true }),
-  ).toHaveCount(0);
-  await page.getByRole("button", { name: "Rebase 到当前 HEAD" }).click();
+    page.getByRole("button", { name: "确认并提交", exact: true }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "合并最新版本" }).click();
   await expect(
-    page.getByRole("button", { name: "校验并审阅", exact: true }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "校验并审阅", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "确认采纳", exact: true }),
-  ).toBeVisible();
+    page.getByRole("button", { name: "确认并提交", exact: true }),
+  ).toBeEnabled();
   const me = await (await page.request.get("/api/v1/auth/me")).json();
   const before = await (
     await page.request.get(`/api/v1/om/users/${me.user.id}`)
   ).json();
-  await page.getByRole("button", { name: "放弃 Proposal" }).click();
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "确认放弃" })
-    .click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("button", { name: "丢弃未提交改动" }).click();
+  await expect(page.getByText("暂无未提交改动。")).toBeVisible();
   await page.reload();
-  await expect(page.getByText("已放弃", { exact: true })).toBeVisible();
+  await expect(page.getByText("暂无未提交改动。")).toBeVisible();
   const after = await (
     await page.request.get(`/api/v1/om/users/${me.user.id}`)
   ).json();
@@ -511,4 +496,32 @@ test("initial password setup uses a real one-time ticket and then logs into the 
   await expect(
     page.getByRole("heading", { name: "你好，mui-setup@example.invalid" }),
   ).toBeVisible();
+});
+
+test("independent OM discussions survive reload and Git credentials can be revoked", async ({
+  page,
+}) => {
+  await login(page);
+  await nav(page, "改进工作方式");
+  await page.getByLabel("新讨论主题").fill("改进样例分析方法");
+  await page.getByRole("button", { name: "开始讨论", exact: true }).click();
+  await expect(page).toHaveURL(/\/reflections\/rfl_/);
+  await page
+    .getByLabel("继续 Reflection")
+    .fill("/domain-knowledge 请把讨论总结到 OM");
+  await page.getByRole("button", { name: "发送消息", exact: true }).click();
+  await expect(page.getByLabel("提交后内容")).toBeVisible();
+  await page.getByRole("button", { name: "确认并提交", exact: true }).click();
+  await expect(
+    page.getByText("OM 已提交，后续工作将使用新版本。"),
+  ).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("暂无未提交改动。")).toBeVisible();
+  await nav(page, "本地 agent 与 Git");
+  await page.getByLabel("令牌名称").fill("浏览器测试电脑");
+  await page.getByRole("button", { name: "创建 90 天访问令牌" }).click();
+  await expect(page.getByText("令牌仅显示这一次，请安全保存。")).toBeVisible();
+  await page.getByRole("button", { name: "已保存，隐藏令牌" }).click();
+  await page.getByRole("button", { name: "撤销", exact: true }).click();
+  await expect(page.getByText(/浏览器测试电脑.*已撤销/)).toBeVisible();
 });

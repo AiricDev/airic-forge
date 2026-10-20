@@ -16,12 +16,13 @@ export const activityLabel: Record<string, string> = {
   completedWorks: "已结束 Work",
   turns: "Turn 总数",
   reflections: "Reflection 总数",
-  personalProposals: "个人 Proposal",
-  adoptedPersonalProposals: "已采纳个人 Proposal",
+  personalOmCommits: "个人 OM 提交",
+  legacyPersonalProposals: "历史个人 Proposal",
+  legacyAdoptedPersonalProposals: "历史已采纳个人 Proposal",
   organizationContributions: "组织贡献",
   acceptedOrganizationContributions: "已吸收组织贡献",
-  synchronizedProposals: "已采纳组织同步",
-  medianPersonalProposalHours: "个人 Proposal 采纳中位耗时",
+  legacySynchronizedProposals: "历史已采纳组织同步",
+  legacyMedianPersonalProposalHours: "历史 Proposal 采纳中位耗时",
   medianOrganizationReviewHours: "组织贡献吸收中位耗时",
 };
 export function baselineValue(key: string, value: number | null): string {

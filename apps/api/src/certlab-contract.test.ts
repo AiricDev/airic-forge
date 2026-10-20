@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { once } from "node:events";
 import type { AppCommandLocator } from "@airic-forge/domain";
 import { CertLabClient } from "./certlab-client.js";
-import { testCatalog } from "./certlab-test-catalog.js";
+import { initialCapabilityIds, testCatalog } from "./certlab-test-catalog.js";
 
 const locator: AppCommandLocator = { commandId: "command-one", capabilityId: "assessment.start", reportId: "report-one", assessmentId: "assessment-one", resourceKind: "project", resourceId: "project-one", scope: "assessment.start" };
 const receipt = { commandId: locator.commandId, status: "committed", receipt: { key: locator.commandId, resource_kind: "project", resource_id: "project-one", scope: locator.scope, response: { id: locator.assessmentId, record_no: 1 } } };
@@ -32,7 +32,7 @@ test("CertLab identity and catalog bind trusted server Email, organization and a
   try {
     assert.deepEqual(await app.client.identity("synthetic-test"), { appId: "certlab", appUserId: "actor", email: "author@example.invalid", displayName: "Author", organizationId: "synthetic-org" });
     const catalog = await app.client.catalog("synthetic-test");
-    assert.equal(catalog.capabilities.length, 36);
+    assert.equal(catalog.capabilities.length, 38);
     assert.equal(catalog.digest, (await app.client.catalog("synthetic-test")).digest);
   } finally { await app.close(); }
 });
@@ -232,5 +232,25 @@ test("basis queries and fact drafts preserve report-bound command receipt identi
     assert.deepEqual(await app.client.receipt("synthetic-test", target), committed);
     foreign = true;
     await assert.rejects(() => app.client.receipt("synthetic-test", target), /InvalidCommandReceipt/);
+  } finally { await app.close(); }
+});
+
+test("verification drafts retain report-owned receipts and context preserves checkpoint pagination", async () => {
+  const app = await fixture(async (req, res) => {
+    const envelope = await body(req);
+    if (req.url === "/airic/v1/queries/verification.context") {
+      assert.deepEqual((envelope.input as Record<string, unknown>), { report_id: "report-one", result_id: "inspection-one", offset: 20, limit: 5 });
+      return json(res, { id: "inspection-one", status: "recorded", current_revision: 2, recorded: { checks: [{ id: "label" }], checks_page: { offset: 20, total: 30, next_offset: 25 } } });
+    }
+    assert.equal(req.url, "/airic/v1/queries/command.context");
+    assert.equal((envelope.input as Record<string, unknown>).capability_id, "verification.save-draft");
+    return json(res, { resource_kind: "project", resource_id: "project-one", scope: "verification.save:report-one", target_kind: "report", target_id: "report-one" });
+  });
+  try {
+    assert.deepEqual(await app.client.prepareCommand("synthetic-test", "verification.save-draft", { report_id: "report-one", expected_version: 0 }), { resourceKind: "project", resourceId: "project-one", scope: "verification.save:report-one", targetKind: "report", targetId: "report-one" });
+    const context = await app.client.query("synthetic-test", "verification.context", { report_id: "report-one", result_id: "inspection-one", offset: 20, limit: 5 });
+    assert.equal(((context.recorded as Record<string, unknown>).checks_page as Record<string, unknown>).next_offset, 25);
+    assert(!initialCapabilityIds.includes("verification.record"));
+    assert(!initialCapabilityIds.includes("verification.withdraw"));
   } finally { await app.close(); }
 });

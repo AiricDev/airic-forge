@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import { readFile, access } from "node:fs/promises";
 import { join } from "node:path";
 import { registerReflectionHttp } from "./reflection-http.js";
+import { registerOmHttp } from "./om-http.js";
+import { registerGitHttp } from "./git-http.js";
 
 type BootstrapBody = { appId: "certlab"; workType: "report-authoring"; entityId: string; selection?: Record<string, unknown>; workId?: string };
 type RpcRequest = { id?: string | number; method?: string; params?: Record<string, unknown> };
@@ -18,10 +20,12 @@ const bearer = (value: unknown): string => {
 };
 
 export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
-  const app = Fastify({ logger: true, bodyLimit: 9 * 1024 * 1024 });
+  const app = Fastify({ logger: true, bodyLimit: 9 * 1024 * 1024, trustProxy: runtime.config.trustedProxy ?? false });
   void app.register(cors, { origin: runtime.config.allowedOrigin, credentials: true });
   void app.register(websocket);
   registerReflectionHttp(app, runtime);
+  registerOmHttp(app, runtime);
+  registerGitHttp(app, runtime);
   app.addContentTypeParser(/^(application\/pdf|application\/octet-stream|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document|text\/plain)$/i, { parseAs: "buffer" }, (_request, body, done) => done(null, body));
 
   app.get("/health", async () => ({ status: "ok", service: "airic-forge" }));
@@ -31,6 +35,8 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     catch { return reply.type("application/json").code(404).send({ error: "WebWorkspaceNotBuilt" }); }
   };
   app.get("/", async (_request, reply) => sendWorkspace(reply));
+  app.get("/reflections", async (_request, reply) => sendWorkspace(reply));
+  app.get("/reflections/:reflectionId", async (_request, reply) => sendWorkspace(reply));
   app.get("/works", async (_request, reply) => sendWorkspace(reply));
   app.get<{ Params: { workId: string } }>("/works/:workId", async (_request, reply) => sendWorkspace(reply));
   app.get<{ Params: { file: string } }>("/assets/:file", async (request, reply) => {
@@ -161,12 +167,6 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
     if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
     try { return reply.send(await runtime.useCases.workHistory(actorId, request.params.workId)); }
-    catch (error) { return reply.code(error instanceof Error && error.message === "WorkNotFound" ? 404 : 403).send({ error: error instanceof Error ? error.message : "Forbidden" }); }
-  });
-  app.get<{ Params: { workId: string } }>("/api/v1/works/:workId/proposals", async (request, reply) => {
-    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
-    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
-    try { return reply.send({ proposals: await runtime.useCases.workProposals(actorId, request.params.workId) }); }
     catch (error) { return reply.code(error instanceof Error && error.message === "WorkNotFound" ? 404 : 403).send({ error: error instanceof Error ? error.message : "Forbidden" }); }
   });
   app.get<{ Params: { workId: string } }>("/api/v1/works/:workId/feedback", async (request, reply) => {
@@ -309,13 +309,6 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     try { return reply.send(await runtime.useCases.acceptOrganizationContribution(actorId, request.params.id, request.body.reviewedRevision)); }
     catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 409).send({ error: error instanceof Error ? error.message : "ContributionAcceptanceFailed" }); }
   });
-  app.post("/api/v1/organization/sync", async (request, reply) => {
-    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
-    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
-    try { return reply.code(201).send(await runtime.useCases.createOrganizationSync(actorId)); }
-    catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : "OrganizationSyncFailed" }); }
-  });
-
   app.post("/api/v1/auth/logout", async (request, reply) => {
     runtime.webSessions.revoke(cookieToken(request.headers.cookie));
     reply.header("Set-Cookie", sessionCookie("", request.protocol === "https").replace("Max-Age=1800", "Max-Age=0"));
@@ -388,77 +381,6 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
     try { return reply.header("Content-Disposition", `attachment; filename="airicforge-suggestion-${request.params.reflectionId}.md"`).type("text/markdown; charset=utf-8").send(await runtime.useCases.reflectionSuggestion(actorId, request.params.reflectionId)); }
     catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "SuggestionUnavailable" }); }
-  });
-
-  app.get<{ Params: { ownerId: string } }>("/api/v1/users/:ownerId/proposals", async (request, reply) => {
-    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
-    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
-    try { return reply.send({ proposals: await runtime.useCases.personalProposals(actorId, request.params.ownerId) }); }
-    catch { return reply.code(403).send({ error: "Forbidden" }); }
-  });
-
-  app.get<{ Querystring: { page?: string; ownerId?: string; status?: string; source?: string } }>("/api/v1/proposals", async (request, reply) => {
-    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
-    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
-    const rawPage = request.query.page ?? "1";
-    if (!/^[1-9]\d{0,5}$/.test(rawPage) || Number(rawPage) > 100_000) return reply.code(400).send({ error: "InvalidProposalPage" });
-    try { return reply.send(await runtime.useCases.listProposals(actorId, { ...(request.query.ownerId ? { ownerUserId: request.query.ownerId } : {}), ...(request.query.status ? { status: request.query.status as "open" | "adopted" | "abandoned" } : {}), ...(request.query.source ? { source: request.query.source as "personal" | "reflection" | "organization-sync" } : {}) }, Number(rawPage))); }
-    catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 400).send({ error: error instanceof Error ? error.message : "ProposalListFailed" }); }
-  });
-
-  app.get<{ Params: { proposalId: string } }>("/api/v1/proposals/:proposalId", async (request, reply) => {
-    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
-    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
-    try { return reply.send(await runtime.useCases.personalProposal(actorId, request.params.proposalId)); }
-    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "ProposalReadFailed" }); }
-  });
-
-  app.get<{ Params: { proposalId: string }; Querystring: { path: string } }>("/api/v1/proposals/:proposalId/file", async (request, reply) => {
-    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
-    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
-    try { return reply.send(await runtime.useCases.personalProposalFile(actorId, request.params.proposalId, request.query.path)); }
-    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "ProposalFileReadFailed" }); }
-  });
-
-  app.patch<{ Params: { proposalId: string }; Body: { path: string; content: string } }>("/api/v1/proposals/:proposalId/files", async (request, reply) => {
-    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
-    const ticket = String(request.headers["x-forge-ticket"] ?? "");
-    if (!actorId && !ticket) return reply.code(401).send({ error: "Unauthorized" });
-    try {
-      return reply.send(actorId ? await runtime.useCases.writePersonalProposal(actorId, request.params.proposalId, request.body.path, request.body.content) : await runtime.useCases.writeProposal(ticket, request.params.proposalId, request.body.path, request.body.content));
-    }
-    catch (error) { return reply.code(error instanceof Error && ["Forbidden", "ProposalNotEditable", "ProposalNotOwned"].includes(error.message) ? 403 : 400).send({ error: error instanceof Error ? error.message : "ProposalWriteFailed" }); }
-  });
-
-  app.post<{ Params: { proposalId: string } }>("/api/v1/proposals/:proposalId/review", async (request, reply) => {
-    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
-    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
-    try { return reply.send(await runtime.useCases.reviewPersonalProposal(actorId, request.params.proposalId)); }
-    catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "ProposalReviewFailed" }); }
-  });
-
-  app.post<{ Params: { proposalId: string } }>("/api/v1/proposals/:proposalId/rebase", async (request, reply) => {
-    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
-    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
-    try { return reply.send(await runtime.useCases.rebasePersonalProposal(actorId, request.params.proposalId)); }
-    catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : "ProposalRebaseFailed" }); }
-  });
-
-  app.post<{ Params: { proposalId: string }; Body: { title: string; reviewedRevision?: string } }>("/api/v1/proposals/:proposalId/adopt", async (request, reply) => {
-    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
-    const ticket = String(request.headers["x-forge-ticket"] ?? "");
-    if (!actorId && !ticket) return reply.code(401).send({ error: "Unauthorized" });
-    try {
-      return reply.send(actorId ? await runtime.useCases.adoptPersonalProposal(actorId, request.params.proposalId, request.body.title, request.body.reviewedRevision ?? "") : await runtime.useCases.adoptProposal(ticket, request.params.proposalId, request.body.title));
-    }
-    catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : "ProposalAdoptionFailed" }); }
-  });
-
-  app.post<{ Params: { proposalId: string } }>("/api/v1/proposals/:proposalId/abandon", async (request, reply) => {
-    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
-    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
-    try { return reply.send(await runtime.useCases.abandonPersonalProposal(actorId, request.params.proposalId)); }
-    catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 400).send({ error: error instanceof Error ? error.message : "ProposalAbandonFailed" }); }
   });
 
   app.after(() => app.get("/acp", { websocket: true }, (socket, request) => {
