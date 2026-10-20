@@ -39,6 +39,7 @@ export function ContributionsPage({ users }: { users: User[] }) {
   const [paths, setPaths] = useState<string[]>([]);
   const [originalPaths, setOriginalPaths] = useState<string[]>([]);
   const [confirm, setConfirm] = useState(false);
+  const [abandon, setAbandon] = useState(false);
   const detail = useResource<ContributionDetail>(
     selected
       ? `/api/v1/organization/contributions/${encodeURIComponent(selected)}`
@@ -62,7 +63,7 @@ export function ContributionsPage({ users }: { users: User[] }) {
         JSON.stringify(paths) !== JSON.stringify(originalPaths)),
     ),
   );
-  const change = async (kind: "review" | "accept") => {
+  const change = async (kind: "review" | "accept" | "abandon") => {
     if (!detail.data) return;
     const ok = await c.run(
       async () => {
@@ -75,12 +76,16 @@ export function ContributionsPage({ users }: { users: User[] }) {
         );
         setOriginalPaths(paths);
         setConfirm(false);
-        detail.reload();
+        setAbandon(false);
+        if (kind === "abandon") setSelected("");
+        else detail.reload();
         list.reload();
       },
       kind === "review"
-        ? "候选 OM 已校验；请核对差异后采纳。"
-        : "选定内容已纳入组织 main；成员可自主同步。",
+        ? "选定内容已提交到贡献分支；请核对差异后合并。"
+        : kind === "abandon"
+          ? "贡献分支已删除。"
+          : "选定内容已纳入组织 main；成员可自主同步。",
     );
     return ok;
   };
@@ -88,7 +93,7 @@ export function ContributionsPage({ users }: { users: User[] }) {
     <Stack spacing={3}>
       <PageHeading
         title="组织贡献"
-        description="固定个人来源版本，选择可复用内容并审阅后吸收。"
+        description="创建贡献分支，提交可复用内容，再合并到组织 main。"
       />
       <Feedback {...c} />
       <Box
@@ -205,10 +210,10 @@ export function ContributionsPage({ users }: { users: User[] }) {
                       setReason("");
                       setEvidence("");
                       list.reload();
-                    }, "已固定作者版本和组织基准；现在选择要吸收的文件。")
+                    }, "已创建贡献分支；现在选择要提交的文件。")
                   }
                 >
-                  固定贡献来源
+                  创建贡献
                 </Button>
               </>
             )}
@@ -264,16 +269,31 @@ export function ContributionsPage({ users }: { users: User[] }) {
                     disabled={c.busy || !paths.length}
                     onClick={() => void change("review")}
                   >
-                    校验并审阅选定内容
+                    保存选定文件到贡献分支
                   </Button>
                 )}
-                {detail.data.record.status === "reviewed" && (
+                {detail.data.record.status === "open" &&
+                  detail.data.record.selectedPaths.length > 0 &&
+                  detail.data.record.selectionRevision ===
+                    detail.data.record.reviewedRevision && (
+                    <Button
+                      variant="contained"
+                      disabled={
+                        c.busy ||
+                        JSON.stringify(paths) !== JSON.stringify(originalPaths)
+                      }
+                      onClick={() => setConfirm(true)}
+                    >
+                      采纳到组织 main
+                    </Button>
+                  )}
+                {detail.data.record.status === "open" && (
                   <Button
-                    variant="contained"
+                    color="error"
                     disabled={c.busy}
-                    onClick={() => setConfirm(true)}
+                    onClick={() => setAbandon(true)}
                   >
-                    采纳到组织 main
+                    放弃贡献
                   </Button>
                 )}
                 {detail.data.record.acceptedRevision && (
@@ -294,12 +314,22 @@ export function ContributionsPage({ users }: { users: User[] }) {
       <ConfirmDialog
         open={confirm}
         title="采纳组织贡献"
-        description="将已审阅的选定内容纳入组织 main，成员随后可自主同步。"
+        description="将当前贡献分支合并到组织 main，成员随后可自主同步。"
         confirmLabel="采纳到组织 main"
         busy={c.busy}
         error={c.error}
         onCancel={() => setConfirm(false)}
         onConfirm={() => void change("accept")}
+      />
+      <ConfirmDialog
+        open={abandon}
+        title="放弃贡献"
+        description="删除此贡献分支。组织和个人分支不会改变。"
+        confirmLabel="放弃贡献"
+        busy={c.busy}
+        error={c.error}
+        onCancel={() => setAbandon(false)}
+        onConfirm={() => void change("abandon")}
       />
     </Stack>
   );

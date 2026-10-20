@@ -80,7 +80,7 @@ test("two users are isolated; an admin can inspect without becoming the OM owner
       assert.equal(restarted.db.linkedUserId("certlab", "app-alice"), alice.id);
       assert.equal(restarted.om.head(`users/${alice.id}`), revision);
       assert.equal(restarted.db.accepted("certlab")?.digest, catalog.digest);
-      assert.equal(restarted.db.draftsForUser(alice.id)[0]?.content, draftContent);
+      assert.equal(restarted.drafts.draftsForUser(alice.id)[0]?.content, draftContent);
       assert.equal(restarted.om.head(`users/${alice.id}`), revision);
       assert.equal(restarted.db.work(bobWork.id)?.ownerUserId, bob.id);
       assert.equal(restarted.trajectories.read(bobWork.id)[0]?.id, "event-bob");

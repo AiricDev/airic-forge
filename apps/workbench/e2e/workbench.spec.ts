@@ -347,7 +347,7 @@ test("real organization review enables a directly committed member sync", async 
   await login(page, "admin");
   await nav(page, "组织贡献");
   await page.getByRole("button", { name: /分享证据定位方法.*open/ }).click();
-  await page.getByRole("button", { name: "校验并审阅选定内容" }).click();
+  await page.getByRole("button", { name: "保存选定文件到贡献分支" }).click();
   await page.getByRole("button", { name: "采纳到组织 main" }).click();
   await page
     .getByRole("dialog")

@@ -16,12 +16,18 @@ import { PiContextSummarizer } from "./pi-context-summary.js";
 import { PiWorkAgentRunner } from "./pi-work-agent.js";
 import { PiReflectionAgentRunner } from "./pi-reflection-agent.js";
 import { InMemoryEvidenceSessionStore, LocalEvidenceExtractor } from "./evidence.js";
+import { GitOmWorkspaces } from "./git-om-workspaces.js";
+import { GitContributions } from "./git-contributions.js";
+import { migrateOmStateToGit } from "./om-git-migration.js";
+import { migrateOmDrafts } from "./om-migration.js";
 
 /** Composition root only. Application policy lives in ForgeUseCases. */
 export class ForgeRuntime {
   readonly db: ForgeDatabase;
   readonly om: PersonalGitOperatingModel;
   readonly omChanges: PersonalOmChanges;
+  readonly drafts: GitOmWorkspaces;
+  readonly organization: GitContributions;
   readonly gitAccess: GitAccess;
   readonly trajectories: JsonlTrajectoryStore;
   readonly sessions = new InMemoryAppSessionStore();
@@ -41,8 +47,14 @@ export class ForgeRuntime {
     this.app = new CertLabClient(config.certLabUrl, config.organizationId);
     this.instanceSettings = { operatingModel: { repositoryPath: config.projectDir, dataPath: config.dataDir, personalWorktreesPath: join(config.dataDir, "worktrees", "users") }, integration: this.app.describeIntegration() };
     this.om.initialize();
-    this.omChanges = new PersonalOmChanges({ accounts: this.db, catalogs: this.db, om: this.om, drafts: this.db, system: systemPort });
+    if (migrateOmDrafts(this.db, this.om).length || migrateOmStateToGit(this.db, this.om).report.length) {
+      this.db.close();
+      throw new Error("OmGitMigrationRequired: stop the service, back up project and data, then run scripts/migrate-personal-om.mjs --apply");
+    }
+    this.drafts = new GitOmWorkspaces(this.om);
+    this.organization = new GitContributions(this.om);
+    this.omChanges = new PersonalOmChanges({ accounts: this.db, catalogs: this.db, om: this.om, drafts: this.drafts, system: systemPort });
     this.gitAccess = new GitAccess({ accounts: this.db, tokens: this.db, system: systemPort });
-    this.useCases = new ForgeUseCases({ accounts: this.db, works: this.db, om: this.om, omChanges: this.omChanges, reportWorkDefinitionId: config.reportWorkDefinitionId, omDrafts: this.db, organization: this.db, measurements: this.db, instanceSettings: this.instanceSettings, app: this.app, organizationId: config.organizationId, catalogs: this.db, agents: new PiWorkAgentRunner(config), workContext: { summarizer: new PiContextSummarizer(config), summaries: new FileContextSummaryStore(config.dataDir), inputTokens: config.contextInputTokens, outputTokens: config.contextOutputTokens }, reflectionAgent: new PiReflectionAgentRunner(config), reflectionRunStore: this.db, sessions: this.sessions, evidenceExtractor: new LocalEvidenceExtractor(), evidenceSessions: this.evidenceSessions, passwordSetups: this.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: this.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
+    this.useCases = new ForgeUseCases({ accounts: this.db, works: this.db, om: this.om, omChanges: this.omChanges, reportWorkDefinitionId: config.reportWorkDefinitionId, omDrafts: this.drafts, organization: this.organization, measurements: this.db, instanceSettings: this.instanceSettings, app: this.app, organizationId: config.organizationId, catalogs: this.db, agents: new PiWorkAgentRunner(config), workContext: { summarizer: new PiContextSummarizer(config), summaries: new FileContextSummaryStore(config.dataDir), inputTokens: config.contextInputTokens, outputTokens: config.contextOutputTokens }, reflectionAgent: new PiReflectionAgentRunner(config), reflectionRunStore: this.db, sessions: this.sessions, evidenceExtractor: new LocalEvidenceExtractor(), evidenceSessions: this.evidenceSessions, passwordSetups: this.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: this.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
   }
 }

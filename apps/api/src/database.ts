@@ -19,6 +19,7 @@ export class ForgeDatabase {
 
   legacyOmProposals(): Array<Record<string, unknown>> { return this.#db.prepare("SELECT * FROM proposals ORDER BY created_at, id").all() as Array<Record<string, unknown>>; }
   omMigrationDone(source: string): boolean { return Boolean(this.#db.prepare("SELECT 1 FROM om_legacy_migrations WHERE source=?").get(source)); }
+  recordOmMigration(source: string): void { this.#db.prepare("INSERT OR IGNORE INTO om_legacy_migrations (source) VALUES (?)").run(source); }
   saveMigratedWorkspace(source: string, workspace: OmWorkspace): void {
     this.#db.exec("BEGIN IMMEDIATE");
     try {
@@ -557,15 +558,6 @@ export class ForgeDatabase {
   contributions(): OrganizationContribution[] {
     return (this.#db.prepare("SELECT * FROM organization_contributions ORDER BY created_at DESC").all() as Record<string, unknown>[]).map((row) => this.#contribution(row));
   }
-  reviewContribution(id: string, selectedPaths: string[], candidateBranch: string, candidateWorktree: string, reviewedRevision: string, baseMainRevision: string): void {
-    const changed = this.#db.prepare("UPDATE organization_contributions SET status='reviewed', selected_paths_json=?, candidate_branch=?, candidate_worktree=?, reviewed_revision=?, base_main_revision=? WHERE id=? AND status='open'")
-      .run(JSON.stringify(selectedPaths), candidateBranch, candidateWorktree, reviewedRevision, baseMainRevision, id).changes;
-    if (changed !== 1) throw new Error("ContributionNotOpen");
-  }
-  acceptContribution(id: string, acceptedRevision: string): void {
-    const changed = this.#db.prepare("UPDATE organization_contributions SET status='accepted', accepted_revision=?, accepted_at=? WHERE id=? AND status='reviewed'").run(acceptedRevision, new Date().toISOString(), id).changes;
-    if (changed !== 1) throw new Error("ContributionReviewRequired");
-  }
   #contribution(row: Record<string, unknown>): OrganizationContribution {
     return { id: String(row.id), authorUserId: String(row.author_user_id), sourceRevision: String(row.source_revision), baseMainRevision: String(row.base_main_revision), reason: String(row.reason), evidence: String(row.evidence), status: row.status as OrganizationContribution["status"], selectedPaths: JSON.parse(String(row.selected_paths_json)) as string[], ...(row.candidate_branch ? { candidateBranch: String(row.candidate_branch) } : {}), ...(row.candidate_worktree ? { candidateWorktree: String(row.candidate_worktree) } : {}), ...(row.reviewed_revision ? { reviewedRevision: String(row.reviewed_revision) } : {}), ...(row.accepted_revision ? { acceptedRevision: String(row.accepted_revision) } : {}), createdAt: String(row.created_at) };
   }
@@ -589,9 +581,8 @@ export class ForgeDatabase {
     return {
       works: count("SELECT COUNT(*) AS n FROM works"), completedWorks: count("SELECT COUNT(*) AS n FROM works WHERE status='completed'"), turns: count("SELECT COUNT(*) AS n FROM turns"), reflections: count("SELECT COUNT(*) AS n FROM reflections"),
       legacyPersonalProposals: count("SELECT COUNT(*) AS n FROM proposals WHERE source!='organization-sync'"), legacyAdoptedPersonalProposals: count("SELECT COUNT(*) AS n FROM proposals WHERE source!='organization-sync' AND status='adopted'"),
-      organizationContributions: count("SELECT COUNT(*) AS n FROM organization_contributions"), acceptedOrganizationContributions: count("SELECT COUNT(*) AS n FROM organization_contributions WHERE status='accepted'"), legacySynchronizedProposals: count("SELECT COUNT(*) AS n FROM proposals WHERE source='organization-sync' AND status='adopted'"),
+      legacySynchronizedProposals: count("SELECT COUNT(*) AS n FROM proposals WHERE source='organization-sync' AND status='adopted'"),
       legacyMedianPersonalProposalHours: medianHours("SELECT created_at AS start_at, updated_at AS end_at FROM proposals WHERE source!='organization-sync' AND status='adopted'"),
-      medianOrganizationReviewHours: medianHours("SELECT created_at AS start_at, accepted_at AS end_at FROM organization_contributions WHERE status='accepted' AND accepted_at IS NOT NULL"),
     };
   }
   feedbackCounts(): Record<WorkFeedbackKind, number> {

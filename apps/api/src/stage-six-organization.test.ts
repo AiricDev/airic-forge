@@ -10,6 +10,7 @@ import { ForgeRuntime } from "./runtime.js";
 import type { ForgeConfig } from "./config.js";
 import { buildServer } from "./server.js";
 import { createTestOmCommit } from "./test-proposal-fixture.js";
+import { git } from "./personal-git-om.js";
 
 test("organization comparison and contribution detail return complete diffs above one MiB", async () => {
   const f = omFixture();
@@ -46,8 +47,9 @@ test("reviewed and accepted contribution details read immutable commits without 
     await createTestOmCommit(f.runtime, f.owner.id, [{ path, content: f.runtime.om.document(f.runtime.om.head("main"), path) + "\nReviewed shared policy.\n" }], "Share policy");
     const record = await f.runtime.useCases.createOrganizationContribution(f.admin.id, f.owner.id, "Share reviewed policy", "");
     const reviewed = await f.runtime.useCases.reviewOrganizationContribution(f.admin.id, record.id, [path]);
-    const stored = f.runtime.db.contribution(record.id)!;
-    const worktree = stored.candidateWorktree!;
+    const stored = f.runtime.organization.contribution(record.id)!;
+    const worktree = join(f.root, "optional-candidate-worktree");
+    git(f.runtime.om.projectDir, ["worktree", "add", "--detach", worktree, stored.reviewedRevision!]);
     const headers = { cookie: `forge_session=${f.runtime.webSessions.issue(f.admin.id)}` };
     const read = () => app.inject({ method: "GET", url: `/api/v1/organization/contributions/${record.id}`, headers });
     const original = await read();
@@ -65,9 +67,9 @@ test("reviewed and accepted contribution details read immutable commits without 
     try {
       const missing = await read();
       assert.equal(missing.statusCode, 200, missing.body.slice(0, 500));
-      assert.equal(missing.json().record.status, "reviewed");
+      assert.equal(missing.json().record.status, "open");
       assert.equal(missing.json().candidateDiff, candidateDiff);
-      assert.deepEqual(f.runtime.db.contribution(record.id), stored);
+      assert.deepEqual(f.runtime.organization.contribution(record.id), stored);
     } finally { renameSync(moved, worktree); }
     const accepted = await f.runtime.useCases.acceptOrganizationContribution(f.admin.id, record.id, reviewed.reviewedRevision!);
     rmSync(worktree, { recursive: true, force: true });
@@ -137,7 +139,7 @@ test("administrator selectively accepts personal OM and member sync preserves ol
     await assert.rejects(() => useCases.measurementBaseline(member.id), /Forbidden/);
     const baseline = await useCases.measurementBaseline(admin.id);
     assert.equal(baseline.activity.acceptedOrganizationContributions, 1);
-    assert.equal(runtime.db.workspace(member.id, "sync"), undefined);
+    assert.equal(runtime.drafts.workspace(member.id, "sync"), undefined);
     assert.equal(baseline.feedback["required-human-decision"], 1);
     assert.equal(baseline.feedback["avoidable-correction"], 1);
   } finally { runtime.db.close(); rmSync(root, { recursive: true, force: true }); }

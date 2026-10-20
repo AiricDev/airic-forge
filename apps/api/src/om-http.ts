@@ -20,7 +20,7 @@ export function registerOmHttp(app: FastifyInstance, runtime: ForgeRuntime) {
   };
   app.get("/api/v1/reflections", (request, reply) => respond(request, reply, async (actor) => ({ reflections: await runtime.useCases.personalReflections(actor) })));
   app.post<{ Body: { question: string } }>("/api/v1/reflections", (request, reply) => respond(request, reply, (actor) => runtime.useCases.openPersonalReflection(actor, request.body?.question)));
-  app.get("/api/v1/om/workspaces", (request, reply) => respond(request, reply, async (actor) => ({ workspaces: runtime.db.workspaces(actor) })));
+  app.get("/api/v1/om/workspaces", (request, reply) => respond(request, reply, async (actor) => ({ workspaces: runtime.drafts.workspaces(actor) })));
   app.get<{ Params: { scope: string } }>("/api/v1/om/workspaces/:scope", (request, reply) => respond(request, reply, (actor) => runtime.omChanges.read(actor, request.params.scope)));
   app.put<{ Params: { scope: string }; Body: { baseRevision: string; edits: OmEdit[]; summary: string } }>("/api/v1/om/workspaces/:scope", (request, reply) => respond(request, reply, (actor) => runtime.useCases.mutateOmDraft(actor, request.params.scope, () => runtime.omChanges.save(actor, request.params.scope, request.body))));
   app.delete<{ Params: { scope: string } }>("/api/v1/om/workspaces/:scope", (request, reply) => respond(request, reply, async (actor) => {

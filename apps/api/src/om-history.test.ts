@@ -42,11 +42,12 @@ for (const legacyRelease of [false, true]) {
         "history-review", versions[0].revision, base, base, [path],
         "Accept reviewed report policy\n\nOnly selected changes enter the organization OM.",
       );
-      assert.equal(om.acceptContribution(candidate.branch, base), candidate.revision);
+      const accepted = om.acceptContribution(candidate.branch, base);
+      assert(om.includesRevision(accepted, candidate.revision));
       assert.deepEqual(branches(), [...initialBranches, candidate.branch].sort());
       assert.deepEqual(
         om.history("main").map(({ revision, subject }) => ({ revision, subject })),
-        [{ revision: candidate.revision, subject: "Accept reviewed report policy" }, { revision: base, subject: initialEntry.subject }],
+        [{ revision: accepted, subject: "Merge organization OM contribution" }, { revision: base, subject: initialEntry.subject }],
       );
       assert.equal(om.document(candidate.revision, path), content);
       assert.deepEqual(

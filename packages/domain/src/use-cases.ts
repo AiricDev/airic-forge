@@ -784,7 +784,13 @@ export class ForgeUseCases {
   async measurementBaseline(actorUserId: string) {
     await this.requireAdmin(actorUserId);
     const [activity, feedback] = await Promise.all([this.measurementPort().activityCounts(), this.measurementPort().feedbackCounts()]);
-    return { activity: { ...activity, personalOmCommits: await this.ports.om.personalCommitCount?.() ?? 0 }, feedback, interpretation: "活动数量不能证明能力改善。反馈来自用户自报；制定目标前需要按工作类型、任务难度、能力目录和模型配置选取可比样本。" };
+    const contributions = await this.organizationPort().contributions();
+    const durations = contributions.filter((record) => record.status === "accepted" && record.acceptedAt)
+      .map((record) => (Date.parse(record.acceptedAt!) - Date.parse(record.createdAt)) / 3_600_000)
+      .filter((hours) => Number.isFinite(hours) && hours >= 0).sort((a, b) => a - b);
+    const midpoint = Math.floor(durations.length / 2);
+    const medianOrganizationReviewHours = durations.length ? (durations.length % 2 ? durations[midpoint] : (durations[midpoint - 1] + durations[midpoint]) / 2) : null;
+    return { activity: { ...activity, organizationContributions: contributions.length, acceptedOrganizationContributions: contributions.filter((record) => record.status === "accepted").length, medianOrganizationReviewHours, personalOmCommits: await this.ports.om.personalCommitCount?.() ?? 0 }, feedback, interpretation: "活动数量不能证明能力改善。反馈来自用户自报；制定目标前需要按工作类型、任务难度、能力目录和模型配置选取可比样本。" };
   }
 
   async compareOrganizationSource(actorUserId: string, authorUserId: string) {
@@ -805,7 +811,7 @@ export class ForgeUseCases {
     const record = { id: this.ports.system.id("con"), authorUserId, sourceRevision: comparison.sourceRevision, baseMainRevision: comparison.mainRevision, reason: reason.trim(), evidence: evidence.trim(), status: "open" as const, selectedPaths: [], createdAt: this.ports.system.now() };
     await this.ports.om.pinContributionSource(record.id, record.sourceRevision);
     await organization.createContribution(record);
-    return record;
+    return (await organization.contribution(record.id))!;
   }
 
   async organizationContributions(actorUserId: string) {
@@ -819,7 +825,7 @@ export class ForgeUseCases {
     const record = await this.organizationPort().contribution(id);
     if (!record) throw new Error("ContributionNotFound");
     const comparison = await this.ports.om.divergence(record.sourceRevision, await this.ports.om.head("main"));
-    const candidateRevision = record.acceptedRevision ?? record.reviewedRevision;
+    const candidateRevision = record.reviewedRevision;
     const candidateDiff = candidateRevision ? (await this.ports.om.divergence(candidateRevision, record.baseMainRevision)).diff : undefined;
     return { record, authorEmail: (await this.ports.accounts.userById(record.authorUserId))?.email ?? record.authorUserId, ...comparison, candidateDiff };
   }
@@ -830,15 +836,15 @@ export class ForgeUseCases {
     const record = await organization.contribution(id);
     if (!record || record.status === "accepted") throw new Error("ContributionNotOpen");
     const mainRevision = await this.ports.om.head("main");
-    if (record.status === "reviewed" || record.baseMainRevision !== mainRevision) throw new Error("OrganizationReviewStale: create a new contribution");
+    if (record.baseMainRevision !== mainRevision) throw new Error("OrganizationReviewStale: create a new contribution");
     const comparison = await this.ports.om.divergence(record.sourceRevision, mainRevision);
-    if (!selectedPaths.length || new Set(selectedPaths).size !== selectedPaths.length || selectedPaths.some((path) => !isAllowedProposalPath(path) || !comparison.changedPaths.includes(path))) throw new Error("InvalidContributionSelection");
-    const trailer = (value: string) => value.replace(/\s+/g, " ").trim().slice(0, 500);
-    const message = ["Accept selected organization OM contribution", "", `AiricForge-Contribution: ${record.id}`, `AiricForge-Author: ${record.authorUserId}`, `AiricForge-Source-Revision: ${record.sourceRevision}`, `AiricForge-Reason: ${trailer(record.reason)}`, `AiricForge-Base: ${mainRevision}`].join("\n");
-    const candidate = await this.ports.om.prepareContribution(id, record.sourceRevision, comparison.baseRevision, mainRevision, selectedPaths, message);
+    if (!selectedPaths.length || new Set(selectedPaths).size !== selectedPaths.length || selectedPaths.some((path) => !isAllowedOmDocumentPath(path) || !comparison.changedPaths.includes(path))) throw new Error("InvalidContributionSelection");
+    const trailer = (value: string) => value.replace(/\s+/g, " ").trim();
+    const message = ["Save selected organization OM contribution", "", `AiricForge-Contribution: ${record.id}`, `AiricForge-Author: ${record.authorUserId}`, `AiricForge-Source-Revision: ${record.sourceRevision}`, `AiricForge-Reason: ${trailer(record.reason)}`, `AiricForge-Base: ${mainRevision}`, `AiricForge-Selected-Paths: ${JSON.stringify(selectedPaths)}`].join("\n");
+    const candidate = await this.ports.om.prepareContribution(id, record.sourceRevision, comparison.baseRevision, mainRevision, selectedPaths, message, record.reviewedRevision);
     await this.validateOmCandidate(candidate.revision);
-    await organization.reviewContribution(id, selectedPaths, candidate.branch, candidate.worktree, candidate.revision, mainRevision);
-    return { ...record, status: "reviewed" as const, selectedPaths, candidateBranch: candidate.branch, reviewedRevision: candidate.revision };
+    await organization.saveSelection(id, record.reviewedRevision!, candidate.revision);
+    return (await organization.contribution(id))!;
   }
 
   async acceptOrganizationContribution(actorUserId: string, id: string, reviewedRevision: string) {
@@ -846,19 +852,23 @@ export class ForgeUseCases {
     const organization = this.organizationPort();
     const record = await organization.contribution(id);
     if (!record || !record.candidateBranch || record.reviewedRevision !== reviewedRevision) throw new Error("ContributionReviewRequired");
-    if (record.status === "accepted" && record.acceptedRevision === reviewedRevision) return { revision: reviewedRevision };
-    if (record.status !== "reviewed") throw new Error("ContributionReviewRequired");
+    if (record.status === "accepted") return { revision: record.acceptedRevision! };
+    if (!record.selectedPaths.length || record.selectionRevision !== reviewedRevision) throw new Error("ContributionSelectionRequired");
     const activeMain = await this.ports.om.head("main");
-    if (activeMain === reviewedRevision) {
-      await organization.acceptContribution(id, reviewedRevision);
-      return { revision: reviewedRevision };
-    }
     if (activeMain !== record.baseMainRevision) throw new Error("OrganizationReviewStale");
-    if (await this.ports.om.head(record.candidateBranch) !== reviewedRevision || (await this.ports.om.proposalChanges(record.candidateWorktree!)).length) throw new Error("ContributionChangedAfterReview");
+    if (await this.ports.om.head(record.candidateBranch) !== reviewedRevision) throw new Error("ContributionChangedAfterReview");
     await this.validateOmCandidate(reviewedRevision);
-    const revision = await this.ports.om.acceptContribution(record.candidateBranch, record.baseMainRevision);
-    await organization.acceptContribution(id, revision);
+    const revision = await this.ports.om.acceptContribution(record.candidateBranch, record.baseMainRevision, reviewedRevision, actorUserId);
     return { revision };
+  }
+
+  async abandonOrganizationContribution(actorUserId: string, id: string, expectedRevision: string) {
+    await this.requireAdmin(actorUserId);
+    const organization = this.organizationPort();
+    const record = await organization.contribution(id);
+    if (!record || record.status === "accepted") throw new Error("ContributionNotOpen");
+    if (record.reviewedRevision !== expectedRevision) throw new Error("ContributionChangedAfterReview");
+    await organization.abandonContribution(id, expectedRevision);
   }
 
   async completeWork(ticket: string, workId: string): Promise<void> { const session = await this.appSession(ticket); if (session.workId !== workId) throw new Error("WorkNotOwned"); await this.assertActiveWork(session); await this.ports.works.completeWork(session.workId); await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId, type: "message", at: this.ports.system.now(), payload: { kind: "work.completed", sessionId: session.sessionId } }); }

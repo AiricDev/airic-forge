@@ -18,7 +18,7 @@ function gate() {
 async function fixture(agent: ReflectionAgentPort) {
   const root = mkdtempSync(join(tmpdir(), "forge-stream-"));
   const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve("../../seed/certlab"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set(), webDistDir: join(root, "web") });
-  Object.assign(runtime, { useCases: new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omChanges: runtime.omChanges, omDrafts: runtime.db, app: runtime.app, catalogs: runtime.db, agents: { runWork: async () => ({ text: "" }) }, reflectionAgent: agent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: new Set() }) });
+  Object.assign(runtime, { useCases: new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omChanges: runtime.omChanges, omDrafts: runtime.drafts, app: runtime.app, catalogs: runtime.db, agents: { runWork: async () => ({ text: "" }) }, reflectionAgent: agent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: new Set() }) });
   const owner = runtime.db.ensureUser("stream-owner@example.invalid", false);
   const other = runtime.db.ensureUser("stream-other@example.invalid", false);
   const admin = runtime.db.ensureUser("stream-admin@example.invalid", true);
@@ -122,7 +122,7 @@ test("stop preserves a written candidate, excludes governance, and never records
     const { run } = await f.runtime.useCases.startReflectionRun(f.owner.id, f.reflection.id, "/domain-knowledge Save lesson", "request-stop");
     await entered.promise;
     const scope = `reflection:${f.reflection.id}`;
-    const before = f.runtime.db.workspace(f.owner.id, scope)!;
+    const before = f.runtime.drafts.workspace(f.owner.id, scope)!;
     for (const action of [
       () => f.runtime.omChanges.discard(f.owner.id, scope),
       () => f.runtime.omChanges.rebase(f.owner.id, scope),
@@ -132,9 +132,9 @@ test("stop preserves a written candidate, excludes governance, and never records
     assert.equal((await f.runtime.useCases.cancelReflectionRun(f.owner.id, f.reflection.id, run.id)).status, "cancelling");
     finish.release();
     assert.equal((await f.runtime.useCases.reflectionRuns!.wait(f.reflection.id, run.id)).status, "cancelled");
-    assert.deepEqual(f.runtime.db.workspace(f.owner.id, scope), before);
+    assert.deepEqual(f.runtime.drafts.workspace(f.owner.id, scope), before);
     assert.equal(f.runtime.db.reflectionMessages(f.reflection.id).length, 2);
-    assert(f.runtime.db.workspace(f.owner.id, scope)?.edits.some((edit) => edit.path === "subject-knowledge/stream-note.md"));
+    assert(f.runtime.drafts.workspace(f.owner.id, scope)?.edits.some((edit) => edit.path === "subject-knowledge/stream-note.md"));
     assert.equal(f.runtime.db.reflection(f.reflection.id)?.status, "active");
   } finally { finish.release(); await f.close(); }
 });

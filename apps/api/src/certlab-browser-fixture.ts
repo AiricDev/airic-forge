@@ -102,7 +102,7 @@ const reflectionAgent: ReflectionAgentPort = { analyze: async (input) => {
   if (input.lens.id !== "domain-knowledge" || !citedEventIds.length) return { outcome: "analysis", analysis: "证据不足以证明可复用专业改善，不自动产生提案。", attribution: "", citedEventIds };
   return { outcome: "changes", analysis: "依据原资料读取及人工反馈提出有范围的知识候选，不宣称符合。", attribution: "本 Work 实际来源和工程师反馈", citedEventIds, edits: [{ path: "subject-knowledge/standards/synthetic/2026/source-scope.md", content: `---\nid: ${learnedId}\ntitle: 合成来源范围\nsummary: 保存原版本及实际限制。\ntopics: [source]\nreview_state: candidate\n---\n\n合成候选，不替代专业确认。\n` }] };
 } };
-Object.assign(runtime, { useCases: new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omChanges: runtime.omChanges, omDrafts: runtime.db, app: runtime.app, organizationId: runtime.config.organizationId, catalogs: runtime.db, agents, reflectionAgent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: new Set() }) });
+Object.assign(runtime, { useCases: new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omChanges: runtime.omChanges, omDrafts: runtime.drafts, app: runtime.app, organizationId: runtime.config.organizationId, catalogs: runtime.db, agents, reflectionAgent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: new Set() }) });
 const app = buildServer(runtime);
 await app.listen({ host: "127.0.0.1", port });
 let stopping = false;

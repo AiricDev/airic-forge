@@ -150,9 +150,10 @@ export type Contribution = {
   baseMainRevision: string;
   reason: string;
   evidence: string;
-  status: "open" | "reviewed" | "accepted";
+  status: "open" | "accepted";
   selectedPaths: string[];
   reviewedRevision?: string;
+  selectionRevision?: string;
   acceptedRevision?: string;
 };
 export type Comparison = {

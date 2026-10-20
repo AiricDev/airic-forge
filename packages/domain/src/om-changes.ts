@@ -124,7 +124,7 @@ export class PersonalOmChanges {
       if (!draft.edits.length && !draft.upstreamRevision) throw new Error("OmHasNoChanges");
       if (draft.upstreamRevision && await this.ports.om.head("main") !== draft.upstreamRevision) throw new Error("OrganizationRevisionChanged");
       const revision = this.ports.om.prepareOmCommit({ ownerUserId: actor, baseRevision: draft.baseRevision, edits: draft.edits, summary: draft.summary,
-        trailers: { "AiricForge-Request": requestId, "AiricForge-Digest": digest, "AiricForge-Source": scope }, upstreamRevision: draft.upstreamRevision });
+        trailers: { "AiricForge-Request": requestId, "AiricForge-Digest": digest, "AiricForge-Source": scope, "AiricForge-Author": actor, "AiricForge-Reason": draft.summary, "AiricForge-Source-Revision": draft.baseRevision }, upstreamRevision: draft.upstreamRevision });
       this.ports.om.checkIncomingHistory(draft.baseRevision, revision);
       await this.validate(revision);
       this.ports.om.publishOmCommit(actor, draft.baseRevision, revision);

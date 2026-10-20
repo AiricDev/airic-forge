@@ -313,6 +313,12 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     try { return reply.send(await runtime.useCases.reviewOrganizationContribution(actorId, request.params.id, request.body.selectedPaths)); }
     catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 409).send({ error: error instanceof Error ? error.message : "ContributionReviewFailed" }); }
   });
+  app.post<{ Params: { id: string }; Body: { reviewedRevision: string } }>("/api/v1/organization/contributions/:id/abandon", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { await runtime.useCases.abandonOrganizationContribution(actorId, request.params.id, request.body.reviewedRevision); return reply.send({ abandoned: true }); }
+    catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 409).send({ error: error instanceof Error ? error.message : "ContributionAbandonFailed" }); }
+  });
   app.post<{ Params: { id: string }; Body: { reviewedRevision: string } }>("/api/v1/organization/contributions/:id/accept", async (request, reply) => {
     const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
     if (!actorId) return reply.code(401).send({ error: "Unauthorized" });

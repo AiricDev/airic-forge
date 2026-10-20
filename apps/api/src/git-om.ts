@@ -280,10 +280,11 @@ export class GitOperatingModel {
     run(this.projectDir, ["update-ref", `refs/forge/contributions/${contributionId}/source`, sourceRevision]);
   }
 
-  prepareContribution(contributionId: string, sourceRevision: string, baseRevision: string, mainRevision: string, selectedPaths: string[], message: string): { branch: string; worktree: string; revision: string } {
+  prepareContribution(contributionId: string, sourceRevision: string, baseRevision: string, mainRevision: string, selectedPaths: string[], message: string, expectedCandidateRevision?: string): { branch: string; worktree: string; revision: string } {
+    if (!/^[a-zA-Z0-9_-]+$/.test(contributionId)) throw new Error("InvalidContributionSource");
     if (this.head("main") !== mainRevision) throw new Error("OrganizationReviewStale");
     const changed = new Set(this.divergence(sourceRevision, mainRevision).changedPaths);
-    if (!selectedPaths.length || selectedPaths.some((path) => !isAllowedProposalPath(path) || !changed.has(path))) throw new Error("InvalidContributionSelection");
+    if (!selectedPaths.length || selectedPaths.some((path) => !isAllowedOmDocumentPath(path) || !changed.has(path))) throw new Error("InvalidContributionSelection");
     const branch = `contributions/${contributionId}`;
     const worktree = resolve(this.dataDir, "worktrees", "contributions", contributionId);
     for (const revision of [baseRevision, mainRevision, sourceRevision]) {
@@ -297,7 +298,9 @@ export class GitOperatingModel {
     try {
       run(this.projectDir, ["read-tree", mainRevision], { env });
       try {
-        run(this.projectDir, ["apply", "--cached", "--3way", "--whitespace=nowarn", "-"], { env, input: patch });
+        const patchFile = join(directory, "patch");
+        writeFileSync(patchFile, patch);
+        run(this.projectDir, ["apply", "--cached", "--3way", "--whitespace=nowarn", patchFile], { env });
       } catch (error) {
         const conflicts = run(this.projectDir, ["diff", "--name-only", "--diff-filter=U"], { env });
         if (conflicts) throw new Error(`OrganizationPathConflict: ${conflicts.replace(/\n/g, ", ")}`);
@@ -305,7 +308,9 @@ export class GitOperatingModel {
       }
       const tree = run(this.projectDir, ["write-tree"], { env });
       if (tree === run(this.projectDir, ["rev-parse", `${mainRevision}^{tree}`])) throw new Error("ContributionHasNoChanges");
-      const revision = run(this.projectDir, ["commit-tree", tree, "-p", mainRevision], { input: message + "\n" });
+      if (expectedCandidateRevision && this.head(branch) !== expectedCandidateRevision) throw new Error("ContributionChangedAfterReview");
+      const revision = run(this.projectDir, ["commit-tree", tree, "-p", expectedCandidateRevision ?? mainRevision], { input: message + "\n" });
+      if (expectedCandidateRevision) return { branch, worktree: "", revision };
       mkdirSync(resolve(worktree, ".."), { recursive: true });
       if (existsSync(worktree)) {
         if (this.proposalChanges(worktree).length) throw new Error("ContributionWorktreeDirty");
@@ -315,10 +320,14 @@ export class GitOperatingModel {
     } finally { rmSync(directory, { recursive: true, force: true }); }
   }
 
-  acceptContribution(candidateBranch: string, expectedMainRevision: string): string {
+  acceptContribution(candidateBranch: string, expectedMainRevision: string, expectedCandidateRevision?: string, reviewer?: string): string {
     if (this.head("main") !== expectedMainRevision) throw new Error("OrganizationReviewStale");
-    if (run(this.projectDir, ["rev-parse", `${candidateBranch}^`]) !== expectedMainRevision) throw new Error("OrganizationReviewStale");
-    run(this.projectDir, ["merge", "--ff-only", candidateBranch]);
+    if (!this.includesRevision(candidateBranch, expectedMainRevision)) throw new Error("OrganizationReviewStale");
+    if (expectedCandidateRevision && this.head(candidateBranch) !== expectedCandidateRevision) throw new Error("ContributionChangedAfterReview");
+    if (run(this.projectDir, ["status", "--porcelain", "--untracked-files=all"])) throw new Error("OrganizationWorktreeDirty");
+    const message = ["Merge organization OM contribution", "", `AiricForge-Contribution: ${candidateBranch.replace(/^contributions\//, "")}`, ...(reviewer ? [`AiricForge-Reviewer: ${reviewer}`] : [])].join("\n");
+    try { run(this.projectDir, ["merge", "--no-ff", candidateBranch, "-m", message]); }
+    catch (error) { spawnSync("git", ["merge", "--abort"], { cwd: this.projectDir }); throw error; }
     return this.head("main");
   }
 

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { migrateOmDrafts } from "./om-migration.js";
 import { omFixture } from "./om-test-fixture.js";
 import { ForgeDatabase } from "./database.js";
+import { migrateOmStateToGit } from "./om-git-migration.js";
 
 test("upgrading a populated Work-linked reflection preserves child references and foreign keys", async () => {
   const f = omFixture();
@@ -56,11 +57,13 @@ test("legacy candidates migrate without adoption, collisions are archived and ap
     const applied = migrateOmDrafts(f.runtime.db, f.runtime.om, false);
     assert.equal(applied.length, 2);
     assert.equal(f.runtime.db.workspaces(f.owner.id).length, 2);
+    migrateOmStateToGit(f.runtime.db, f.runtime.om, false);
     assert.equal(f.runtime.om.head(`users/${f.owner.id}`), base);
     const draft = await f.runtime.omChanges.read(f.owner.id, `reflection:${reflection.id}`);
     await f.runtime.omChanges.commit(f.owner.id, draft.scope, draft.digest, "migrated-commit-request");
     assert.deepEqual(migrateOmDrafts(f.runtime.db, f.runtime.om, false), []);
-    assert.equal(f.runtime.db.workspace(f.owner.id, draft.scope), undefined);
+    assert.equal(f.runtime.drafts.workspace(f.owner.id, draft.scope), undefined);
+    assert.deepEqual(migrateOmStateToGit(f.runtime.db, f.runtime.om, false).report, []);
     assert.equal(f.runtime.db.workspace(f.owner.id, "archive:legacy-b")?.edits.length, 1);
     assert.equal(f.runtime.db.legacyOmProposals().length, 2, "historical records remain intact");
   } finally { await f.close(); }

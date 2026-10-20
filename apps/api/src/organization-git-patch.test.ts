@@ -73,7 +73,7 @@ for (const conflict of [false, true]) {
       const beforeRefs = git(f.config.projectDir, ["for-each-ref", "--format=%(refname) %(objectname)"]);
       if (conflict) {
         await assert.rejects(() => f.runtime.useCases.reviewOrganizationContribution(f.admin.id, record.id, [policy]), /OrganizationPathConflict/);
-        assert.equal(f.runtime.db.contribution(record.id)!.status, "open");
+        assert.equal(f.runtime.organization.contribution(record.id)!.status, "open");
         assert.equal(git(f.config.projectDir, ["for-each-ref", "--format=%(refname) %(objectname)"]), beforeRefs);
       } else {
         const reviewed = await f.runtime.useCases.reviewOrganizationContribution(f.admin.id, record.id, [policy]);
@@ -81,7 +81,7 @@ for (const conflict of [false, true]) {
         assert.match(merged, /Personal policy heading/);
         assert.match(merged, /Independent organization ending/);
         assert.equal(f.runtime.om.document(reviewed.reviewedRevision!, method), f.runtime.om.document(organization.revision, method));
-        assert.equal(git(f.config.projectDir, ["rev-parse", `${reviewed.reviewedRevision}^`]), organization.revision);
+        assert.equal(git(f.config.projectDir, ["rev-parse", `${reviewed.reviewedRevision}^`]), record.reviewedRevision);
       }
       assert.equal(f.runtime.om.head("main"), organization.revision);
       assert.equal(f.runtime.om.head(`users/${f.owner.id}`), author.revision);

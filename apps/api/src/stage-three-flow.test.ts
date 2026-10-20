@@ -45,7 +45,7 @@ test("stale drafts are preserved, can merge or resolve conflicts, and invalid co
     const bad = await f.save(f.owner.id, "manual", "subject-knowledge/invalid.md", "# Missing metadata");
     await assert.rejects(() => f.runtime.omChanges.commit(f.owner.id, "manual", bad.digest, "invalid-rule-request"), /InvalidOperatingModel/);
     assert.equal(f.runtime.om.head(`users/${f.owner.id}`), result.revision);
-    assert.equal(f.runtime.db.workspace(f.owner.id, "manual")?.edits.length, 1);
+    assert.equal(f.runtime.drafts.workspace(f.owner.id, "manual")?.edits.length, 1);
     await assert.rejects(() => f.save(f.owner.id, "archive:bad", "../private.md", "not allowed"), /InvalidOmDraft/);
   } finally { await f.close(); }
 });

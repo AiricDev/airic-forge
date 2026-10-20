@@ -55,20 +55,20 @@ export interface ReflectionRunStore {
   interruptReflectionRuns(now: string): void;
 }
 export interface WorkListFilters { ownerUserId?: string; workType?: Work["workType"]; status?: Work["status"]; }
-export interface OrganizationContribution { id: string; authorUserId: string; sourceRevision: string; baseMainRevision: string; reason: string; evidence: string; status: "open" | "reviewed" | "accepted"; selectedPaths: string[]; candidateBranch?: string; candidateWorktree?: string; reviewedRevision?: string; acceptedRevision?: string; createdAt: string; }
+export interface OrganizationContribution { id: string; authorUserId: string; sourceRevision: string; baseMainRevision: string; reason: string; evidence: string; status: "open" | "accepted"; selectedPaths: string[]; candidateBranch?: string; candidateWorktree?: string; reviewedRevision?: string; selectionRevision?: string; acceptedRevision?: string; acceptedAt?: string; createdAt: string; }
 export interface OrganizationContributionPort {
   createContribution(record: OrganizationContribution): MaybePromise<void>;
   contribution(id: string): MaybePromise<OrganizationContribution | undefined>;
   contributions(): MaybePromise<OrganizationContribution[]>;
-  reviewContribution(id: string, selectedPaths: string[], candidateBranch: string, candidateWorktree: string, reviewedRevision: string, baseMainRevision: string): MaybePromise<void>;
-  acceptContribution(id: string, acceptedRevision: string): MaybePromise<void>;
+  saveSelection(id: string, expectedRevision: string, revision: string): MaybePromise<void>;
+  abandonContribution(id: string, expectedRevision: string): MaybePromise<void>;
 }
 export type WorkFeedbackKind = "required-human-decision" | "avoidable-correction" | "knowledge-helpful" | "work-outcome-correct" | "work-outcome-incorrect";
 export interface WorkFeedback { id: string; workId: string; ownerUserId: string; kind: WorkFeedbackKind; note: string; at: string; }
 export interface MeasurementPort {
   recordFeedback(feedback: WorkFeedback): MaybePromise<void>;
   feedbackForWork(workId: string): MaybePromise<WorkFeedback[]>;
-  activityCounts(): MaybePromise<{ works: number; completedWorks: number; turns: number; reflections: number; legacyPersonalProposals: number; legacyAdoptedPersonalProposals: number; organizationContributions: number; acceptedOrganizationContributions: number; legacySynchronizedProposals: number; legacyMedianPersonalProposalHours: number | null; medianOrganizationReviewHours: number | null }>;
+  activityCounts(): MaybePromise<{ works: number; completedWorks: number; turns: number; reflections: number; legacyPersonalProposals: number; legacyAdoptedPersonalProposals: number; legacySynchronizedProposals: number; legacyMedianPersonalProposalHours: number | null }>;
   feedbackCounts(): MaybePromise<Record<WorkFeedbackKind, number>>;
 }
 export interface TurnRecord { id: string; workId: string; sequence: number; status: string; omRevision: string; catalogDigest: string; contextDigest: string; startedAt: string; }
@@ -147,8 +147,8 @@ export interface OperatingModelPort {
   /** Personal changes still different from the target, excluding target-only updates; retain the merge base for review. */
   divergence(sourceRevision: string, targetRevision: string): MaybePromise<{ baseRevision: string; changedPaths: string[]; diff: string }>;
   pinContributionSource(contributionId: string, sourceRevision: string): MaybePromise<void>;
-  prepareContribution(contributionId: string, sourceRevision: string, baseRevision: string, mainRevision: string, selectedPaths: string[], message: string): MaybePromise<{ branch: string; worktree: string; revision: string }>;
-  acceptContribution(candidateBranch: string, expectedMainRevision: string): MaybePromise<string>;
+  prepareContribution(contributionId: string, sourceRevision: string, baseRevision: string, mainRevision: string, selectedPaths: string[], message: string, expectedCandidateRevision?: string): MaybePromise<{ branch: string; worktree: string; revision: string }>;
+  acceptContribution(candidateBranch: string, expectedMainRevision: string, expectedCandidateRevision?: string, reviewer?: string): MaybePromise<string>;
   synchronizeProposal(worktree: string, personalRevision: string, mainRevision: string): MaybePromise<void>;
   adoptSynchronizedProposal(userBranch: string, userWorktree: string, proposalBranch: string, baseRevision: string, expectedMainRevision: string, trailers: Record<string, string>): MaybePromise<string>;
 }

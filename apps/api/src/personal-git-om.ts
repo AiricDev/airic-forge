@@ -8,7 +8,7 @@ import { parse, stringify } from "yaml";
 
 export function git(cwd: string, args: string[], input?: string | Buffer, env?: NodeJS.ProcessEnv): string {
   const result = spawnSync("git", args, { cwd, input, env: { ...process.env, ...env }, encoding: "utf8", timeout: 30_000, maxBuffer: 16 * 1024 * 1024 });
-  if (result.status !== 0) throw new Error(`GitOperationFailed: ${result.stderr.trim().slice(0, 1000)}`);
+  if (result.status !== 0) throw new Error(`GitOperationFailed: ${(result.error?.message || result.stderr?.trim() || result.signal || `exit ${result.status}`).slice(0, 1000)}`);
   return result.stdout.trimEnd();
 }
 
@@ -43,7 +43,9 @@ export class PersonalGitOperatingModel extends GitOperatingModel implements OmRe
         if (!isAllowedOmDocumentPath(edit.path)) throw new Error("OmPathNotAllowed");
         if (edit.content === null) git(this.projectDir, ["update-index", "--force-remove", "--", edit.path], undefined, env);
         else {
-          const blob = git(this.projectDir, ["hash-object", "-w", "--stdin"], edit.content);
+          const contentFile = join(directory, "blob");
+          writeFileSync(contentFile, edit.content);
+          const blob = git(this.projectDir, ["hash-object", "-w", "--no-filters", contentFile]);
           git(this.projectDir, ["update-index", "--add", "--cacheinfo", `100644,${blob},${edit.path}`], undefined, env);
         }
       }
