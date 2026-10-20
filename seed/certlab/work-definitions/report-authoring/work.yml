@@ -30,6 +30,7 @@ capabilities:
     - report.generate
     - job.retry
     - asset.list
+    - asset.locations
     - asset.revisions
     - asset.read
     - asset.search

@@ -32,7 +32,7 @@ test("CertLab identity and catalog bind trusted server Email, organization and a
   try {
     assert.deepEqual(await app.client.identity("synthetic-test"), { appId: "certlab", appUserId: "actor", email: "author@example.invalid", displayName: "Author", organizationId: "synthetic-org" });
     const catalog = await app.client.catalog("synthetic-test");
-    assert.equal(catalog.capabilities.length, 32);
+    assert.equal(catalog.capabilities.length, 36);
     assert.equal(catalog.digest, (await app.client.catalog("synthetic-test")).digest);
   } finally { await app.close(); }
 });
@@ -212,5 +212,25 @@ test("Office whole-file reads retain logical page one and reject a mismatched pa
   try {
     assert.deepEqual(await app.client.query("test", "asset.read", { revision_id: "revision", page: 1 }), value);
     await assert.rejects(() => app.client.query("test", "asset.read", { revision_id: "revision", page: 2 }), /InvalidMaterialRead/);
+  } finally { await app.close(); }
+});
+
+
+test("basis queries and fact drafts preserve report-bound command receipt identity", async () => {
+  const target: AppCommandLocator = { commandId: "fact-command", capabilityId: "fact.save-draft", reportId: "report-one",
+    targetKind: "report", targetId: "report-one", resourceKind: "project", resourceId: "project-one", scope: "fact.save_draft:report-one" };
+  const committed = { commandId: target.commandId, status: "committed", receipt: { key: target.commandId,
+    resource_kind: "project", resource_id: "project-one", scope: target.scope, target_kind: "report", target_id: "report-one",
+    response: { id: "fact-one", report_id: "report-one", version: 1, status: "draft" } } };
+  let foreign = false;
+  const app = await fixture((req, res) => {
+    if (req.url?.includes("basis.context")) json(res, { facts: [{ id: "fact-one", current_revision: 0 }], assessments: [] });
+    else json(res, foreign ? { ...committed, receipt: { ...committed.receipt, response: { id: "fact-one", report_id: "foreign" } } } : committed);
+  });
+  try {
+    assert.equal((await app.client.query("synthetic-test", "basis.context", { report_id: "report-one" })).facts instanceof Array, true);
+    assert.deepEqual(await app.client.receipt("synthetic-test", target), committed);
+    foreign = true;
+    await assert.rejects(() => app.client.receipt("synthetic-test", target), /InvalidCommandReceipt/);
   } finally { await app.close(); }
 });

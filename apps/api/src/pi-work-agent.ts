@@ -112,8 +112,22 @@ export class PiWorkAgentRunner implements AgentRunnerPort {
         await session.prompt(envelope, { expandPromptTemplates: false });
         contextBudget.assertHealthy(); input.signal?.throwIfAborted();
         const last = [...session.agent.state.messages].reverse().find(message => message.role === "assistant");
-        if (last?.role === "assistant" && ["error", "aborted"].includes(last.stopReason)) throw new Error("AgentResponseFailed");
         const text = session.getLastAssistantText();
+        const failure = last?.stopReason === "length" ? "AgentOutputLimitReached"
+          : last && ["error", "aborted"].includes(last.stopReason) ? "AgentResponseFailed"
+          : text === undefined ? "AgentReturnedNoText" : undefined;
+        if (failure) {
+          // Provider errors and reasoning bodies can contain sensitive data.
+          // Keep only bounded terminal metadata for operational diagnosis.
+          console.warn(JSON.stringify({ event: "work.model-response-failed", code: failure,
+            sessionId: input.sessionId, provider: this.config.modelProvider, model: this.config.modelId,
+            stopReason: last?.stopReason ?? "missing", outputLimit: outputTokens,
+            inputTokens: last ? last.usage.input + last.usage.cacheRead + last.usage.cacheWrite : 0,
+            outputTokens: last?.usage.output ?? 0,
+            contentTypes: [...new Set(last?.content.map(block => block.type) ?? [])],
+            hasVisibleText: text !== undefined }));
+          throw new Error(failure);
+        }
         if (text === undefined) throw new Error("AgentReturnedNoText");
         return { text };
       } finally { input.signal?.removeEventListener("abort", abort); await session.abort(); unsubscribe(); session.dispose(); }

@@ -11,6 +11,8 @@ const run = (cwd: string, args: string[]): string => {
 };
 
 export class GitOperatingModel {
+  private readonly knowledgeIndexes = new Map<string, Map<string, string[]>>();
+
   constructor(readonly projectDir: string, readonly dataDir: string, readonly seedProjectDir: string) {}
 
   initialize(): void {
@@ -99,24 +101,31 @@ export class GitOperatingModel {
   }
 
   knownKnowledge(revision: string): Set<string> {
-    const names = this.listFiles(revision).filter((path) => /^(subject-knowledge|precedents)\//.test(path)).join("\n");
-    const known = new Set<string>();
-    for (const path of names.split("\n").filter((name) => name.endsWith(".md") && !name.endsWith("README.md"))) {
-      const raw = this.document(revision, path);
+    return new Set(this.knowledgeIndex(revision).keys());
+  }
+
+  private knowledgeIndex(revision: string): Map<string, string[]> {
+    // Cache immutable commits, never a movable branch name or a draft worktree.
+    const commit = /^[0-9a-f]{40}$/.test(revision)
+      ? revision : run(this.projectDir, ["rev-parse", "--verify", `${revision}^{commit}`]);
+    const cached = this.knowledgeIndexes.get(commit);
+    if (cached) return cached;
+    const index = new Map<string, string[]>();
+    for (const path of this.listFiles(commit).filter((path) => /^(subject-knowledge|precedents)\//.test(path)
+      && !path.endsWith("README.md"))) {
+      const raw = this.document(commit, path);
       const match = raw.match(/^---\s*\n([\s\S]*?)\n---/);
       if (!match) continue;
       const metadata = parse(match[1]) as { id?: string };
-      if (metadata?.id) known.add(metadata.id);
+      if (metadata?.id) index.set(metadata.id, [...(index.get(metadata.id) ?? []), path]);
     }
-    return known;
+    if (this.knowledgeIndexes.size >= 4) this.knowledgeIndexes.delete(this.knowledgeIndexes.keys().next().value!);
+    this.knowledgeIndexes.set(commit, index);
+    return index;
   }
 
   knowledgePath(revision: string, id: string): string {
-    const paths = this.listFiles(revision).filter((path) => /^(subject-knowledge|precedents)\//.test(path)
-      && !path.endsWith("README.md")).filter((path) => {
-      const match = this.document(revision, path).match(/^---\s*\n([\s\S]*?)\n---/);
-      return match && (parse(match[1]) as { id?: string })?.id === id;
-    });
+    const paths = this.knowledgeIndex(revision).get(id) ?? [];
     if (paths.length !== 1) throw new Error("KnowledgeIdentityNotUnique");
     return paths[0];
   }

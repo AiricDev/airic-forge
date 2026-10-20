@@ -328,3 +328,21 @@ append-only JSONL trajectory is not rewritten.
 Verified by domain use-case activity assertions, the real ACP history/repeated-ID test,
 model initialization failure recovery and the real Pi SDK model-start signal test; CertLab
 client/UI tests and the original drawer/material browser scenarios cover presentation.
+
+### Clause precedent lookup
+
+Large clause libraries still resolve only registered on-demand knowledge IDs at a fixed OM
+revision. `GitOperatingModel` builds one ID-to-path index per immutable commit and retains
+at most four indexes. Movable branch names resolve to their current commit before lookup;
+missing and duplicate IDs still fail. Draft worktrees do not use this cache. This avoids
+rescanning every knowledge file separately for every declared ID when a Turn starts.
+`git-om.test.ts` verifies shared lookups, commit isolation, branch movement and duplicate
+rejection. It does not accept source edits into any author's active OM.
+
+### Work 模型终态诊断（2026-10-20）
+
+Work runner 区分 `AgentOutputLimitReached`（模型以 length 停止，包含只有推理或已有部分正文的情况）、`AgentResponseFailed`（error/aborted）和 `AgentReturnedNoText`（未取得最终正文）。length 不能按部分正文报告成功，不自动续跑或重放工具。运维日志 `work.model-response-failed` 只记录 session、provider/model、stopReason、配置输出上限、输入/输出 token 数、内容块类型和是否有正文；不记录私有推理、正文、provider 原始错误或凭据。
+
+真实失败回合 trn_ad3b0f89ee2db32082c1dd37 未记录终态用量，无法回溯判定是 length 还是空 stop。该回合确实加载新版写作约定、第9章导航及9.6.1–9.6.3先例，没有调用业务写命令。真实 SDK 合成本地服务回归见 `apps/api/src/pi-work-agent-response.test.ts`：长度截断有/无正文、空 stop、正常 stop、敏感内容不进入日志、每种响应只请求一次。未以历史报告重放外部模型或修改当前报告。
+
+验证：pnpm build、pnpm check 和 pnpm test 通过（domain 23、workbench 14、API 96）。本次修复只归属模型适配器的终态校验和脱敏运维诊断，未改变 Work/业务权限或自动重试策略；从错误沿 runner→SDK terminal message 可定位，Missing Path / Boundary Bypass / Unowned Capability 均 not-found（high），未发现需另建职责或架构指导的具体风险。
