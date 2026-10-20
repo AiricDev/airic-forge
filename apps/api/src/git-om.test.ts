@@ -6,6 +6,14 @@ import { join, resolve } from "node:path";
 import { GitOperatingModel } from "./git-om.js";
 import { validateWorkDefinition } from "@airic-forge/domain";
 
+test("a missing Git working directory reports the launch failure rather than trimming undefined stderr", () => {
+  const root = mkdtempSync(join(tmpdir(), "forge-git-missing-"));
+  try {
+    const om = new GitOperatingModel(join(root, "missing"), join(root, "data"), resolve("../../seed/project"));
+    assert.throws(() => om.head("main"), /git rev-parse main failed: .*ENOENT/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("a proposal is based on active HEAD and adoption creates a new active revision", () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-git-"));
   try {

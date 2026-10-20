@@ -171,7 +171,8 @@ test("native ranges validate Unicode positions and remain bounded even when old 
 
 test("startup context requests five summaries and preserves the full selected assessment",async()=>{
   const selected={id:'selected',adopted_clause:{schema:{fields:[{key:'conformity',required:true}]}}};
-  const result={assessment_page:{total:79,limit:5,next_offset:5},selection:selected};
+  const boundary = {revision: 4, status: 'confirmed', content: {scope_of_evaluation: '<p>Synthetic robot and cabinet. No excluded features.</p>', equipment_description: '<p>Robot</p><table><tbody><tr><td>Power</td><td>380 Vac</td></tr></tbody></table>'}, confirmed_by: 'engineer', confirmed_at: '2026-10-20T00:00:00Z'};
+  const result={report: {evaluation_boundary: boundary, evaluation_boundary_gaps: []}, assessment_page:{total:79,limit:5,next_offset:5},selection:selected};
   const app=await fixture(async(req,res)=>{
     assert.equal(req.url,'/airic/v1/queries/report.context');
     assert.deepEqual((await body(req)).input,{report_id:'report',assessment_limit:5,selection:{assessment_id:'selected'}});

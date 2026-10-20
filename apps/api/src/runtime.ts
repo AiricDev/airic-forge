@@ -1,4 +1,5 @@
-import { ForgeUseCases, PersonalOmChanges, GitAccess } from "@airic-forge/domain";
+import { ForgeUseCases, PersonalOmChanges, GitAccess, type InstanceSettings } from "@airic-forge/domain";
+import { join } from "node:path";
 import { InMemoryAppSessionStore } from "./app-session-store.js";
 import { CertLabClient } from "./certlab-client.js";
 import { bindCertLabRoots } from "./instance-binding.js";
@@ -29,6 +30,7 @@ export class ForgeRuntime {
   readonly webSessions = new InMemoryWebSessionStore();
   readonly app: CertLabClient;
   readonly useCases: ForgeUseCases;
+  readonly instanceSettings: InstanceSettings;
   constructor(readonly config: ForgeConfig) {
     bindCertLabRoots(config.projectDir, config.dataDir, config.organizationId);
     this.db = new ForgeDatabase(config.dataDir);
@@ -37,9 +39,10 @@ export class ForgeRuntime {
     this.om = new PersonalGitOperatingModel(config.projectDir, config.dataDir, config.seedProjectDir);
     this.trajectories = new JsonlTrajectoryStore(config.dataDir);
     this.app = new CertLabClient(config.certLabUrl, config.organizationId);
+    this.instanceSettings = { operatingModel: { repositoryPath: config.projectDir, dataPath: config.dataDir, personalWorktreesPath: join(config.dataDir, "worktrees", "users") }, integration: this.app.describeIntegration() };
     this.om.initialize();
     this.omChanges = new PersonalOmChanges({ accounts: this.db, catalogs: this.db, om: this.om, drafts: this.db, system: systemPort });
     this.gitAccess = new GitAccess({ accounts: this.db, tokens: this.db, system: systemPort });
-    this.useCases = new ForgeUseCases({ accounts: this.db, works: this.db, om: this.om, omChanges: this.omChanges, reportWorkDefinitionId: config.reportWorkDefinitionId, omDrafts: this.db, organization: this.db, measurements: this.db, app: this.app, organizationId: config.organizationId, catalogs: this.db, agents: new PiWorkAgentRunner(config), workContext: { summarizer: new PiContextSummarizer(config), summaries: new FileContextSummaryStore(config.dataDir), inputTokens: config.contextInputTokens, outputTokens: config.contextOutputTokens }, reflectionAgent: new PiReflectionAgentRunner(config), reflectionRunStore: this.db, sessions: this.sessions, evidenceExtractor: new LocalEvidenceExtractor(), evidenceSessions: this.evidenceSessions, passwordSetups: this.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: this.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
+    this.useCases = new ForgeUseCases({ accounts: this.db, works: this.db, om: this.om, omChanges: this.omChanges, reportWorkDefinitionId: config.reportWorkDefinitionId, omDrafts: this.db, organization: this.db, measurements: this.db, instanceSettings: this.instanceSettings, app: this.app, organizationId: config.organizationId, catalogs: this.db, agents: new PiWorkAgentRunner(config), workContext: { summarizer: new PiContextSummarizer(config), summaries: new FileContextSummaryStore(config.dataDir), inputTokens: config.contextInputTokens, outputTokens: config.contextOutputTokens }, reflectionAgent: new PiReflectionAgentRunner(config), reflectionRunStore: this.db, sessions: this.sessions, evidenceExtractor: new LocalEvidenceExtractor(), evidenceSessions: this.evidenceSessions, passwordSetups: this.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: this.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
   }
 }

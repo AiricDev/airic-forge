@@ -6,6 +6,12 @@ import type { WorkCheckpoint } from "./work-progress.js";
 /** A port is written in the language of a Forge use case, never an SDK or SQL API. */
 export type MaybePromise<T> = T | Promise<T>;
 
+/** Explicitly public-to-administrators configuration, never the full runtime config. */
+export interface InstanceSettings {
+  operatingModel: { repositoryPath: string; dataPath: string; personalWorktreesPath: string };
+  integration: { appId: string; organizationId: string; baseUrl: string; manifestUrl: string; openApiUrl: string };
+}
+
 export interface SessionGrant {
   ticket: string;
   expiresAt: string;
@@ -138,6 +144,7 @@ export interface OperatingModelPort {
   commitProposal(worktree: string, title: string): MaybePromise<void>;
   rebaseProposal(worktree: string, oldBase: string, newBase: string): MaybePromise<void>;
   adoptProposal(userBranch: string, userWorktree: string, proposalBranch: string, baseRevision: string, trailers: Record<string, string>): MaybePromise<string>;
+  /** Personal changes still different from the target, excluding target-only updates; retain the merge base for review. */
   divergence(sourceRevision: string, targetRevision: string): MaybePromise<{ baseRevision: string; changedPaths: string[]; diff: string }>;
   pinContributionSource(contributionId: string, sourceRevision: string): MaybePromise<void>;
   prepareContribution(contributionId: string, sourceRevision: string, baseRevision: string, mainRevision: string, selectedPaths: string[], message: string): MaybePromise<{ branch: string; worktree: string; revision: string }>;

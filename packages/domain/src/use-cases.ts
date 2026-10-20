@@ -4,6 +4,7 @@ import { assembleWorkMemory, pinnedWorkFacts, conversationMessages, CONTEXT_POLI
 import type { AccountPort, AgentRunnerPort, AppSessionPort, AppPort, AppCommandLocator, CatalogPort, EvidenceExtractorPort, EvidenceSessionPort, MeasurementPort, OmDraftPort, OperatingModelPort, OrganizationContributionPort, PasswordCodecPort, PasswordSetupPort, ReflectionAgentPort, ReflectionRunStore, ReflectionLens, ReflectionRecord, SessionGrant, SystemPort, TrajectoryPort, WorkFeedbackKind, WorkListFilters, WorkPort, WorkAgentTool, WorkActivity } from "./ports.js";
 
 import { PersonalOmChanges } from "./om-changes.js";
+import type { InstanceSettings } from "./ports.js";
 import { ReflectionRuns, type ReflectionExecution } from "./reflection-runs.js";
 
 const lenses = new Set(["domain-knowledge", "delegation-gap", "api-suggestion"]);
@@ -18,7 +19,7 @@ export class ForgeUseCases {
   private readonly runningReflections = new Set<string>();
   readonly reflectionRuns?: ReflectionRuns;
   readonly omChanges?: PersonalOmChanges;
-  constructor(private readonly ports: { accounts: AccountPort; works: WorkPort; om: OperatingModelPort; omChanges?: PersonalOmChanges; reportWorkDefinitionId?: string; omDrafts?: OmDraftPort; organization?: OrganizationContributionPort; measurements?: MeasurementPort; app: AppPort; organizationId?: string; catalogs: CatalogPort; agents: AgentRunnerPort; reflectionAgent?: ReflectionAgentPort; reflectionRunStore?: ReflectionRunStore; sessions: AppSessionPort; evidenceExtractor?: EvidenceExtractorPort; evidenceSessions?: EvidenceSessionPort; passwordSetups: PasswordSetupPort; passwordCodec: PasswordCodecPort; trajectories: TrajectoryPort; system: SystemPort; initialAdminEmails: Set<string>; workContext?: WorkContextPorts; }) {
+  constructor(private readonly ports: { accounts: AccountPort; works: WorkPort; om: OperatingModelPort; omChanges?: PersonalOmChanges; reportWorkDefinitionId?: string; omDrafts?: OmDraftPort; organization?: OrganizationContributionPort; measurements?: MeasurementPort; instanceSettings?: InstanceSettings; app: AppPort; organizationId?: string; catalogs: CatalogPort; agents: AgentRunnerPort; reflectionAgent?: ReflectionAgentPort; reflectionRunStore?: ReflectionRunStore; sessions: AppSessionPort; evidenceExtractor?: EvidenceExtractorPort; evidenceSessions?: EvidenceSessionPort; passwordSetups: PasswordSetupPort; passwordCodec: PasswordCodecPort; trajectories: TrajectoryPort; system: SystemPort; initialAdminEmails: Set<string>; workContext?: WorkContextPorts; }) {
     this.omChanges = ports.omChanges;
     if (ports.reflectionRunStore) this.reflectionRuns = new ReflectionRuns(ports.reflectionRunStore, ports.system);
   }
@@ -173,6 +174,12 @@ export class ForgeUseCases {
     await this.requireAdmin(actorUserId);
     const [accepted, candidates] = await Promise.all([this.ports.catalogs.accepted("certlab"), this.ports.catalogs.candidates("certlab")]);
     return { accepted: accepted ?? null, candidates: candidates.filter((candidate) => candidate.digest !== accepted?.digest) };
+  }
+
+  async instanceSettings(actorUserId: string) {
+    await this.requireAdmin(actorUserId);
+    if (!this.ports.instanceSettings) throw new Error("InstanceSettingsUnavailable");
+    return this.ports.instanceSettings;
   }
 
   async acceptCatalogFromWorkspace(actorUserId: string, digest: string) {
@@ -812,7 +819,8 @@ export class ForgeUseCases {
     const record = await this.organizationPort().contribution(id);
     if (!record) throw new Error("ContributionNotFound");
     const comparison = await this.ports.om.divergence(record.sourceRevision, await this.ports.om.head("main"));
-    const candidateDiff = record.candidateWorktree ? await this.ports.om.proposalDiff(record.candidateWorktree, record.baseMainRevision) : undefined;
+    const candidateRevision = record.acceptedRevision ?? record.reviewedRevision;
+    const candidateDiff = candidateRevision ? (await this.ports.om.divergence(candidateRevision, record.baseMainRevision)).diff : undefined;
     return { record, authorEmail: (await this.ports.accounts.userById(record.authorUserId))?.email ?? record.authorUserId, ...comparison, candidateDiff };
   }
 

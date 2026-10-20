@@ -95,6 +95,16 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "Forbidden" }); }
   });
 
+  app.get("/api/v1/instance-settings", async (request, reply) => {
+    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
+    try { return reply.send(await runtime.useCases.instanceSettings(actorId)); }
+    catch (error) {
+      const forbidden = error instanceof Error && error.message === "Forbidden";
+      return reply.code(forbidden ? 403 : 500).send({ error: forbidden ? "Forbidden" : "InstanceSettingsUnavailable" });
+    }
+  });
+
   app.post<{ Params: { digest: string } }>("/api/v1/catalog/:digest/accept-from-workspace", async (request, reply) => {
     const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
     if (!actorId) return reply.code(401).send({ error: "Unauthorized" });

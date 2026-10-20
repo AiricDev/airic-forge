@@ -1,13 +1,17 @@
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { parse, stringify } from "yaml";
 import { isAllowedOmDocumentPath, isAllowedProposalPath, type ValidationIssue, type WorkDefinition } from "@airic-forge/domain";
 
-const run = (cwd: string, args: string[]): string => {
-  const result = spawnSync("git", args, { cwd, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" }, encoding: "utf8" });
-  if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.trim()}`);
-  return result.stdout.trim();
+const run = (cwd: string, args: string[], options: { input?: string; env?: NodeJS.ProcessEnv; raw?: boolean } = {}): string => {
+  const result = spawnSync("git", args, { cwd, input: options.input, env: { ...process.env, ...options.env, GIT_OPTIONAL_LOCKS: "0" }, encoding: "utf8", maxBuffer: 16 * 1024 * 1024, timeout: 30_000 });
+  if (result.status !== 0) {
+    const cause = result.error?.message || result.stderr?.trim() || (result.signal ? `terminated by ${result.signal}` : `exit ${result.status}`);
+    throw new Error(`git ${args.join(" ")} failed: ${cause}`);
+  }
+  return options.raw ? result.stdout : result.stdout.trim();
 };
 
 export class GitOperatingModel {
@@ -97,7 +101,7 @@ export class GitOperatingModel {
     if (!isAllowedOmDocumentPath(path)) throw new Error("invalid OM document path");
     if (!run(this.projectDir, ["ls-tree", revision, "--", path]).startsWith("100644 ")
       && !run(this.projectDir, ["ls-tree", revision, "--", path]).startsWith("100755 ")) throw new Error("OmDocumentNotRegularFile");
-    return run(this.projectDir, ["show", `${revision}:${path}`]);
+    return run(this.projectDir, ["show", `${revision}:${path}`], { raw: true });
   }
 
   knownKnowledge(revision: string): Set<string> {
@@ -265,8 +269,9 @@ export class GitOperatingModel {
 
   divergence(sourceRevision: string, targetRevision: string): { baseRevision: string; changedPaths: string[]; diff: string } {
     const baseRevision = run(this.projectDir, ["merge-base", sourceRevision, targetRevision]);
-    const changedPaths = run(this.projectDir, ["diff", "--name-only", baseRevision, sourceRevision, "--", "work-definitions", "subject-knowledge", "precedents"]).split("\n").filter(Boolean);
-    const diff = run(this.projectDir, ["diff", "--no-ext-diff", baseRevision, sourceRevision, "--", "work-definitions", "subject-knowledge", "precedents"]);
+    const personalPaths = new Set(run(this.projectDir, ["diff", "--no-renames", "--name-only", baseRevision, sourceRevision, "--", "work-definitions", "subject-knowledge", "precedents"]).split("\n").filter(Boolean));
+    const changedPaths = run(this.projectDir, ["diff", "--no-renames", "--name-only", targetRevision, sourceRevision, "--", "work-definitions", "subject-knowledge", "precedents"]).split("\n").filter(path => personalPaths.has(path));
+    const diff = changedPaths.length ? run(this.projectDir, ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", targetRevision, sourceRevision, "--", ...changedPaths], { raw: true }) : "";
     return { baseRevision, changedPaths, diff };
   }
 
@@ -281,27 +286,33 @@ export class GitOperatingModel {
     if (!selectedPaths.length || selectedPaths.some((path) => !isAllowedProposalPath(path) || !changed.has(path))) throw new Error("InvalidContributionSelection");
     const branch = `contributions/${contributionId}`;
     const worktree = resolve(this.dataDir, "worktrees", "contributions", contributionId);
-    const baseFiles = new Set(this.listFiles(baseRevision));
-    const mainFiles = new Set(this.listFiles(mainRevision));
-    const sourceFiles = new Set(this.listFiles(sourceRevision));
-    for (const path of selectedPaths) {
-      const baseContent = baseFiles.has(path) ? this.document(baseRevision, path) : undefined;
-      const mainContent = mainFiles.has(path) ? this.document(mainRevision, path) : undefined;
-      const sourceContent = sourceFiles.has(path) ? this.document(sourceRevision, path) : undefined;
-      if (mainContent !== baseContent && mainContent !== sourceContent) throw new Error(`OrganizationPathConflict: ${path}`);
+    for (const revision of [baseRevision, mainRevision, sourceRevision]) {
+      const entries = run(this.projectDir, ["ls-tree", "-r", revision, "--", ...selectedPaths]).split("\n").filter(Boolean);
+      if (entries.some(entry => !/^100(?:644|755) blob /.test(entry))) throw new Error("OmDocumentNotRegularFile");
     }
-    mkdirSync(resolve(worktree, ".."), { recursive: true });
-    if (existsSync(worktree)) run(worktree, ["reset", "--hard", mainRevision]);
-    else run(this.projectDir, ["worktree", "add", "-b", branch, worktree, mainRevision]);
-    for (const path of selectedPaths) {
-      const sourceContent = sourceFiles.has(path) ? this.document(sourceRevision, path) : undefined;
-      if (sourceContent === undefined) rmSync(resolve(worktree, path), { force: true });
-      else this.writeProposalFile(worktree, path, sourceContent);
-    }
-    if (!this.proposalChanges(worktree).length) throw new Error("ContributionHasNoChanges");
-    run(worktree, ["add", "-A"]);
-    run(worktree, ["commit", "-m", message]);
-    return { branch, worktree, revision: this.head(branch) };
+    const patch = run(this.projectDir, ["diff", "--binary", "--full-index", "--no-ext-diff", "--no-textconv", "--no-renames", baseRevision, sourceRevision, "--", ...selectedPaths], { raw: true });
+    if (!patch) throw new Error("ContributionHasNoChanges");
+    const directory = mkdtempSync(join(tmpdir(), "forge-contribution-index-"));
+    const env = { GIT_INDEX_FILE: join(directory, "index") };
+    try {
+      run(this.projectDir, ["read-tree", mainRevision], { env });
+      try {
+        run(this.projectDir, ["apply", "--cached", "--3way", "--whitespace=nowarn", "-"], { env, input: patch });
+      } catch (error) {
+        const conflicts = run(this.projectDir, ["diff", "--name-only", "--diff-filter=U"], { env });
+        if (conflicts) throw new Error(`OrganizationPathConflict: ${conflicts.replace(/\n/g, ", ")}`);
+        throw error;
+      }
+      const tree = run(this.projectDir, ["write-tree"], { env });
+      if (tree === run(this.projectDir, ["rev-parse", `${mainRevision}^{tree}`])) throw new Error("ContributionHasNoChanges");
+      const revision = run(this.projectDir, ["commit-tree", tree, "-p", mainRevision], { input: message + "\n" });
+      mkdirSync(resolve(worktree, ".."), { recursive: true });
+      if (existsSync(worktree)) {
+        if (this.proposalChanges(worktree).length) throw new Error("ContributionWorktreeDirty");
+        run(worktree, ["reset", "--hard", revision]);
+      } else run(this.projectDir, ["worktree", "add", "-b", branch, worktree, revision]);
+      return { branch, worktree, revision };
+    } finally { rmSync(directory, { recursive: true, force: true }); }
   }
 
   acceptContribution(candidateBranch: string, expectedMainRevision: string): string {

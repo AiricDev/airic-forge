@@ -33,6 +33,20 @@ export type AuthResult = {
   user: User;
   testIdentitySwitch?: TestIdentitySwitch;
 };
+export type InstanceSettings = {
+  operatingModel: {
+    repositoryPath: string;
+    dataPath: string;
+    personalWorktreesPath: string;
+  };
+  integration: {
+    appId: string;
+    organizationId: string;
+    baseUrl: string;
+    manifestUrl: string;
+    openApiUrl: string;
+  };
+};
 export type OmSnapshot = {
   owner?: { id: string; email: string };
   branch: string;

@@ -135,7 +135,7 @@ export class ForgeDatabase {
       CREATE UNIQUE INDEX IF NOT EXISTS turns_sequence ON turns(work_id, sequence);
       CREATE TABLE IF NOT EXISTS reflections (
         id TEXT PRIMARY KEY,
-        work_id TEXT NOT NULL REFERENCES works(id),
+        work_id TEXT REFERENCES works(id),
         owner_user_id TEXT NOT NULL REFERENCES users(id),
         lens_id TEXT NOT NULL,
         question TEXT NOT NULL,
@@ -266,10 +266,21 @@ export class ForgeDatabase {
     if (!reflectionMessageColumns.has("context_json")) this.#db.exec("ALTER TABLE reflection_messages ADD COLUMN context_json TEXT");
     const columns = this.#db.prepare("PRAGMA table_info(reflections)").all() as Array<{ name: string; type: string; notnull: number; pk: number; dflt_value: string | null }>;
     if (columns.find((column) => column.name === "work_id")?.notnull) {
-      const definitions = columns.map((column) => `"${column.name}" ${column.type}${column.pk ? " PRIMARY KEY" : ""}${column.notnull && column.name !== "work_id" ? " NOT NULL" : ""}${column.dflt_value !== null ? ` DEFAULT ${column.dflt_value}` : ""}`);
-      this.#db.exec(`BEGIN; CREATE TABLE reflections_nullable (${definitions.join(", ")}) STRICT;
-        INSERT INTO reflections_nullable SELECT * FROM reflections;
-        DROP TABLE reflections; ALTER TABLE reflections_nullable RENAME TO reflections; COMMIT;`);
+      const schema = this.#db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='reflections'").get() as { sql: string };
+      const replacement = schema.sql.replace(/^(CREATE\s+TABLE\s+)(?:"reflections"|reflections)/i, "$1reflections_nullable").replace(/(\bwork_id\s+TEXT)\s+NOT\s+NULL/i, "$1");
+      const dependents = this.#db.prepare("SELECT sql FROM sqlite_master WHERE tbl_name='reflections' AND type IN ('index', 'trigger') AND sql IS NOT NULL").all() as Array<{ sql: string }>;
+      const foreignKeys = (this.#db.prepare("PRAGMA foreign_keys").get() as { foreign_keys: number }).foreign_keys;
+      this.#db.exec("PRAGMA foreign_keys = OFF");
+      try {
+        this.#db.exec("BEGIN IMMEDIATE");
+        try {
+          this.#db.exec(`${replacement}; INSERT INTO reflections_nullable SELECT * FROM reflections;
+            DROP TABLE reflections; ALTER TABLE reflections_nullable RENAME TO reflections;`);
+          for (const dependent of dependents) this.#db.exec(dependent.sql);
+          if (this.#db.prepare("PRAGMA foreign_key_check").all().length) throw new Error("ReflectionMigrationForeignKeyViolation");
+          this.#db.exec("COMMIT");
+        } catch (error) { this.#db.exec("ROLLBACK"); throw error; }
+      } finally { this.#db.exec(`PRAGMA foreign_keys = ${foreignKeys ? "ON" : "OFF"}`); }
     }
     const defaults = [
       ["domain-knowledge", "Summarize reusable domain knowledge grounded in the selected Work events. If evidence supports a durable fact, propose one Subject Knowledge markdown file with YAML front matter (id, title, summary, topics). The front matter id must equal the markdown filename stem, and the knowledge will be listed in the Work Definition's knowledge.available. Otherwise return analysis only."],

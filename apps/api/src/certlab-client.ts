@@ -1,9 +1,10 @@
-import type { AppIdentity, AppCommandLocator, AppCommandTarget, AppPort, CapabilityCatalog, CapabilityDefinition } from "@airic-forge/domain";
+import type { AppIdentity, AppCommandLocator, AppCommandTarget, AppPort, CapabilityCatalog, CapabilityDefinition, InstanceSettings } from "@airic-forge/domain";
 import { digest, normalizeEmail } from "./ids.js";
 
 type Json = Record<string, unknown>;
 const record = (value: unknown): Json => value && typeof value === "object" && !Array.isArray(value) ? value as Json : {};
 const release = "certlab/v1";
+const integrationPaths = { manifest: "/airic/v1/manifest", openApi: "/airic/v1/openapi" };
 
 /** Maps the one configured App protocol; never follows a credentialed redirect. */
 export class CertLabClient implements AppPort {
@@ -12,6 +13,11 @@ export class CertLabClient implements AppPort {
     const url = new URL(baseUrl);
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== "/") throw new Error("InvalidCertLabOrigin");
     this.baseUrl = url.origin;
+  }
+
+  describeIntegration(): InstanceSettings["integration"] {
+    return { appId: "certlab", organizationId: this.organizationId, baseUrl: this.baseUrl,
+      manifestUrl: `${this.baseUrl}${integrationPaths.manifest}`, openApiUrl: `${this.baseUrl}${integrationPaths.openApi}` };
   }
 
   async identity(token: string): Promise<AppIdentity> {
@@ -24,7 +30,7 @@ export class CertLabClient implements AppPort {
   }
 
   async #manifest(token: string): Promise<Json> {
-    const manifest = await this.#request("/airic/v1/manifest", token);
+    const manifest = await this.#request(integrationPaths.manifest, token);
     if (manifest.appId !== "certlab" || record(manifest.domain).release !== release || manifest.organizationId !== this.organizationId) throw new Error("AppOrganizationBindingMismatch");
     return manifest;
   }
@@ -45,7 +51,7 @@ export class CertLabClient implements AppPort {
     return { id: `catalog_${catalogDigest}`, appId: "certlab", domainRelease: release, digest: catalogDigest, acceptedAt: new Date().toISOString(), capabilities };
   }
 
-  async openApi(token: string): Promise<Json> { return this.#request("/airic/v1/openapi", token); }
+  async openApi(token: string): Promise<Json> { return this.#request(integrationPaths.openApi, token); }
   async reportContext(token: string, reportId: string, selection?: Json): Promise<Json> {
     // Startup needs counts, the selected full assessment and a small scope sample.
     // Remaining requirements stay available through explicit App queries.

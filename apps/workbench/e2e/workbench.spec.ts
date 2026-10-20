@@ -14,6 +14,11 @@ async function login(page: Page, role: "owner" | "admin" | "member" = "owner") {
   ).toBeVisible();
 }
 async function nav(page: Page, name: string) {
+  if (name === "能力目录") {
+    await nav(page, "实例设置");
+    await page.getByRole("tab", { name: "能力目录", exact: true }).click();
+    return;
+  }
   await page.getByRole("button", { name, exact: true }).click();
 }
 async function work(page: Page, entity: string) {
@@ -282,7 +287,6 @@ test("catalog failure retains Dialog and restores focus; all administrative page
   await login(page, "admin");
   await screenshot(page, "dashboard");
   for (const [label, name] of [
-    ["组织治理", "governance"],
     ["能力目录", "catalog"],
     ["组织贡献", "contributions"],
     ["用户与资源", "users"],
@@ -375,7 +379,7 @@ test("ordinary user ownership and narrow-screen navigation remain accessible", a
   await login(page, "member");
   await page.getByRole("button", { name: "打开导航" }).click();
   await expect(
-    page.getByRole("button", { name: "组织治理", exact: true }),
+    page.getByRole("button", { name: "成效基线", exact: true }),
   ).toHaveCount(0);
   await nav(page, "Work 与轨迹");
   await expect(page.getByText("共 1 条 · 第 1 / 1 页")).toBeVisible();
@@ -524,4 +528,65 @@ test("independent OM discussions survive reload and Git credentials can be revok
   await page.getByRole("button", { name: "已保存，隐藏令牌" }).click();
   await page.getByRole("button", { name: "撤销", exact: true }).click();
   await expect(page.getByText(/浏览器测试电脑.*已撤销/)).toBeVisible();
+});
+
+test("instance settings contain integration sources, OM paths and nested capability management", async ({
+  page,
+}) => {
+  await login(page, "admin");
+  await expect(
+    page.getByRole("navigation").getByRole("button").first(),
+  ).toHaveText("成效基线");
+  await expect(
+    page.getByRole("button", { name: "组织治理", exact: true }),
+  ).toHaveCount(0);
+  await nav(page, "成效基线");
+  await expect(
+    page.getByRole("heading", { name: "成效基线", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("navigation")
+      .getByRole("button", { name: "能力目录", exact: true }),
+  ).toHaveCount(0);
+  await nav(page, "实例设置");
+  const response = await page.request.get("/api/v1/instance-settings");
+  expect(response.status()).toBe(200);
+  const settings = await response.json();
+  const panel = page.getByRole("tabpanel");
+  await expect(
+    panel.getByText(settings.operatingModel.repositoryPath, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    panel.getByText(settings.operatingModel.dataPath, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    panel.getByText(settings.operatingModel.personalWorktreesPath, {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    panel.getByRole("link", {
+      name: settings.integration.manifestUrl,
+      exact: true,
+    }),
+  ).toHaveAttribute("href", settings.integration.manifestUrl);
+  await expect(
+    panel.getByRole("link", {
+      name: settings.integration.openApiUrl,
+      exact: true,
+    }),
+  ).toHaveAttribute("href", settings.integration.openApiUrl);
+  await expect(panel.getByText(/Reflection lens|Lens 提示词/)).toHaveCount(0);
+  await page.getByRole("tab", { name: "能力目录", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "能力目录", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "接受候选目录" }),
+  ).toBeVisible();
+  await nav(page, "Lens 管理");
+  await expect(
+    page.getByRole("heading", { name: "Lens 管理", exact: true }),
+  ).toBeVisible();
 });

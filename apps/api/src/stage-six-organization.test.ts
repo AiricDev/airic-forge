@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { omFixture } from "./om-test-fixture.js";
@@ -10,6 +10,76 @@ import { ForgeRuntime } from "./runtime.js";
 import type { ForgeConfig } from "./config.js";
 import { buildServer } from "./server.js";
 import { createTestOmCommit } from "./test-proposal-fixture.js";
+
+test("organization comparison and contribution detail return complete diffs above one MiB", async () => {
+  const f = omFixture();
+  const app = buildServer(f.runtime);
+  try {
+    const edits = Array.from({ length: 20 }, (_, index) => ({
+      path: `work-definitions/report-authoring/shared-${index}.md`,
+      content: `# Shared method ${index}\n${"Governed shared policy detail.\n".repeat(2200)}End of method ${index}.\n`,
+    }));
+    await createTestOmCommit(f.runtime, f.owner.id, edits, "Share large OM improvement");
+    const headers = { cookie: `forge_session=${f.runtime.webSessions.issue(f.admin.id)}` };
+    const comparison = await app.inject({ method: "GET", url: `/api/v1/organization/compare/${f.owner.id}`, headers });
+    assert.equal(comparison.statusCode, 200, comparison.body.slice(0, 500));
+    assert(comparison.json().diff.length > 1024 * 1024);
+    assert.deepEqual(comparison.json().changedPaths.sort(), edits.map(edit => edit.path).sort());
+    const contribution = await f.runtime.useCases.createOrganizationContribution(f.admin.id, f.owner.id, "Share reusable methods", "");
+    await f.runtime.useCases.reviewOrganizationContribution(f.admin.id, contribution.id, edits.map(edit => edit.path));
+    const detail = await app.inject({ method: "GET", url: `/api/v1/organization/contributions/${contribution.id}`, headers });
+    assert.equal(detail.statusCode, 200, detail.body.slice(0, 500));
+    assert.equal(detail.json().diff, comparison.json().diff);
+    assert(detail.json().candidateDiff.length > 1024 * 1024);
+    for (let index = 0; index < edits.length; index++) {
+      assert(detail.json().diff.includes(`+End of method ${index}.`));
+      assert(detail.json().candidateDiff.includes(`+End of method ${index}.`));
+    }
+  } finally { await app.close(); await f.close(); }
+});
+
+test("reviewed and accepted contribution details read immutable commits without requiring candidate worktrees", async () => {
+  const f = omFixture();
+  const app = buildServer(f.runtime);
+  try {
+    const path = "work-definitions/report-authoring/policy.md";
+    await createTestOmCommit(f.runtime, f.owner.id, [{ path, content: f.runtime.om.document(f.runtime.om.head("main"), path) + "\nReviewed shared policy.\n" }], "Share policy");
+    const record = await f.runtime.useCases.createOrganizationContribution(f.admin.id, f.owner.id, "Share reviewed policy", "");
+    const reviewed = await f.runtime.useCases.reviewOrganizationContribution(f.admin.id, record.id, [path]);
+    const stored = f.runtime.db.contribution(record.id)!;
+    const worktree = stored.candidateWorktree!;
+    const headers = { cookie: `forge_session=${f.runtime.webSessions.issue(f.admin.id)}` };
+    const read = () => app.inject({ method: "GET", url: `/api/v1/organization/contributions/${record.id}`, headers });
+    const original = await read();
+    assert.equal(original.statusCode, 200);
+    const candidateDiff = original.json().candidateDiff;
+    assert.match(candidateDiff, /Reviewed shared policy/);
+    const originalFile = readFileSync(join(worktree, path), "utf8");
+    writeFileSync(join(worktree, path), originalFile + "\nUnreviewed dirty worktree text.\n");
+    const dirty = await read();
+    assert.equal(dirty.statusCode, 200);
+    assert.equal(dirty.json().candidateDiff, candidateDiff);
+    writeFileSync(join(worktree, path), originalFile);
+    const moved = join(f.root, "temporarily-moved-candidate");
+    renameSync(worktree, moved);
+    try {
+      const missing = await read();
+      assert.equal(missing.statusCode, 200, missing.body.slice(0, 500));
+      assert.equal(missing.json().record.status, "reviewed");
+      assert.equal(missing.json().candidateDiff, candidateDiff);
+      assert.deepEqual(f.runtime.db.contribution(record.id), stored);
+    } finally { renameSync(moved, worktree); }
+    const accepted = await f.runtime.useCases.acceptOrganizationContribution(f.admin.id, record.id, reviewed.reviewedRevision!);
+    rmSync(worktree, { recursive: true, force: true });
+    const missing = await read();
+    assert.equal(missing.statusCode, 200, missing.body.slice(0, 500));
+    assert.equal(missing.json().record.status, "accepted");
+    assert.equal(missing.json().candidateDiff, candidateDiff);
+    assert.equal(f.runtime.om.head("main"), accepted.revision);
+    const forbidden = await app.inject({ method: "GET", url: `/api/v1/organization/contributions/${record.id}`, headers: { cookie: `forge_session=${f.runtime.webSessions.issue(f.other.id)}` } });
+    assert.equal(forbidden.statusCode, 403);
+  } finally { await app.close(); await f.close(); }
+});
 
 test("administrator selectively accepts personal OM and member sync preserves old HEAD", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-six-"));

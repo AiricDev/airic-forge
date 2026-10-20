@@ -28,17 +28,11 @@ import {
   ResourceState,
 } from "../ui";
 import { useDirty, useUnsavedChanges } from "../UnsavedChanges";
-export function ContributionsPage({
-  users,
-  initialId,
-}: {
-  users: User[];
-  initialId?: string;
-}) {
+export function ContributionsPage({ users }: { users: User[] }) {
   const list = useResource<{
     contributions: Contribution[];
   }>("/api/v1/organization/contributions");
-  const [selected, setSelected] = useState(initialId ?? "");
+  const [selected, setSelected] = useState("");
   const [comparison, setComparison] = useState<Comparison | null>(null);
   const [reason, setReason] = useState("");
   const [evidence, setEvidence] = useState("");

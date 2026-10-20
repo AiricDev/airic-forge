@@ -22,8 +22,6 @@ import DashboardIcon from "@mui/icons-material/Dashboard";
 import DescriptionIcon from "@mui/icons-material/Description";
 import WorkHistoryIcon from "@mui/icons-material/WorkHistory";
 import CompareArrowsIcon from "@mui/icons-material/CompareArrows";
-import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
-import ExtensionIcon from "@mui/icons-material/Extension";
 import MergeIcon from "@mui/icons-material/Merge";
 import PeopleIcon from "@mui/icons-material/People";
 import SettingsIcon from "@mui/icons-material/Settings";
@@ -64,16 +62,6 @@ const ContributionsPage = lazy(() =>
 );
 const LensesPage = lazy(() =>
   import("./pages/LensesPage").then((m) => ({ default: m.LensesPage })),
-);
-const CatalogPage = lazy(() =>
-  import("./pages/AdminOverviewPages").then((m) => ({
-    default: m.CatalogPage,
-  })),
-);
-const GovernancePage = lazy(() =>
-  import("./pages/AdminOverviewPages").then((m) => ({
-    default: m.GovernancePage,
-  })),
 );
 const MeasurementsPage = lazy(() =>
   import("./pages/AdminOverviewPages").then((m) => ({
@@ -169,6 +157,7 @@ function AccountWorkspace() {
   );
 }
 const primary = [
+  { view: "measurements", label: "成效基线", icon: AssessmentIcon },
   { view: "dashboard", label: "工作台", icon: DashboardIcon },
   { view: "om", label: "Operating Model", icon: DescriptionIcon },
   { view: "works", label: "Work 与轨迹", icon: WorkHistoryIcon },
@@ -176,12 +165,9 @@ const primary = [
   { view: "git-access", label: "本地 agent 与 Git", icon: CompareArrowsIcon },
 ] as const;
 const admin = [
-  { view: "governance", label: "组织治理", icon: AdminPanelSettingsIcon },
-  { view: "capabilities", label: "能力目录", icon: ExtensionIcon },
   { view: "contributions", label: "组织贡献", icon: MergeIcon },
   { view: "users", label: "用户与资源", icon: PeopleIcon },
   { view: "settings", label: "实例设置", icon: SettingsIcon },
-  { view: "measurements", label: "成效基线", icon: AssessmentIcon },
   { view: "lenses", label: "Lens 管理", icon: PsychologyIcon },
 ] as const;
 function Workbench({
@@ -201,7 +187,6 @@ function Workbench({
   const [mobile, setMobile] = useState(false);
   const [menu, setMenu] = useState<HTMLElement | null>(null);
   const [branch, setBranch] = useState(user.id);
-  const [contributionId, setContributionId] = useState("");
   const title =
     n.view === "work-detail"
       ? "Work 详情"
@@ -228,24 +213,28 @@ function Workbench({
       </Toolbar>
       <Divider />
       <List aria-label="主导航">
-        {primary.map(({ view, label, icon: Icon }) => (
-          <ListItemButton
-            key={view}
-            selected={
-              n.view === view ||
-              (view === "works" && n.view === "work-detail") ||
-              (view === "om" && n.view === "organization")
-            }
-            onClick={() => {
-              navigate(view);
-            }}
-          >
-            <ListItemIcon>
-              <Icon />
-            </ListItemIcon>
-            <ListItemText primary={label} />
-          </ListItemButton>
-        ))}
+        {primary
+          .filter(
+            ({ view }) => view !== "measurements" || user.role === "admin",
+          )
+          .map(({ view, label, icon: Icon }) => (
+            <ListItemButton
+              key={view}
+              selected={
+                n.view === view ||
+                (view === "works" && n.view === "work-detail") ||
+                (view === "om" && n.view === "organization")
+              }
+              onClick={() => {
+                navigate(view);
+              }}
+            >
+              <ListItemIcon>
+                <Icon />
+              </ListItemIcon>
+              <ListItemText primary={label} />
+            </ListItemButton>
+          ))}
       </List>
       {user.role === "admin" && (
         <>
@@ -256,7 +245,6 @@ function Workbench({
                 key={view}
                 selected={n.view === view}
                 onClick={() => {
-                  if (view === "contributions") setContributionId("");
                   navigate(view);
                 }}
               >
@@ -429,19 +417,6 @@ function Workbench({
             {n.view === "git-access" && <GitAccessPage />}
             {user.role === "admin" && (
               <>
-                {n.view === "governance" && (
-                  <GovernancePage
-                    navigate={(view) => {
-                      if (view === "organization") openOm("main");
-                      else navigate(view);
-                    }}
-                    openContribution={(id) => {
-                      setContributionId(id);
-                      navigate("contributions");
-                    }}
-                  />
-                )}
-                {n.view === "capabilities" && <CatalogPage />}
                 {n.view === "users" && (
                   <UsersPage
                     users={users.data?.users ?? []}
@@ -453,10 +428,7 @@ function Workbench({
                 {n.view === "measurements" && <MeasurementsPage />}
                 {n.view === "lenses" && <LensesPage />}
                 {n.view === "contributions" && (
-                  <ContributionsPage
-                    users={users.data?.users ?? []}
-                    initialId={contributionId}
-                  />
+                  <ContributionsPage users={users.data?.users ?? []} />
                 )}
               </>
             )}

@@ -4,7 +4,6 @@ export type View =
   | "dashboard"
   | "om"
   | "organization"
-  | "governance"
   | "contributions"
   | "measurements"
   | "works"
@@ -13,8 +12,7 @@ export type View =
   | "git-access"
   | "lenses"
   | "users"
-  | "settings"
-  | "capabilities";
+  | "settings";
 export type WorkRoute = {
   reflectionId?: string;
   page: number;
