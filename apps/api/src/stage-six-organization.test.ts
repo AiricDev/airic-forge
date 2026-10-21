@@ -92,7 +92,7 @@ test("administrator selectively accepts personal OM and member sync preserves ol
     const author = runtime.db.ensureUser("author@example.com", false);
     const member = runtime.db.ensureUser("member@example.com", false);
     const catalog = testCatalog();
-    runtime.db.saveCandidate(catalog, { paths: {} }); runtime.db.accept("certlab", catalog.digest, admin.id);
+    runtime.db.saveCandidate(catalog); runtime.db.accept("certlab", catalog.digest, admin.id);
     const useCases: ForgeUseCases = runtime.useCases;
     const authorBranch = runtime.om.ensureUserBranch(author.id);
     const memberBranch = runtime.om.ensureUserBranch(member.id);

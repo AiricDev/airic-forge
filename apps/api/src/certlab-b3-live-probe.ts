@@ -20,7 +20,7 @@ let suppressRecovery = true;
 let taskId = "";
 const app: AppPort = {
   identity: (token) => client.identity(token), catalog: (token) => client.catalog(token),
-  openApi: (token) => client.openApi(token), reportContext: (token, id) => client.reportContext(token, id),
+  reportContext: (token, id) => client.reportContext(token, id),
   query: (token, id, input) => client.query(token, id, input),
   prepareCommand: (token, id, input) => client.prepareCommand(token, id, input),
   receipt: (token, locator) => suppressRecovery ? Promise.resolve(undefined) : client.receipt(token, locator),
@@ -112,7 +112,7 @@ try {
   history = await useCases.sessionHistory(session.ticket);
   assert.equal(history.progress.waiting, true);
   assert.equal(history.work.status, "active");
-  assert.equal(history.work.goal, "Original physical PE-1 goal");
+  assert.equal(history.work.goal, session.work.goal);
   assert.equal(runtime.om.head(`users/${session.user.id}`), head);
   assert.equal(submissions, 5);
   assert.equal(JSON.stringify(history).includes(scene.token), false);

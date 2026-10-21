@@ -22,7 +22,6 @@ test("accepted catalog and real Git/SQLite/JSONL keep a report command and its T
   const app: AppPort = {
     identity: async () => ({ appId: "certlab", appUserId: "author", email: "AUTHOR@example.com", displayName: "Author" }),
     catalog: async () => structuredClone(catalog),
-    openApi: async () => ({ paths: Object.fromEntries(catalog.capabilities.map((item) => [`/airic/v1/${item.kind === "command" ? "commands" : "queries"}/${item.id}`, {}])) }),
     reportContext: async (_token, reportId) => ({ resource: { namespace: "certlab", resourceType: "report", resourceId: reportId, projectId: "project-1" } }),
     query: async () => ({ assessment: { id: "assessment-1", report_id: "report-1", record_no: revision } }),
     submitCommand: async (_token, capabilityId, body) => {
@@ -39,7 +38,7 @@ test("accepted catalog and real Git/SQLite/JSONL keep a report command and its T
   const agents: AgentRunnerPort = { runWork: async ({ context, documents, tools, onText }) => {
     assert.equal((context.resource as Record<string, unknown>).projectId, "project-1");
     assert.deepEqual(documents.map((item) => item.id), ["policy", "method", "recovery"]);
-    assert.deepEqual(tools.map((item) => item.capability.id), runtime.om.workDefinition(runtime.om.head("main"), "report-authoring").capabilities.allowed);
+    assert.deepEqual(tools.map((item) => item.capability.id), runtime.om.workDefinition(runtime.om.head("main"), "report-authoring").capabilities.allowed.filter((id) => !["command.context", "command.receipt"].includes(id)));
     assert(tools.every((tool) => ids.includes(tool.capability.id)));
     const output = await tools.find((item) => item.capability.id === "assessment.save-draft")!.invoke({ assessment_id: "assessment-1", data: {}, expected_record_no: 3 });
     assert.equal(output.status, "committed");

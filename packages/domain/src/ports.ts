@@ -9,7 +9,7 @@ export type MaybePromise<T> = T | Promise<T>;
 /** Explicitly public-to-administrators configuration, never the full runtime config. */
 export interface InstanceSettings {
   operatingModel: { repositoryPath: string; dataPath: string; personalWorktreesPath: string };
-  integration: { appId: string; organizationId: string; baseUrl: string; manifestUrl: string; openApiUrl: string };
+  integration: { appId: string; organizationId: string; baseUrl: string; mcpUrl: string; transport: "streamable-http" };
 }
 
 export interface SessionGrant {
@@ -156,17 +156,6 @@ export interface OperatingModelPort {
 export interface PasswordCodecPort { hash(password: string): string; verify(password: string, hash: string): boolean; }
 export interface PasswordSetupPort { issue(userId: string, expiresAt: string): MaybePromise<string>; consume(ticket: string, now: string): MaybePromise<string | undefined>; }
 
-export interface CertReporterPort {
-  identity(token: string): Promise<AppIdentity>;
-  catalog(token: string): Promise<CapabilityCatalog>;
-  openApi(token: string): Promise<Record<string, unknown>>;
-  reportContext(token: string, reportId: string, selection?: Record<string, unknown>): Promise<Record<string, unknown>>;
-  reportTypeContext?(token: string, reportTypeId: string, selection?: Record<string, unknown>): Promise<Record<string, unknown>>;
-  query(token: string, capabilityId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
-  submitCommand(token: string, capabilityId: string, body: Record<string, unknown>): Promise<{ status: "committed" | "rejected" | "unknown"; receipt?: Record<string, unknown>; reason?: string }>;
-  receipt(token: string, commandId: string): Promise<Record<string, unknown> | undefined>;
-}
-
 export interface AppCommandLocator {
   commandId: string;
   capabilityId: string;
@@ -190,7 +179,6 @@ export interface AppCommandTarget {
 export interface AppPort {
   identity(token: string): Promise<AppIdentity>;
   catalog(token: string): Promise<CapabilityCatalog>;
-  openApi(token: string): Promise<Record<string, unknown>>;
   reportContext(token: string, reportId: string, selection?: Record<string, unknown>): Promise<Record<string, unknown>>;
   query(token: string, capabilityId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
   prepareCommand?(token: string, capabilityId: string, input: Record<string, unknown>): Promise<AppCommandTarget>;
@@ -207,7 +195,7 @@ export interface EvidenceSessionPort {
 }
 
 export interface CatalogPort {
-  saveCandidate(catalog: CapabilityCatalog, openApi: Record<string, unknown>): MaybePromise<void>;
+  saveCandidate(catalog: CapabilityCatalog): MaybePromise<void>;
   candidate(appId: string, digest: string): MaybePromise<CapabilityCatalog | undefined>;
   candidates(appId: string): MaybePromise<CapabilityCatalog[]>;
   accept(appId: string, digest: string, acceptedBy: string): MaybePromise<void>;

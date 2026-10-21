@@ -379,10 +379,12 @@ export function SettingsPage() {
                     App：{data.integration.appId} · 组织：
                     {data.integration.organizationId || "未配置"}
                   </Typography>
+                  <Typography>
+                    传输类型：{data.integration.transport}
+                  </Typography>
                   {[
                     ["App 实例地址", data.integration.baseUrl],
-                    ["能力 Manifest 地址", data.integration.manifestUrl],
-                    ["OpenAPI 文档地址", data.integration.openApiUrl],
+                    ["MCP 地址", data.integration.mcpUrl],
                   ].map(([label, url]) => (
                     <Box key={label}>
                       <Typography variant="subtitle2">{label}</Typography>

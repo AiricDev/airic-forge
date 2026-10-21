@@ -1,29 +1,74 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 import { once } from "node:events";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { AppCommandLocator } from "@airic-forge/domain";
 import { CertLabClient } from "./certlab-client.js";
+import { executionMeta } from "./mcp-client.js";
 import { initialCapabilityIds, testCatalog } from "./certlab-test-catalog.js";
 
 const locator: AppCommandLocator = { commandId: "command-one", capabilityId: "assessment.start", reportId: "report-one", assessmentId: "assessment-one", resourceKind: "project", resourceId: "project-one", scope: "assessment.start" };
 const receipt = { commandId: locator.commandId, status: "committed", receipt: { key: locator.commandId, resource_kind: "project", resource_id: "project-one", scope: locator.scope, response: { id: locator.assessmentId, record_no: 1 } } };
 const manifest = () => ({ appId: "certlab", organizationId: "synthetic-org", domain: { release: "certlab/v1" }, capabilities: testCatalog().capabilities });
-const json = (response: ServerResponse, body: unknown) => { response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(body)); };
-async function fixture(handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) {
-  const server = createServer((req, res) => { Promise.resolve(handler(req, res)).catch(() => { res.statusCode = 500; res.end(); }); });
+type FixtureRequest = { url: string; headers: Record<string, unknown>; value: Record<string, unknown>; socket: { destroy(): void } };
+type FixtureResponse = { statusCode: number; setHeader(name: string, value: string): unknown; end(data?: string): unknown };
+const json = (response: FixtureResponse, body: unknown) => { response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(body)); };
+async function fixture(handler: (request: FixtureRequest, response: FixtureResponse) => void | Promise<void>) {
+  const server = createServer(async (req, res) => {
+    if (req.url === "/api/v1/auth/me") {
+      await handler({ url: req.url, headers: req.headers, value: {}, socket: req.socket }, res);
+      return;
+    }
+    if (req.method !== "POST") { res.writeHead(405).end(); return; }
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    const parsed = JSON.parse(raw);
+    const sdk = new Server({ name: "fixture", version: "1" }, { capabilities: { tools: {} } });
+    const invoke = async (name: string, args: Record<string, unknown>, execution: Record<string, unknown>) => {
+      let value: Record<string, unknown> = {};
+      let statusCode = 200;
+      const response = {
+        get statusCode() { return statusCode; }, set statusCode(status: number) { statusCode = status; },
+        setHeader() { return response; },
+        end(data?: string) { value = data ? JSON.parse(data) : {}; return response; },
+      };
+      await handler({ url: name, headers: req.headers, value: { ...execution, input: args }, socket: req.socket }, response);
+      return { value, statusCode };
+    };
+    sdk.setRequestHandler(ListToolsRequestSchema, async (request) => {
+      const { value } = await invoke("tools/list", request.params ?? {}, {});
+      const capabilities = value.capabilities as ReturnType<typeof testCatalog>["capabilities"];
+      return { ...(value.nextCursor ? { nextCursor: String(value.nextCursor) } : {}), tools: [...(value.noInfo ? [] : [{ name: "integration.info", inputSchema: { type: "object" } }]), ...capabilities.map(c => ({
+        name: c.id, title: c.title, description: c.description, inputSchema: c.inputSchema, outputSchema: c.outputSchema,
+        _meta: { [executionMeta]: { kind: c.kind, ...(c.receiptScope ? { receiptScope: c.receiptScope } : {}) } },
+      }))] };
+    });
+    sdk.setRequestHandler(CallToolRequestSchema, async (request) => {
+      const { value, statusCode } = await invoke(request.params.name, request.params.arguments ?? {}, request.params._meta?.[executionMeta] as Record<string, unknown> ?? {});
+      if (statusCode >= 400) return { isError: true, structuredContent: {
+        error: { code: statusCode === 404 ? "not_found" : statusCode === 403 ? "permission_denied" : "version_conflict" },
+        httpStatus: statusCode, ...(statusCode < 500 ? { outcome: "rejected" } : {}),
+      }, content: [] };
+      const structuredContent = { ...value };
+      const image = structuredContent.image as { mimeType: string; data: string } | undefined;
+      delete structuredContent.image;
+      return { structuredContent, content: image ? [{ type: "image", ...image }] : [] };
+    });
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    res.on("close", () => { void transport.close(); void sdk.close(); });
+    await sdk.connect(transport);
+    await transport.handleRequest(req, res, parsed);
+  });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const address = server.address();
   assert.ok(address && typeof address !== "string");
   return { client: new CertLabClient(`http://127.0.0.1:${address.port}/`, "synthetic-org"), close: () => new Promise<void>((resolve) => { server.close(() => resolve()); server.closeAllConnections(); }) };
 }
-async function body(request: IncomingMessage) {
-  let value = "";
-  for await (const chunk of request) value += chunk;
-  return JSON.parse(value) as Record<string, unknown>;
-}
-
+async function body(request: FixtureRequest) { return request.value; }
 test("CertLab identity and catalog bind trusted server Email, organization and allowed capabilities", async () => {
   const app = await fixture((req, res) => {
     assert.equal(req.headers.authorization, "Bearer synthetic-test");
@@ -73,9 +118,9 @@ test("CertLab rejects invalid origins, absent Email, foreign organization and un
     value = { ...manifest(), organizationId: "foreign-org" };
     await assert.rejects(() => app.client.identity("synthetic-test"), /AppOrganizationBindingMismatch/);
     value = { ...manifest(), capabilities: [...testCatalog().capabilities, { ...testCatalog().capabilities[4], id: "assessment.submit" }] };
-    await assert.rejects(() => app.client.catalog("synthetic-test"), /InvalidCapabilityManifest/);
+    await assert.rejects(() => app.client.catalog("synthetic-test"), /InvalidCapabilityCatalog/);
     value = { ...manifest(), capabilities: [testCatalog().capabilities[0], testCatalog().capabilities[0]] };
-    await assert.rejects(() => app.client.catalog("synthetic-test"), /InvalidCapabilityManifest/);
+    await assert.rejects(() => app.client.catalog("synthetic-test"), /InvalidCapabilityCatalog/);
   } finally { await app.close(); }
 });
 
@@ -84,9 +129,9 @@ test("CertLab command sends original key and recovers lost response by resource-
   const app = await fixture(async (req, res) => {
     const envelope = await body(req);
     assert.equal(envelope.expectedDomainRelease, "certlab/v1");
-    if (req.url?.includes("/commands/")) {
+    if (req.url === "assessment.start") {
       writes++;
-      assert.equal(req.headers["idempotency-key"], locator.commandId);
+      assert.equal(envelope.commandId, locator.commandId);
       req.socket.destroy();
     } else {
       assert.deepEqual(envelope.input, { report_id: locator.reportId, target_kind: "assessment", target_id: locator.assessmentId, capability_id: locator.capabilityId, command_id: locator.commandId, resource_kind: locator.resourceKind, resource_id: locator.resourceId, scope: locator.scope });
@@ -119,7 +164,7 @@ test("CertLab distinguishes rejected commands from uncertain server and malforme
     status = 404;
     assert.equal(await app.client.receipt("synthetic-test", locator), undefined);
     status = 403;
-    await assert.rejects(() => app.client.receipt("synthetic-test", locator), /CertLab receipt 403/);
+    await assert.rejects(() => app.client.receipt("synthetic-test", locator), /permission_denied/);
   } finally { await app.close(); }
 });
 
@@ -174,7 +219,7 @@ test("startup context requests five summaries and preserves the full selected as
   const boundary = {revision: 4, status: 'confirmed', content: {scope_of_evaluation: '<p>Synthetic robot and cabinet. No excluded features.</p>', equipment_description: '<p>Robot</p><table><tbody><tr><td>Power</td><td>380 Vac</td></tr></tbody></table>'}, confirmed_by: 'engineer', confirmed_at: '2026-10-20T00:00:00Z'};
   const result={report: {evaluation_boundary: boundary, evaluation_boundary_gaps: []}, assessment_page:{total:79,limit:5,next_offset:5},selection:selected};
   const app=await fixture(async(req,res)=>{
-    assert.equal(req.url,'/airic/v1/queries/report.context');
+    assert.equal(req.url,'report.context');
     assert.deepEqual((await body(req)).input,{report_id:'report',assessment_limit:5,selection:{assessment_id:'selected'}});
     json(res,result);
   });
@@ -239,11 +284,11 @@ test("basis queries and fact drafts preserve report-bound command receipt identi
 test("verification drafts retain report-owned receipts and context preserves checkpoint pagination", async () => {
   const app = await fixture(async (req, res) => {
     const envelope = await body(req);
-    if (req.url === "/airic/v1/queries/verification.context") {
+    if (req.url === "verification.context") {
       assert.deepEqual((envelope.input as Record<string, unknown>), { report_id: "report-one", result_id: "inspection-one", offset: 20, limit: 5 });
       return json(res, { id: "inspection-one", status: "recorded", current_revision: 2, recorded: { checks: [{ id: "label" }], checks_page: { offset: 20, total: 30, next_offset: 25 } } });
     }
-    assert.equal(req.url, "/airic/v1/queries/command.context");
+    assert.equal(req.url, "command.context");
     assert.equal((envelope.input as Record<string, unknown>).capability_id, "verification.save-draft");
     return json(res, { resource_kind: "project", resource_id: "project-one", scope: "verification.save:report-one", target_kind: "report", target_id: "report-one" });
   });
@@ -253,5 +298,54 @@ test("verification drafts retain report-owned receipts and context preserves che
     assert.equal(((context.recorded as Record<string, unknown>).checks_page as Record<string, unknown>).next_offset, 25);
     assert(!initialCapabilityIds.includes("verification.record"));
     assert(!initialCapabilityIds.includes("verification.withdraw"));
+  } finally { await app.close(); }
+});
+
+test("new ordinary tools need no Forge method, and catalog ordering does not change acceptance", async () => {
+  const extra = { id: "report.extra-query", title: "Extra", description: "Read an extra fact", kind: "query" as const,
+    inputSchema: { type: "object", properties: { report_id: { type: "string" } }, required: ["report_id"] }, outputSchema: { type: "object" } };
+  let capabilities = [...testCatalog().capabilities, extra];
+  const app = await fixture((req, res) => json(res, req.url === extra.id ? { fact: "discovered dynamically" } : { ...manifest(), capabilities }));
+  try {
+    const first = await app.client.catalog("one-user");
+    capabilities.reverse();
+    assert.equal((await app.client.catalog("one-user")).digest, first.digest);
+    assert.deepEqual(await app.client.query("one-user", extra.id, { report_id: "report" }), { fact: "discovered dynamically" });
+    extra.description = "Changed meaning requires review";
+    assert.notEqual((await app.client.catalog("one-user")).digest, first.digest);
+    capabilities.push({ ...extra, id: "report.extra.query" });
+    await assert.rejects(() => app.client.catalog("one-user"), /InvalidCapabilityCatalog/);
+  } finally { await app.close(); }
+});
+
+test("MCP discovery follows bounded pagination and rejects cyclic cursors", async () => {
+  const capabilities = testCatalog().capabilities;
+  let loop = false;
+  const app = await fixture((req, res) => {
+    if (req.url === "tools/list") {
+      const cursor = (req.value.input as Record<string, unknown>).cursor;
+      json(res, { capabilities: cursor ? capabilities.slice(10) : capabilities.slice(0, 10),
+        noInfo: Boolean(cursor), ...(!cursor || loop ? { nextCursor: "page-two" } : {}) });
+    } else json(res, manifest());
+  });
+  try {
+    assert.equal((await app.client.catalog("test")).capabilities.length, capabilities.length);
+    loop = true;
+    await assert.rejects(() => app.client.catalog("test"), /McpCatalogCursorLoop/);
+  } finally { await app.close(); }
+});
+
+test("concurrent MCP operations never share bearer credentials between users", async () => {
+  const seen = new Set<string>();
+  const app = await fixture(async (req, res) => {
+    const authorization = String(req.headers.authorization);
+    seen.add(authorization);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    json(res, { actor: authorization });
+  });
+  try {
+    const results = await Promise.all(["user-one", "user-two"].map(token => app.client.query(token, "report.context", {})));
+    assert.deepEqual(results, [{ actor: "Bearer user-one" }, { actor: "Bearer user-two" }]);
+    assert.deepEqual(seen, new Set(["Bearer user-one", "Bearer user-two"]));
   } finally { await app.close(); }
 });

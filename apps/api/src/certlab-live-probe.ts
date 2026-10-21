@@ -18,7 +18,7 @@ let submissions = 0;
 let receiptLookups = 0;
 const app: AppPort = {
   identity: (token) => client.identity(token), catalog: (token) => client.catalog(token),
-  openApi: (token) => client.openApi(token), reportContext: (token, id, selection) => client.reportContext(token, id, selection),
+  reportContext: (token, id, selection) => client.reportContext(token, id, selection),
   query: (token, id, value) => client.query(token, id, value),
   receipt: async (token, locator) => ++receiptLookups === 1 ? undefined : client.receipt(token, locator),
   submitCommand: async (token, id, value) => {
@@ -31,7 +31,8 @@ const app: AppPort = {
 const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(scene.forgeRoot, "seed/certlab"), webDistDir: join(root, "web"), certLabUrl: scene.origin, organizationId: scene.organizationId, allowedOrigin: "http://localhost", initialAdminEmails: new Set(["synthetic-engineer@example.invalid"]) });
 try {
   const agents: AgentRunnerPort = { runWork: async ({ tools }) => {
-    assert.deepEqual(tools.map(tool => tool.capability.id).sort(), catalog.capabilities.map(capability => capability.id).sort());
+    const definition = await runtime.om.workDefinition(await runtime.om.head(session.user.activeBranch), "report-authoring");
+    assert.deepEqual(tools.map(tool => tool.capability.id).sort(), catalog.capabilities.filter(capability => definition.capabilities.allowed.includes(capability.id) && !["command.context", "command.receipt"].includes(capability.id)).map(capability => capability.id).sort());
     assert.ok(!tools.some((tool) => /submit|confirm|issue|send/.test(tool.capability.id)));
     const start = tools.find((tool) => tool.capability.id === "assessment.start")!;
     const save = tools.find((tool) => tool.capability.id === "assessment.save-draft")!;

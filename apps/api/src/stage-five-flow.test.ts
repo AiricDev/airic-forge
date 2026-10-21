@@ -22,7 +22,6 @@ test("single-report Work binds record number and current-Turn evidence through G
   const app: AppPort = {
     identity: async () => ({ appId: "certlab", appUserId: "admin", email: "admin@example.com", displayName: "Admin" }),
     catalog: async () => catalog,
-    openApi: async () => ({ paths: Object.fromEntries(catalog.capabilities.map((item) => [`/airic/v1/${item.kind === "command" ? "commands" : "queries"}/${item.id}`, {}])) }),
     reportContext: async () => ({ resource: { namespace: "certlab", resourceType: "report", resourceId: "report-1", projectId: "project-1" } }),
     query: async () => ({ assessment: { id: "assessment-1", report_id: "report-1", record_no: recordNo } }),
     submitCommand: async (_token, capabilityId, body) => { assert.equal(capabilityId, "assessment.save-draft"); assert.equal((body.input as Record<string, unknown>).expected_record_no, recordNo); commands++; recordNo++; return { status: "committed", receipt: { commandId: body.commandId, status: "committed", result: { record_no: recordNo } } }; },
@@ -36,7 +35,7 @@ test("single-report Work binds record number and current-Turn evidence through G
       return { text: "Still available" };
     }
     seenEvidence = evidence?.[0]?.text ?? "";
-    assert.deepEqual(tools.map((tool) => tool.capability.id), runtime.om.workDefinition(runtime.om.head("main"), "report-authoring").capabilities.allowed);
+    assert.deepEqual(tools.map((tool) => tool.capability.id), runtime.om.workDefinition(runtime.om.head("main"), "report-authoring").capabilities.allowed.filter((id) => !["command.context", "command.receipt"].includes(id)));
     assert(tools.every((tool) => ids.includes(tool.capability.id)));
     await assert.rejects(() => tools[0].invoke({ report_id: "other" }), /CommandTargetMismatch/);
     const save = tools.find((tool) => tool.capability.id === "assessment.save-draft")!;

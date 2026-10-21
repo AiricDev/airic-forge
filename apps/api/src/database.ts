@@ -8,9 +8,14 @@ import type { OmWorkspace, GitToken } from "@airic-forge/domain";
 export class ForgeDatabase {
   readonly #db: DatabaseSync;
 
-  constructor(dataDir: string) {
+  constructor(dataDir: string, options: { migrateMcpCatalogs?: boolean } = {}) {
     mkdirSync(dataDir, { recursive: true });
     this.#db = new DatabaseSync(join(dataDir, "forge.sqlite"));
+    const tables = new Set((this.#db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>).map(row => row.name));
+    if (tables.has("catalog_candidates") && !tables.has("mcp_catalog_candidates") && !options.migrateMcpCatalogs) {
+      this.#db.close();
+      throw new Error("McpCatalogMigrationRequired: back up the data root, then run scripts/migrate-mcp-catalogs.mjs --data-dir <absolute-path> --apply");
+    }
     this.#db.exec("PRAGMA journal_mode = WAL");
     this.#migrate();
   }
@@ -211,20 +216,19 @@ export class ForgeDatabase {
         at TEXT NOT NULL
       ) STRICT;
       CREATE INDEX IF NOT EXISTS work_feedback_work ON work_feedback(work_id, at);
-      CREATE TABLE IF NOT EXISTS catalog_candidates (
+      CREATE TABLE IF NOT EXISTS mcp_catalog_candidates (
         app_id TEXT NOT NULL,
         digest TEXT NOT NULL,
         catalog_json TEXT NOT NULL,
-        openapi_json TEXT NOT NULL,
         imported_at TEXT NOT NULL,
         PRIMARY KEY (app_id, digest)
       ) STRICT;
-      CREATE TABLE IF NOT EXISTS accepted_catalogs (
+      CREATE TABLE IF NOT EXISTS mcp_accepted_catalogs (
         app_id TEXT PRIMARY KEY,
         digest TEXT NOT NULL,
         accepted_by TEXT NOT NULL REFERENCES users(id),
         accepted_at TEXT NOT NULL,
-        FOREIGN KEY (app_id, digest) REFERENCES catalog_candidates(app_id, digest)
+        FOREIGN KEY (app_id, digest) REFERENCES mcp_catalog_candidates(app_id, digest)
       ) STRICT;
     `);
     const proposalColumns = this.#db.prepare("PRAGMA table_info(proposals)").all() as Array<{ name: string }>;
@@ -355,32 +359,32 @@ export class ForgeDatabase {
 
   setInitialPassword(userId: string, passwordHash: string): boolean { return this.#db.prepare("UPDATE users SET password_hash=? WHERE id=? AND password_hash IS NULL").run(passwordHash, userId).changes === 1; }
 
-  saveCandidate(catalog: CapabilityCatalog, openApi: Record<string, unknown>): void {
+  saveCandidate(catalog: CapabilityCatalog): void {
     const serialized = JSON.stringify({ ...catalog, acceptedAt: "" });
-    const existing = this.#db.prepare("SELECT catalog_json FROM catalog_candidates WHERE app_id=? AND digest=?").get(catalog.appId, catalog.digest) as { catalog_json: string } | undefined;
+    const existing = this.#db.prepare("SELECT catalog_json FROM mcp_catalog_candidates WHERE app_id=? AND digest=?").get(catalog.appId, catalog.digest) as { catalog_json: string } | undefined;
     if (existing && existing.catalog_json !== serialized) throw new Error("CatalogDigestCollision");
-    this.#db.prepare("INSERT OR IGNORE INTO catalog_candidates (app_id, digest, catalog_json, openapi_json, imported_at) VALUES (?, ?, ?, ?, ?)")
-      .run(catalog.appId, catalog.digest, serialized, JSON.stringify(openApi), new Date().toISOString());
+    this.#db.prepare("INSERT OR IGNORE INTO mcp_catalog_candidates (app_id, digest, catalog_json, imported_at) VALUES (?, ?, ?, ?)")
+      .run(catalog.appId, catalog.digest, serialized, new Date().toISOString());
   }
 
   candidate(appId: string, digest: string): CapabilityCatalog | undefined {
-    const row = this.#db.prepare("SELECT catalog_json FROM catalog_candidates WHERE app_id=? AND digest=?").get(appId, digest) as { catalog_json: string } | undefined;
+    const row = this.#db.prepare("SELECT catalog_json FROM mcp_catalog_candidates WHERE app_id=? AND digest=?").get(appId, digest) as { catalog_json: string } | undefined;
     return row ? JSON.parse(row.catalog_json) as CapabilityCatalog : undefined;
   }
 
   candidates(appId: string): CapabilityCatalog[] {
-    return (this.#db.prepare("SELECT catalog_json FROM catalog_candidates WHERE app_id=? ORDER BY imported_at DESC, digest DESC").all(appId) as Array<{ catalog_json: string }>).map((row) => JSON.parse(row.catalog_json) as CapabilityCatalog);
+    return (this.#db.prepare("SELECT catalog_json FROM mcp_catalog_candidates WHERE app_id=? ORDER BY imported_at DESC, digest DESC").all(appId) as Array<{ catalog_json: string }>).map((row) => JSON.parse(row.catalog_json) as CapabilityCatalog);
   }
 
   accept(appId: string, digest: string, acceptedBy: string): void {
     if (!this.candidate(appId, digest)) throw new Error("CatalogCandidateNotFound");
-    this.#db.prepare(`INSERT INTO accepted_catalogs (app_id, digest, accepted_by, accepted_at) VALUES (?, ?, ?, ?)
+    this.#db.prepare(`INSERT INTO mcp_accepted_catalogs (app_id, digest, accepted_by, accepted_at) VALUES (?, ?, ?, ?)
       ON CONFLICT(app_id) DO UPDATE SET digest=excluded.digest, accepted_by=excluded.accepted_by, accepted_at=excluded.accepted_at`)
       .run(appId, digest, acceptedBy, new Date().toISOString());
   }
 
   accepted(appId: string): CapabilityCatalog | undefined {
-    const row = this.#db.prepare("SELECT c.catalog_json, a.accepted_at FROM accepted_catalogs a JOIN catalog_candidates c ON c.app_id=a.app_id AND c.digest=a.digest WHERE a.app_id=?")
+    const row = this.#db.prepare("SELECT c.catalog_json, a.accepted_at FROM mcp_accepted_catalogs a JOIN mcp_catalog_candidates c ON c.app_id=a.app_id AND c.digest=a.digest WHERE a.app_id=?")
       .get(appId) as { catalog_json: string; accepted_at: string } | undefined;
     return row ? { ...(JSON.parse(row.catalog_json) as CapabilityCatalog), acceptedAt: row.accepted_at } : undefined;
   }

@@ -18,7 +18,7 @@ const catalog = runtime.app.catalog.bind(runtime.app);
 runtime.app.catalog = async (token) => {
   const candidate = await catalog(token);
   const admin = runtime.db.ensureUser("synthetic-fixture-admin@example.invalid", true);
-  runtime.db.saveCandidate(candidate, {}); runtime.db.accept("certlab", candidate.digest, admin.id);
+  runtime.db.saveCandidate(candidate); runtime.db.accept("certlab", candidate.digest, admin.id);
   return candidate;
 };
 const identity = runtime.app.identity.bind(runtime.app);

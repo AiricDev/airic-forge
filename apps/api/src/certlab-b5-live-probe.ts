@@ -48,6 +48,9 @@ const agents: AgentRunnerPort = { runWork: async ({ tools, documents, loadDocume
 } };
 const reflectionAgent: ReflectionAgentPort = { analyze: async (request) => {
   const events = await request.readTrajectory!(0, 20);
+  for (let offset = 20; offset < 1000 && events.length === offset; offset += 20) {
+    events.push(...await request.readTrajectory!(offset, 20));
+  }
   const cited = events.filter((event) => event.type === "work.feedback" || event.type === "action" || event.type === "observation").map((event) => event.id);
   if (!cited.length) cited.push(...events.filter((event) => event.type === "turn.completed").map((event) => event.id));
   assert(cited.length);
@@ -74,7 +77,7 @@ server.log.level = "silent";
 let origin = await server.listen({ host: "127.0.0.1", port: 0 });
 let cookie = "";
 const http = async (path: string, body?: unknown, method = body === undefined ? "GET" : "POST", headers: Record<string, string> = {}, expected = 200) => {
-  const response = await fetch(`${origin}${path}`, { method, headers: { ...cookie ? { Cookie: cookie } : {}, "Content-Type": "application/json", ...headers }, ...body === undefined ? {} : { body: JSON.stringify(body) } });
+  const response = await fetch(`${origin}${path}`, { method, headers: { ...cookie ? { Cookie: cookie } : {}, ...body === undefined ? {} : { "Content-Type": "application/json" }, ...headers }, ...body === undefined ? {} : { body: JSON.stringify(body) } });
   assert.equal(response.status, expected, `${path}: ${await response.clone().text()}`);
   if (response.headers.get("set-cookie")) cookie = response.headers.get("set-cookie")!.split(";")[0];
   return response.status === 204 ? undefined : response.json();
@@ -114,6 +117,9 @@ try {
   assert.deepEqual((await useCases.sessionHistory(session.ticket)).events.filter((event) => original.events.some((old) => old.id === event.id)), original.events);
   assert.equal((await useCases.sessionHistory(session.ticket)).turns.at(-1)!.omRevision, adopted.revision);
   const methodSession = await useCases.bootstrap({ token: scene.token, reportId: scene.reportId });
+  assert.equal(methodSession.work.id, session.work.id);
+  const methodProgress = (await useCases.sessionHistory(methodSession.ticket)).progress;
+  await useCases.checkpointFeedback(methodSession.ticket, { checkpointId: methodProgress.checkpoint!.id, kind: "approve", note: "Synthetic engineer checked the prior learning step." }, "synthetic-b5-method-step");
   await useCases.startTurn(methodSession.ticket, "Check method candidate");
   const methodReflection = await http(`/api/v1/works/${methodSession.work.id}/reflection/open`, {});
   const method = await http(`/api/v1/reflections/${methodReflection.reflection.id}/messages`, { message: "/delegation-gap Preserve original limitations" });
@@ -150,4 +156,7 @@ try {
   assert(!JSON.stringify(restored).includes(scene.token));
   assert(!JSON.stringify(restored).includes(marker));
   process.stdout.write(JSON.stringify({ status: "passed", commands, initialOmUsed: true, actualWorkReceiptsAndFeedbackCited: true, optionalLensesScoped: true, nestedStableIdsAndPrecedentsReviewed: true, noAutomaticAdoption: true, ownerCommitConfirmationRequired: true, adoptedNextTurnSameWork: true, oldTurnAndEventsUnchanged: true, privateDraftExcluded: true, organizationMain: shared.revision, mainDoesNotOverwritePersonal: true, privateWorkNotShared: true, foreignRootRejected: true, restartRequiresBootstrapAndLogin: true, adoptedVersionSurvivesRestart: true, tokenAbsentFromHistory: true, manualConfirmationPreserved: true, modelQualityNotClaimed: true }));
+} catch (error) {
+  console.error(error);
+  throw error;
 } finally { await server.close(); runtime.db.close(); rmSync(root, { recursive: true, force: true }); }

@@ -75,8 +75,8 @@ const owner = runtime.db.ensureUser('mui-owner@example.invalid', false);
 const member = runtime.db.ensureUser('mui-member@example.invalid', false);
 for (const user of [admin, owner, member]) { runtime.db.setInitialPassword(user.id, hashPassword(password)); runtime.om.ensureUserBranch(user.id); }
 const catalog = { ...testCatalog('mui-accepted'), id: 'mui-catalog' };
-runtime.db.saveCandidate(catalog, { paths: {} }); runtime.db.accept('certlab', catalog.digest, admin.id);
-runtime.db.saveCandidate({ ...catalog, id: 'mui-candidate', digest: 'mui-candidate', capabilities: [...catalog.capabilities, { id: 'report.evidence-location', kind: 'query', title: 'Evidence location', description: '证据位置', inputSchema: {}, outputSchema: {} }] }, { paths: {} });
+runtime.db.saveCandidate(catalog); runtime.db.accept('certlab', catalog.digest, admin.id);
+runtime.db.saveCandidate({ ...catalog, id: 'mui-candidate', digest: 'mui-candidate', capabilities: [...catalog.capabilities, { id: 'report.evidence-location', kind: 'query', title: 'Evidence location', description: '证据位置', inputSchema: {}, outputSchema: {} }] });
 const policy = 'work-definitions/report-authoring/policy.md';
 const base = runtime.om.head(`users/${owner.id}`);
 await createTestOmCommit(runtime, owner.id, [{ path: policy, content: runtime.om.document(base, policy) + '\n\nPreserve evidence source locations.\n' }], 'Shared policy');

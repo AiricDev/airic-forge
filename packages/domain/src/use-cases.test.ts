@@ -38,7 +38,6 @@ test("bootstrap rejects an App identity whose verified Email now maps to another
       identity: async () => ({ appId: "certlab", appUserId: "app-alice", email: "bob@example.com", displayName: "Bob" }),
       reportContext: async () => ({ resource: { namespace: "certlab", resourceType: "report", resourceId: "report-1" } }),
       catalog: async () => { throw new Error("unused"); },
-      openApi: async () => { throw new Error("unused"); },
     } as never,
     accounts: {
       linkedUserId: () => "forge-alice",
@@ -108,7 +107,7 @@ test("only an admin can import and accept a catalog whose capabilities have Open
   const useCases = new ForgeUseCases({
     sessions: { get: (ticket) => grant(ticket), claim: () => undefined, put: () => {}, remove: () => {} },
     accounts: { userById: (id: string) => ({ id, email: `${id}@example.com`, role: id === "admin" ? "admin" : "user", activeBranch: `users/${id}`, createdAt: "2026-10-02T00:00:00.000Z", passwordConfigured: true }) } as never,
-    app: { catalog: async () => candidate, openApi: async () => ({ paths: { "/airic/v1/queries/report.context": {}, "/airic/v1/commands/assessment.save-draft": {} } }) } as never,
+    app: { catalog: async () => candidate } as never,
     catalogs: { saveCandidate: () => { imported = true; }, candidate: () => imported ? candidate : undefined, candidates: () => imported ? [candidate] : [], accept: () => { accepted = true; }, accepted: () => undefined },
     works: {} as never, om: {} as never, agents: {} as never, passwordSetups: {} as never, passwordCodec: {} as never, trajectories: {} as never,
     system: { id: () => "id", digest: () => "digest", now: () => "2026-10-02T00:00:00.000Z" }, initialAdminEmails: new Set(),

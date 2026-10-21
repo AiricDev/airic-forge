@@ -18,8 +18,8 @@ it("retries unavailable instance metadata without inventing defaults and keeps t
       appId: "certlab",
       organizationId: "bound-organization",
       baseUrl: "https://configured.example",
-      manifestUrl: "https://configured.example/airic/v1/manifest",
-      openApiUrl: "https://configured.example/airic/v1/openapi",
+      mcpUrl: "https://configured.example/mcp",
+      transport: "streamable-http",
     },
   };
   const json = (body: unknown, status = 200) =>
@@ -57,8 +57,9 @@ it("retries unavailable instance metadata without inventing defaults and keeps t
     await screen.findByText(settings.operatingModel.repositoryPath),
   ).toBeVisible();
   expect(
-    screen.getByRole("link", { name: settings.integration.openApiUrl }),
-  ).toHaveAttribute("href", settings.integration.openApiUrl);
+    screen.getByRole("link", { name: settings.integration.mcpUrl }),
+  ).toHaveAttribute("href", settings.integration.mcpUrl);
+  expect(screen.getByText("传输类型：streamable-http")).toBeVisible();
   expect(screen.queryByText(/Reflection lens/)).not.toBeInTheDocument();
   await user.click(screen.getByRole("tab", { name: "能力目录" }));
   expect(await screen.findByText("暂无能力目录")).toBeVisible();

@@ -23,7 +23,7 @@ function fixture(agents: AgentRunnerPort, workContext?: WorkContextPorts) {
   runtime.app.query = async () => ({ assessment: { id: "assessment", report_id: "report", record_no: submissions } });
   const useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, app: runtime.app, organizationId: "synthetic-org", catalogs: runtime.db, agents, workContext, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: new Set() });
   const owner = runtime.db.ensureUser(email, false);
-  const catalog = testCatalog(); runtime.db.saveCandidate(catalog, {}); runtime.db.accept("certlab", catalog.digest, owner.id);
+  const catalog = testCatalog(); runtime.db.saveCandidate(catalog); runtime.db.accept("certlab", catalog.digest, owner.id);
   return { root, runtime, useCases, submitted: () => submissions, changeActor: (id: string) => { actorId = id; }, changeEmail: (value: string) => { email = value; }, commit: () => ++submissions, close: () => { runtime.db.close(); rmSync(root, { recursive: true, force: true }); } };
 }
 

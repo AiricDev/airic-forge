@@ -19,6 +19,7 @@ export interface AppIdentity {
 }
 
 export interface CapabilityCatalog {
+  source?: "mcp";
   id: string;
   appId: string;
   domainRelease: string;
@@ -35,6 +36,7 @@ export interface CapabilityDefinition {
   inputSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
   receiptScope?: string;
+  safetyHints?: { readOnly?: boolean; destructive?: boolean; idempotent?: boolean; openWorld?: boolean };
 }
 
 export interface DocumentProvenance {

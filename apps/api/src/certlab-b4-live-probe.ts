@@ -71,15 +71,18 @@ try {
     trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: runtime.config.initialAdminEmails });
   const session = await useCases.bootstrap({ token: scene.token, reportId: scene.reportId });
   const candidate = await useCases.importCatalog(session.ticket);
-  assert.equal(candidate.capabilities.length, 31);
+  assert.equal(candidate.capabilities.length, 38);
   await useCases.acceptCatalog(session.ticket, candidate.digest);
   const head = runtime.om.head(session.user.activeBranch);
   await useCases.startTurn(session.ticket, "Read source v1");
   const first = await useCases.sessionHistory(session.ticket);
   const original = first.events.find((event) => event.type === "observation" && event.payload.capabilityId === "asset.read")!;
+  const currentAsset = await (await fetch(`${scene.origin}/api/v1/assets/${scene.assets.pdf.id}`, {
+    headers: { Authorization: `Bearer ${scene.token}` },
+  })).json() as { version: number };
   const adopted = await fetch(`${scene.origin}/api/v1/assets/${scene.assets.pdf.id}/accept-revision`, {
     method: "POST", headers: { Authorization: `Bearer ${scene.token}`, "Content-Type": "application/json", "Idempotency-Key": "synthetic-human-adoption" },
-    body: JSON.stringify({ revision_id: scene.replacementId, expected_version: 2, expected_current_revision_id: scene.assets.pdf.revisionId }),
+    body: JSON.stringify({ revision_id: scene.replacementId, expected_version: currentAsset.version, expected_current_revision_id: scene.assets.pdf.revisionId }),
   });
   assert.equal(adopted.status, 200);
   await useCases.checkpointFeedback(session.ticket, { checkpointId: first.progress.checkpoint!.id, kind: "correct",

@@ -565,18 +565,13 @@ test("instance settings contain integration sources, OM paths and nested capabil
       exact: true,
     }),
   ).toBeVisible();
+  await expect(panel.getByText("传输类型：streamable-http")).toBeVisible();
   await expect(
     panel.getByRole("link", {
-      name: settings.integration.manifestUrl,
+      name: settings.integration.mcpUrl,
       exact: true,
     }),
-  ).toHaveAttribute("href", settings.integration.manifestUrl);
-  await expect(
-    panel.getByRole("link", {
-      name: settings.integration.openApiUrl,
-      exact: true,
-    }),
-  ).toHaveAttribute("href", settings.integration.openApiUrl);
+  ).toHaveAttribute("href", settings.integration.mcpUrl);
   await expect(panel.getByText(/Reflection lens|Lens 提示词/)).toHaveCount(0);
   await page.getByRole("tab", { name: "能力目录", exact: true }).click();
   await expect(

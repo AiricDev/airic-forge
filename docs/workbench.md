@@ -11,7 +11,7 @@
 ## 页面与职责
 
 - `src/workbench/WorkspaceApp.tsx`：登录、账户菜单、MUI 导航和按需加载。管理员的成效基线位于整个导航最前；其余主导航提供工作台、个人 OM、Work 与轨迹、改进工作方式、本地 agent 与 Git，管理区提供组织贡献、用户、实例设置及 Lens 管理。不再设置组织治理汇总页。能力目录位于实例设置内，不占独立主导航入口；成效基线仍仅管理员可访问。
-- `pages/AdminOverviewPages.tsx` 的实例设置：管理员只读查看实际 OM Git 仓库、运行数据及个人 worktree 根目录，以及集成 App、组织、Manifest 和 OpenAPI 地址；另一个分类管理能力目录及接受候选。Lens 管理独立于实例设置。配置接口 `/api/v1/instance-settings` 只返回明确允许展示的字段，不暴露密钥或完整运行配置。
+- `pages/AdminOverviewPages.tsx` 的实例设置：管理员只读查看实际 OM Git 仓库、运行数据及个人 worktree 根目录，以及集成 App、组织、MCP 地址和传输类型；另一个分类管理能力目录及接受候选。Lens 管理独立于实例设置。配置接口 `/api/v1/instance-settings` 只返回明确允许展示的字段，不暴露密钥或完整运行配置。
 - `pages/WorkListPage.tsx` / `pages/WorkDetailPage.tsx`：报告名称、筛选、分页、Work 对话和 Reflection 入口，以及显式结果评价。
 - `ReflectionChat.tsx` / `reflection-stream.ts`：连续 Reflection 对话、三种 Lens、SSE 快照、工具状态、停止、恢复和原请求 ID 核对。浏览器断开只移除观察者，运行由服务端管理；权限失效停止自动连接。状态通知在最新回复附近显示，不记录或渲染私有推理。
 - `Conversation.tsx` / `trajectory.ts`：原始 Work 轨迹的展示投影。历史流式片段按 Turn 合并；完成 Turn 使用其最终回答；引用原片段时仍能定位到原事件。存储历史不改写。
@@ -24,7 +24,7 @@
 
 普通问答不自动改 OM；用户明确要求即可准备草稿，Lens 可选。API Suggestion 可导出，但不会自动增加工具。Markdown 禁止原始 HTML、内嵌图片和不安全链接。Git 接入、部署和旧数据迁移见 [个人 OM](personal-om-changes.md)。
 
-能力列表和输入输出定义来自配置 App 实例的 `/airic/v1/manifest`，并非由 OpenAPI 自动推导。导入时同时读取 `/airic/v1/openapi` 校验声明的操作；管理员接受后目录才生效，WD 仍需显式允许能力。设置中展示的文档链接不附加访问令牌，直接访问可能需要 App 身份认证。
+能力列表和输入输出定义来自配置 App 实例 `/mcp` 的标准 `tools/list`。Forge 规范化分页结果形成审核快照；管理员接受后目录才生效，WD 仍需显式允许能力。MCP 地址不附加访问令牌，直接访问需要 App 身份认证。旧 manifest/Agent OpenAPI 不再使用，切换步骤见 `certlab-integration.md`。
 
 ## 验证
 

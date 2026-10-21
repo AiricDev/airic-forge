@@ -16,7 +16,7 @@ export function omFixture(agent?: ReflectionAgentPort) {
   const admin = runtime.db.ensureUser("om-admin@example.invalid", true);
   for (const user of [owner, other, admin]) runtime.om.ensureUserBranch(user.id);
   const catalog = testCatalog();
-  runtime.db.saveCandidate(catalog, {}); runtime.db.accept("certlab", catalog.digest, admin.id);
+  runtime.db.saveCandidate(catalog); runtime.db.accept("certlab", catalog.digest, admin.id);
   if (agent) Object.assign(runtime, { useCases: new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omChanges: runtime.omChanges, omDrafts: runtime.drafts, organization: runtime.organization, measurements: runtime.db, instanceSettings: runtime.instanceSettings, app: runtime.app, catalogs: runtime.db, agents: { runWork: async () => ({ text: "Done" }) }, reflectionAgent: agent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: new Set() }) });
   const save = async (ownerUserId: string, scope: string, path: string, content: string, summary = "Improve work method") => {
     const baseRevision = runtime.om.head(`users/${ownerUserId}`);

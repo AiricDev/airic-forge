@@ -22,7 +22,7 @@ try {
   for (const user of [admin, author, member]) { db.setInitialPassword(user.id, hashPassword(password)); om.ensureUserBranch(user.id); }
   const ids = ['report.context', 'report.read', 'report.gaps', 'report.update-master', 'report.update-data', 'report-type.context', 'report-type.read', 'report-type.list-published-standards', 'report-type.preview', 'report-type.update-draft'];
   const catalog = { id: 'p1-demo-catalog', appId: 'certreporter', domainRelease: 'certreporter/v1', digest: 'p1-demo-digest', acceptedAt: '', capabilities: ids.map((id) => ({ id, kind: id.includes('update') ? 'command' : 'query', title: id, description: '', inputSchema: {}, outputSchema: {} })) };
-  db.saveCandidate(catalog, { paths: {} }); db.accept('certreporter', catalog.digest, admin.id);
+  db.saveCandidate(catalog); db.accept('certreporter', catalog.digest, admin.id);
   const authorBranch = om.ensureUserBranch(author.id);
   const base = om.head(authorBranch.branch);
   const proposal = om.createProposal(author.id, 'p1-demo-author', base);

@@ -153,11 +153,9 @@ export class ForgeUseCases {
   async importCatalog(ticket: string) {
     const session = await this.appSession(ticket);
     await this.requireAdmin(session.forgeUserId);
-    const [catalog, openApi] = await Promise.all([this.ports.app.catalog(session.appToken), this.ports.app.openApi(session.appToken)]);
+    const catalog = await this.ports.app.catalog(session.appToken);
     if (catalog.appId !== "certlab" || catalog.domainRelease !== "certlab/v1") throw new Error("UnsupportedAppCatalog");
-    const paths = openApi.paths as Record<string, unknown> | undefined;
-    if (!paths || !catalog.capabilities.every((capability) => paths[`/airic/v1/${capability.kind === "command" ? "commands" : "queries"}/${capability.id}`])) throw new Error("CatalogOpenApiMismatch");
-    await this.ports.catalogs.saveCandidate(catalog, openApi);
+    await this.ports.catalogs.saveCandidate(catalog);
     return catalog;
   }
 
@@ -336,7 +334,8 @@ export class ForgeUseCases {
         turnId: turn.id, type: "message", at: this.ports.system.now(), payload: { contextStatus: status } });
     };
     const forbidden = new Set(["assessment.submit", "assessment.confirm", "report.issue", "report.send"]);
-    const tools: WorkAgentTool[] = catalog.capabilities.filter((capability) => !forbidden.has(capability.id) && !capability.id.startsWith("report-type.") && definition.capabilities.allowed.includes(capability.id)).map((capability) => ({
+    const controlTools = new Set(["command.context", "command.receipt"]);
+    const tools: WorkAgentTool[] = catalog.capabilities.filter((capability) => !forbidden.has(capability.id) && !controlTools.has(capability.id) && !capability.id.startsWith("report-type.") && definition.capabilities.allowed.includes(capability.id)).map((capability) => ({
       capability,
       invoke: (input) => {
         const operation = monitor(capability.title, async () => {

@@ -30,7 +30,6 @@ let submissions = 0;
 const app = {
   identity: (token) => client.identity(token),
   catalog: (token) => client.catalog(token),
-  openApi: (token) => client.openApi(token),
   reportContext: (token, id, selection) => client.reportContext(token, id, selection),
   query: (token, id, input) => client.query(token, id, input),
   submitCommand: async (token, id, body) => {

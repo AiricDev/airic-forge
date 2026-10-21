@@ -35,7 +35,7 @@ test("two users are isolated; an admin can inspect without becoming the OM owner
   const catalog = { id: "catalog-1", appId: "certlab", domainRelease: "certlab/v1", digest: "digest-1", acceptedAt: "", capabilities: [
     { id: "report.context", kind: "query" as const, title: "Context", description: "", inputSchema: {}, outputSchema: {} },
   ] };
-  runtime.db.saveCandidate(catalog, { paths: { "/airic/v1/queries/report.context": {} } });
+  runtime.db.saveCandidate(catalog);
   runtime.db.accept("certlab", catalog.digest, admin.id);
   assert.equal(runtime.db.accepted("certlab")?.digest, catalog.digest);
   const bobWork = runtime.db.createWork(bob.id, "certlab", "report-authoring", "report-bob");

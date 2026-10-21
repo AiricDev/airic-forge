@@ -43,8 +43,8 @@ export type InstanceSettings = {
     appId: string;
     organizationId: string;
     baseUrl: string;
-    manifestUrl: string;
-    openApiUrl: string;
+    mcpUrl: string;
+    transport: "streamable-http";
   };
 };
 export type OmSnapshot = {

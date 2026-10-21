@@ -9,8 +9,7 @@ test("integration settings describe the configured App's actual Manifest and Ope
   const client = new CertLabClient("https://app.example:8443/", "organization-one");
   assert.deepEqual(client.describeIntegration(), {
     appId: "certlab", organizationId: "organization-one", baseUrl: "https://app.example:8443",
-    manifestUrl: "https://app.example:8443/airic/v1/manifest",
-    openApiUrl: "https://app.example:8443/airic/v1/openapi",
+    mcpUrl: "https://app.example:8443/mcp", transport: "streamable-http",
   });
 });
 
@@ -30,7 +29,7 @@ test("only administrators can read effective instance storage and integration se
     assert.deepEqual(response.json(), {
       operatingModel: { repositoryPath: f.config.projectDir, dataPath: f.config.dataDir, personalWorktreesPath: join(f.config.dataDir, "worktrees", "users") },
       integration: { appId: "certlab", organizationId: f.config.organizationId, baseUrl: f.config.certLabUrl,
-        manifestUrl: `${f.config.certLabUrl}/airic/v1/manifest`, openApiUrl: `${f.config.certLabUrl}/airic/v1/openapi` },
+        mcpUrl: `${f.config.certLabUrl}/mcp`, transport: "streamable-http", },
     });
     assert(!response.body.includes("private-model-key-must-not-appear"));
     assert(!response.body.includes("modelApiKey"));

@@ -15,7 +15,9 @@
     "@earendil-works/pi-coding-agent": "1.2.0",
     "@fastify/cors": "^11.1.0",
     "@fastify/websocket": "^11.2.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@sinclair/typebox": "0.34.47",
+    "ajv": "^8.20.0",
     "fastify": "^5.5.0",
     "yaml": "^2.8.1"
   },
