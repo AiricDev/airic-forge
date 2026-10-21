@@ -13,10 +13,9 @@ export interface WorkDefinition {
   id: string;
   title: string;
   description: string;
-  capabilities: { allowed: string[] };
   documents: WorkDocument[];
   knowledge: { bootstrap: string[]; available: string[] };
-  completion: { mode?: "user"; requiredCapabilities: string[] };
+  completion: { mode?: "user" };
 }
 
 export interface SubjectKnowledgeMetadata {
@@ -43,7 +42,6 @@ export function isAllowedOmDocumentPath(path: string): boolean {
 
 export function validateWorkDefinition(
   definition: WorkDefinition,
-  knownCapabilities: ReadonlySet<string>,
   knownKnowledge: ReadonlySet<string>,
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
@@ -65,18 +63,10 @@ export function validateWorkDefinition(
     if (!["policy", "procedure", "reference", "precedent"].includes(document.role)) issues.push({ path: `documents.${document.id}.role`, message: "must be a supported document role" });
     if (!["required", "on-demand"].includes(document.load)) issues.push({ path: `documents.${document.id}.load`, message: "must be required or on-demand" });
   }
-  for (const capability of definition.capabilities.allowed) {
-    if (typeof capability !== "string") { issues.push({ path: "capabilities.allowed", message: "must contain capability IDs" }); continue; }
-    if (!knownCapabilities.has(capability)) issues.push({ path: `capabilities.allowed.${capability}`, message: "is not in the accepted capability catalog" });
-  }
   for (const knowledge of [...definition.knowledge.bootstrap, ...definition.knowledge.available]) {
     if (typeof knowledge !== "string") { issues.push({ path: "knowledge", message: "must contain Subject Knowledge IDs" }); continue; }
     if (!knownKnowledge.has(knowledge)) issues.push({ path: `knowledge.${knowledge}`, message: "does not resolve to Subject Knowledge" });
   }
   if (definition.completion.mode !== "user") issues.push({ path: "completion.mode", message: "must be user" });
-  for (const capability of definition.completion.requiredCapabilities) {
-    if (typeof capability !== "string") { issues.push({ path: "completion.requiredCapabilities", message: "must contain capability IDs" }); continue; }
-    if (!definition.capabilities.allowed.includes(capability)) issues.push({ path: `completion.requiredCapabilities.${capability}`, message: "must be allowed by this Work" });
-  }
   return issues;
 }

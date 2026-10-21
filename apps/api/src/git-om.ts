@@ -17,37 +17,43 @@ const run = (cwd: string, args: string[], options: { input?: string; env?: NodeJ
 export class GitOperatingModel {
   private readonly knowledgeIndexes = new Map<string, Map<string, string[]>>();
 
-  constructor(readonly projectDir: string, readonly dataDir: string, readonly seedProjectDir: string) {}
+  constructor(readonly projectDir: string, readonly dataDir: string, readonly seedProjectDir?: string) {}
 
   initialize(): void {
-    const seed = realpathSync(this.seedProjectDir);
-    for (const directory of [this.projectDir, this.dataDir]) {
-      const target = existsSync(directory) ? realpathSync(directory) : resolve(directory);
-      if (target === seed || target.startsWith(`${seed}/`) || seed.startsWith(`${target}/`)) throw new Error("OmSeedRuntimeOverlap");
-    }
-    mkdirSync(this.projectDir, { recursive: true });
+    if (existsSync(join(this.projectDir, ".git")) && spawnSync("git", ["rev-parse", "--verify", "HEAD"], { cwd: this.projectDir, timeout: 30_000 }).status === 0) return;
     if (!existsSync(join(this.projectDir, ".git"))) {
-      if (readdirSync(this.projectDir).length === 0) {
+      if (this.seedProjectDir) {
+        const seed = realpathSync(this.seedProjectDir);
+        for (const directory of [this.projectDir, this.dataDir]) {
+          const target = existsSync(directory) ? realpathSync(directory) : resolve(directory);
+          if (target === seed || target.startsWith(`${seed}/`) || seed.startsWith(`${target}/`)) throw new Error("OmSeedRuntimeOverlap");
+        }
+      }
+      mkdirSync(this.projectDir, { recursive: true });
+      if (this.seedProjectDir && readdirSync(this.projectDir).length === 0) {
+        const seedProjectDir = this.seedProjectDir;
         const files: string[] = [];
         const scan = (relative: string) => {
-          const path = join(this.seedProjectDir, relative);
+          const path = join(seedProjectDir, relative);
           if (lstatSync(path).isSymbolicLink()) throw new Error("OmSeedSymlinkNotAllowed");
           if (lstatSync(path).isDirectory()) {
             for (const entry of readdirSync(path)) scan(`${relative}/${entry}`);
           } else if (isAllowedOmDocumentPath(relative)) files.push(relative);
         };
         for (const directory of ["work-definitions", "subject-knowledge", "precedents"]) {
-          if (existsSync(join(this.seedProjectDir, directory))) scan(directory);
+          if (existsSync(join(seedProjectDir, directory))) scan(directory);
         }
         for (const path of files) {
           mkdirSync(resolve(this.projectDir, path, ".."), { recursive: true });
-          cpSync(join(this.seedProjectDir, path), join(this.projectDir, path));
+          cpSync(join(seedProjectDir, path), join(this.projectDir, path));
         }
       }
       run(this.projectDir, ["init", "--initial-branch=main"]);
-      run(this.projectDir, ["add", "."]);
-      run(this.projectDir, ["commit", "-m", "Initialize AiricForge Operating Model", "-m", "Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>"]);
     }
+    for (const directory of ["work-definitions", "subject-knowledge", "precedents"]) {
+      if (existsSync(join(this.projectDir, directory))) run(this.projectDir, ["add", "--", directory]);
+    }
+    run(this.projectDir, ["commit", "--allow-empty", "-m", "Initialize AiricForge Operating Model", "-m", "Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>"]);
   }
 
   ensureUserBranch(userId: string): { branch: string; worktree: string } {
@@ -90,8 +96,8 @@ export class GitOperatingModel {
     const raw = run(this.projectDir, ["show", `${revision}:work-definitions/${id}/work.yml`]);
     const parsed = parse(raw) as WorkDefinition;
     if (!parsed || parsed.id !== id || parsed.schemaVersion !== 1 || !Array.isArray(parsed.documents)
-      || !Array.isArray(parsed.capabilities?.allowed) || !Array.isArray(parsed.knowledge?.bootstrap)
-      || !Array.isArray(parsed.knowledge?.available) || !Array.isArray(parsed.completion?.requiredCapabilities)) {
+      || !Array.isArray(parsed.knowledge?.bootstrap)
+      || !Array.isArray(parsed.knowledge?.available) || !parsed.completion) {
       throw new Error(`InvalidOperatingModel: invalid work definition ${id}`);
     }
     return parsed;

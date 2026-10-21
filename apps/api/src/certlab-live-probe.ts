@@ -17,7 +17,7 @@ const client = new CertLabClient(scene.origin, scene.organizationId);
 let submissions = 0;
 let receiptLookups = 0;
 const app: AppPort = {
-  identity: (token) => client.identity(token), catalog: (token) => client.catalog(token),
+  identity: (token) => client.identity(token), discoverTools: (token) => client.discoverTools(token),
   reportContext: (token, id, selection) => client.reportContext(token, id, selection),
   query: (token, id, value) => client.query(token, id, value),
   receipt: async (token, locator) => ++receiptLookups === 1 ? undefined : client.receipt(token, locator),
@@ -28,11 +28,11 @@ const app: AppPort = {
     return submissions === 1 ? { status: "unknown" } : result;
   },
 };
-const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(scene.forgeRoot, "seed/certlab"), webDistDir: join(root, "web"), certLabUrl: scene.origin, organizationId: scene.organizationId, allowedOrigin: "http://localhost", initialAdminEmails: new Set(["synthetic-engineer@example.invalid"]) });
+const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(scene.forgeRoot, "seed/certlab"), webDistDir: join(root, "web"), certLabUrl: scene.origin, organizationId: scene.organizationId, allowedOrigin: "http://localhost", });
 try {
   const agents: AgentRunnerPort = { runWork: async ({ tools }) => {
     const definition = await runtime.om.workDefinition(await runtime.om.head(session.user.activeBranch), "report-authoring");
-    assert.deepEqual(tools.map(tool => tool.capability.id).sort(), catalog.capabilities.filter(capability => definition.capabilities.allowed.includes(capability.id) && !["command.context", "command.receipt"].includes(capability.id)).map(capability => capability.id).sort());
+    assert.deepEqual(tools.map(tool => tool.capability.id).sort(), catalog.tools.filter(capability => !["command.context", "command.receipt"].includes(capability.id)).map(capability => capability.id).sort());
     assert.ok(!tools.some((tool) => /submit|confirm|issue|send/.test(tool.capability.id)));
     const start = tools.find((tool) => tool.capability.id === "assessment.start")!;
     const save = tools.find((tool) => tool.capability.id === "assessment.save-draft")!;
@@ -45,10 +45,9 @@ try {
     assert.equal((await save.invoke({ assessment_id: scene.assessmentId, expected_record_no: 1, result_fields: { conformity: "conform", note: "Synthetic fixture" }, rationale: "Synthetic fixture only" })).status, "committed");
     return { text: "Synthetic assessment draft saved" };
   } };
-  const useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, app, organizationId: scene.organizationId, catalogs: runtime.db, agents, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: runtime.config.initialAdminEmails });
+  const useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, app, organizationId: scene.organizationId, toolSnapshots: runtime.db, agents, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort,  });
   const session = await useCases.bootstrap({ token: scene.token, reportId: scene.reportId });
-  const catalog = await useCases.importCatalog(session.ticket);
-  await useCases.acceptCatalog(session.ticket, catalog.digest);
+  const catalog = await runtime.app.discoverTools(scene.token);
   await useCases.startTurn(session.ticket, "Synthetic draft");
   const uncertain = (await useCases.workHistory(session.user.id, session.work.id)).events.find((event) => event.type === "action" && event.payload.status === "unknown")!;
   assert.equal((await useCases.recoverCommand(session.ticket, String(uncertain.payload.commandId))).status, "committed");
@@ -63,5 +62,5 @@ try {
   assert.equal(actions.length, 2);
   assert.equal(submissions, 2);
   assert.equal(JSON.stringify(history).includes(scene.token), false);
-  process.stdout.write(JSON.stringify({ status: "passed", submissions, commands: actions.map((event) => event.payload.commandId), capabilities: catalog.capabilities.map((capability) => capability.id), receiptRecoveryWithoutReplay: true, staleVersionRejected: true, tokenAbsentFromHistory: true }));
+  process.stdout.write(JSON.stringify({ status: "passed", submissions, commands: actions.map((event) => event.payload.commandId), capabilities: catalog.tools.map((capability) => capability.id), receiptRecoveryWithoutReplay: true, staleVersionRejected: true, tokenAbsentFromHistory: true }));
 } finally { runtime.db.close(); rmSync(root, { recursive: true, force: true }); }

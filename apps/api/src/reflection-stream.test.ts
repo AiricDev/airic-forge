@@ -1,3 +1,4 @@
+import { testUser } from "./test-users.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -17,11 +18,11 @@ function gate() {
 }
 async function fixture(agent: ReflectionAgentPort) {
   const root = mkdtempSync(join(tmpdir(), "forge-stream-"));
-  const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve("../../seed/certlab"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set(), webDistDir: join(root, "web") });
-  Object.assign(runtime, { useCases: new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omChanges: runtime.omChanges, omDrafts: runtime.drafts, app: runtime.app, catalogs: runtime.db, agents: { runWork: async () => ({ text: "" }) }, reflectionAgent: agent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: new Set() }) });
-  const owner = runtime.db.ensureUser("stream-owner@example.invalid", false);
-  const other = runtime.db.ensureUser("stream-other@example.invalid", false);
-  const admin = runtime.db.ensureUser("stream-admin@example.invalid", true);
+  const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve("../../seed/certlab"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", webDistDir: join(root, "web") });
+  Object.assign(runtime, { useCases: new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omChanges: runtime.omChanges, omDrafts: runtime.drafts, app: runtime.app, toolSnapshots: runtime.db, agents: { runWork: async () => ({ text: "" }) }, reflectionAgent: agent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, }) });
+  const owner = testUser(runtime.db, "stream-owner@example.invalid", false);
+  const other = testUser(runtime.db, "stream-other@example.invalid", false);
+  const admin = testUser(runtime.db, "stream-admin@example.invalid", true);
   runtime.om.ensureUserBranch(owner.id);
   const work = runtime.db.createWork(owner.id, "certreporter", "report-authoring", "report");
   runtime.trajectories.append({ id: "source-event", workId: work.id, type: "message", at: "now", payload: { text: "Evidence" } });
@@ -143,7 +144,7 @@ test("saved snapshots survive database restart and interrupted runs are not re-e
   const root = mkdtempSync(join(tmpdir(), "forge-run-restart-"));
   let db = new ForgeDatabase(root);
   try {
-    const user = db.ensureUser("restart@example.invalid", false);
+    const user = testUser(db, "restart@example.invalid", false);
     const work = db.createWork(user.id, "certreporter", "report-authoring", "report");
     const reflection = db.openReflection({ workId: work.id, ownerUserId: user.id, lensId: "conversation", lensVersion: 0, lensPrompt: "", question: "", evidenceEventIds: [], omRevision: "revision" }, "Intro");
     const run = db.createReflectionRun({ id: "run", reflectionId: reflection.id, ownerUserId: user.id, requestId: "request-1", message: "Discuss", status: "running", sequence: 1, text: "Partial", tools: [], createdAt: "now", updatedAt: "now" });
@@ -156,4 +157,30 @@ test("saved snapshots survive database restart and interrupted runs are not re-e
     assert.equal(db.reflectionRun(run.id)?.text, "Partial");
     assert.equal(db.reflectionRun(run.id)?.sequence, 2);
   } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const outcome of ["completed", "failed", "cancelled"] as const) test(`disabling lets an accepted Reflection settle as ${outcome}, then revokes its session`, async () => {
+  const entered = gate(), finish = gate();
+  const f = await fixture({ analyze: async () => {
+    entered.release(); await finish.promise;
+    if (outcome === "failed") throw new Error("SyntheticFailure");
+    return { outcome: "analysis", analysis: "Accepted work retained", attribution: "", citedEventIds: [] };
+  } });
+  try {
+    const ownerCookie = f.cookie();
+    const accepted = await f.app.inject({ method: "POST", url: f.path, headers: ownerCookie, payload: { message: "Accepted before disable", requestId: `drain-${outcome}` } });
+    assert.equal(accepted.statusCode, 202); const run = accepted.json().run as ReflectionRun;
+    await entered.promise;
+    const disabled = await f.app.inject({ method: "PATCH", url: `/api/v1/users/${f.owner.id}`, headers: f.cookie(f.admin.id), payload: { expectedVersion: f.owner.version, requestId: `disable-${outcome}`, reason: "Offboarding with accepted Reflection", enabled: false } });
+    assert.equal(disabled.json().user.status, "draining");
+    assert.equal((await f.app.inject({ url: `${f.path}/current`, headers: ownerCookie })).statusCode, 200);
+    assert.equal((await f.app.inject({ method: "POST", url: f.path, headers: ownerCookie, payload: { message: "New request", requestId: "forbidden-request" } })).statusCode, 403);
+    if (outcome === "cancelled") assert.equal((await f.app.inject({ method: "POST", url: `${f.path}/${run.id}/cancel`, headers: ownerCookie })).statusCode, 200);
+    finish.release();
+    assert.equal((await f.runtime.useCases.reflectionRuns!.wait(f.reflection.id, run.id)).status, outcome);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(f.runtime.db.userById(f.owner.id)!.status, "disabled");
+    assert.equal((await f.app.inject({ url: "/api/v1/auth/me", headers: ownerCookie })).statusCode, 401);
+    assert(f.runtime.db.reflectionMessages(f.reflection.id).some(message => message.content === "Accepted before disable"));
+  } finally { finish.release(); await f.close(); }
 });

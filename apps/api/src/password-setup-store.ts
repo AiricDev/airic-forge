@@ -8,6 +8,7 @@ export class InMemoryPasswordSetupStore implements PasswordSetupPort {
     this.#tickets.set(ticket, { userId, expiresAt });
     return ticket;
   }
+  revokeUser(userId: string): void { for (const [ticket, grant] of this.#tickets) if (grant.userId === userId) this.#tickets.delete(ticket); }
   consume(ticket: string, now: string): string | undefined {
     const grant = this.#tickets.get(ticket);
     this.#tickets.delete(ticket);

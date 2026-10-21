@@ -235,7 +235,8 @@ export function WorkDetailPage({
                       <ReflectionChat
                         detail={detail}
                         events={history.data.events}
-                        canWrite={owner}
+                        canWrite={owner && user.status === "active"}
+                        canCancel={owner}
                         href={(id) =>
                           workUrl({ ...r, tab: "conversation", event: id })
                         }
@@ -250,7 +251,7 @@ export function WorkDetailPage({
                       <OmDraftReview
                         scope={`reflection:${detail.reflection.id}`}
                         initialDraft={detail.draft}
-                        canWrite={owner}
+                        canWrite={owner && user.status === "active"}
                         busy={reflectionRunning}
                         refreshKey={detail}
                         onChanged={refreshReflection}
@@ -293,7 +294,7 @@ export function WorkDetailPage({
                         <Typography variant="caption">{item.at}</Typography>
                       </Paper>
                     ))}
-                    {owner && (
+                    {owner && user.status === "active" && (
                       <>
                         <Feedback {...evaluation} />
                         <TextField

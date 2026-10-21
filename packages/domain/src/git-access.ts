@@ -11,7 +11,7 @@ export interface GitTokenPort {
 export class GitAccess {
   constructor(private readonly ports: { accounts: AccountPort; tokens: GitTokenPort; system: SystemPort }) {}
   async list(actor: string) {
-    if (!await this.ports.accounts.userById(actor)) throw new Error("Unauthorized");
+    if ((await this.ports.accounts.userById(actor))?.status !== "active") throw new Error("Unauthorized");
     return this.ports.tokens.gitTokens(actor);
   }
   async issue(actor: string, name: string, days = 90) {
@@ -30,7 +30,7 @@ export class GitAccess {
     if (!secret || secret.length > 500) throw new Error("Unauthorized");
     const token = this.ports.tokens.gitTokenByDigest(this.ports.system.digest(secret));
     if (!token || token.revokedAt || Date.parse(token.expiresAt) <= Date.parse(this.ports.system.now())) throw new Error("Unauthorized");
-    if (token.ownerUserId !== requestedOwner || !await this.ports.accounts.userById(token.ownerUserId)) throw new Error("Forbidden");
+    if (token.ownerUserId !== requestedOwner || (await this.ports.accounts.userById(token.ownerUserId))?.status !== "active") throw new Error("Forbidden");
     return token.ownerUserId;
   }
 }

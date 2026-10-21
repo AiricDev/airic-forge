@@ -2,6 +2,9 @@ import type { AppSessionPort, SessionGrant } from "@airic-forge/domain";
 /** Process-local by design: the bearer token is never persisted. */
 export class InMemoryAppSessionStore implements AppSessionPort {
   readonly #sessions = new Map<string, SessionGrant>();
+  readonly #removed = new Set<(ticket: string) => void>();
+  onRemove(listener: (ticket: string) => void) { this.#removed.add(listener); return () => this.#removed.delete(listener); }
+  revokeUser(userId: string): string[] { const tickets = [...this.#sessions.values()].filter(session => session.forgeUserId === userId).map(session => session.ticket); for (const ticket of tickets) this.remove(ticket); return tickets; }
   readonly #claimed = new Set<string>();
   put(session: SessionGrant): void { this.#sessions.set(session.ticket, session); }
   get(ticket: string): SessionGrant | undefined { return this.#sessions.get(ticket); }
@@ -14,5 +17,5 @@ export class InMemoryAppSessionStore implements AppSessionPort {
     }
     return session;
   }
-  remove(ticket: string): void { this.#claimed.delete(ticket); this.#sessions.delete(ticket); }
+  remove(ticket: string): void { this.#claimed.delete(ticket); this.#sessions.delete(ticket); for (const listener of this.#removed) listener(ticket); }
 }

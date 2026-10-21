@@ -1,4 +1,4 @@
-import type { AppIdentity, AppCommandLocator, AppCommandTarget, AppPort, CapabilityCatalog, CapabilityDefinition, InstanceSettings } from "@airic-forge/domain";
+import type { AppIdentity, AppCommandLocator, AppCommandTarget, AppPort, AppToolSnapshot, AppToolDefinition, InstanceSettings } from "@airic-forge/domain";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { digest, normalizeEmail } from "./ids.js";
 import { AppMcpClient, AppToolError, appToolResult, canonical, executionMeta } from "./mcp-client.js";
@@ -40,27 +40,26 @@ export class CertLabClient implements AppPort {
     return info;
   }
 
-  async catalog(token: string): Promise<CapabilityCatalog> {
+  async discoverTools(token: string): Promise<AppToolSnapshot> {
     await this.integration(token);
     const tools = await this.mcp.tools(token);
-    const capabilities: CapabilityDefinition[] = [];
+    const capabilities: AppToolDefinition[] = [];
     const ids = new Set<string>();
     const modelNames = new Set<string>();
     const schemas = new Ajv2020({ strict: false, allErrors: false });
     for (const tool of tools) {
-      if (ids.has(tool.name)) throw new Error("InvalidCapabilityCatalog");
+      if (ids.has(tool.name)) throw new Error("InvalidAppToolSnapshot");
       ids.add(tool.name);
       if (tool.name === "integration.info") continue;
       const execution = record(tool._meta?.[executionMeta]);
       const modelName = tool.name.replaceAll(/[.-]/g, "_");
       if (!/^[a-z][a-z.-]+$/.test(tool.name) || modelNames.has(modelName)
         || !["query", "command"].includes(String(execution.kind)) || tool.inputSchema.type !== "object"
-        || ["assessment.submit", "assessment.confirm", "report.issue", "report.send"].includes(tool.name)
-        || (execution.kind === "command" && (typeof execution.receiptScope !== "string" || !execution.receiptScope))) throw new Error("InvalidCapabilityCatalog");
+        || (execution.kind === "command" && (typeof execution.receiptScope !== "string" || !execution.receiptScope))) throw new Error("InvalidAppToolSnapshot");
       modelNames.add(modelName);
       try { schemas.compile(tool.inputSchema); if (tool.outputSchema) schemas.compile(tool.outputSchema); } catch { throw new Error("InvalidCapabilitySchema"); }
       capabilities.push({ id: tool.name, title: tool.title ?? tool.name, description: tool.description ?? "",
-        kind: execution.kind as CapabilityDefinition["kind"], inputSchema: tool.inputSchema,
+        kind: execution.kind as AppToolDefinition["kind"], inputSchema: tool.inputSchema,
         outputSchema: tool.outputSchema ?? { type: "object" },
         ...(tool.annotations ? { safetyHints: {
           readOnly: tool.annotations.readOnlyHint, destructive: tool.annotations.destructiveHint,
@@ -68,10 +67,10 @@ export class CertLabClient implements AppPort {
         } } : {}),
         ...(execution.kind === "command" ? { receiptScope: String(execution.receiptScope) } : {}) });
     }
-    if (!ids.has("integration.info")) throw new Error("InvalidCapabilityCatalog");
+    if (!ids.has("integration.info")) throw new Error("InvalidAppToolSnapshot");
     capabilities.sort((a, b) => a.id.localeCompare(b.id));
-    const catalogDigest = digest(canonical({ source: "mcp", domainRelease: release, capabilities }));
-    return { source: "mcp", id: `catalog_${catalogDigest}`, appId: "certlab", domainRelease: release, digest: catalogDigest, acceptedAt: new Date().toISOString(), capabilities };
+    const catalogDigest = digest(canonical({ source: "mcp", domainRelease: release, tools: capabilities }));
+    return { source: "mcp", id: `tools_${catalogDigest}`, appId: "certlab", domainRelease: release, digest: catalogDigest, discoveredAt: new Date().toISOString(), tools: capabilities };
   }
 
   async reportContext(token: string, reportId: string, selection?: Json): Promise<Json> {

@@ -32,7 +32,6 @@ export function draftWorkDefinition(
 ): LiveWorkDefinition | null {
   try {
     const raw = parseYaml(content);
-    const capabilities = object(raw.capabilities);
     const knowledge = object(raw.knowledge);
     const completion = object(raw.completion);
     if (
@@ -62,7 +61,6 @@ export function draftWorkDefinition(
       id: raw.id,
       title: raw.title,
       description: typeof raw.description === "string" ? raw.description : "",
-      capabilities: { allowed: strings(capabilities.allowed) },
       documents: documents as LiveWorkDefinition["documents"],
       knowledge: {
         bootstrap: strings(knowledge.bootstrap),
@@ -70,7 +68,6 @@ export function draftWorkDefinition(
       },
       completion: {
         mode: typeof completion.mode === "string" ? completion.mode : undefined,
-        requiredCapabilities: strings(completion.requiredCapabilities),
       },
     };
   } catch {
@@ -126,25 +123,9 @@ export function ManifestPreview({
           ))}
         </List>
       </Box>
-      <Box>
-        <Typography variant="h6" gutterBottom>
-          允许能力（{d.capabilities.allowed.length}）
-        </Typography>
-        <Stack
-          direction="row"
-          sx={{
-            gap: 1,
-            flexWrap: "wrap",
-          }}
-        >
-          {d.capabilities.allowed.map((id) => (
-            <Chip key={id} label={id} />
-          ))}
-        </Stack>
-        <Alert severity="info" sx={{ mt: 2 }}>
-          实际可调用能力还必须位于已接受的 App 目录中。
-        </Alert>
-      </Box>
+      <Alert severity="info">
+        工具由 App MCP 按当前身份提供，WD 不限制工具范围。
+      </Alert>
       <Box>
         <Typography variant="h6">Subject Knowledge</Typography>
         <Typography>
@@ -160,7 +141,6 @@ export function ManifestPreview({
           {d.completion.mode === "user"
             ? "由用户结束 Work"
             : d.completion.mode || "未声明"}{" "}
-          · 必需能力：{d.completion.requiredCapabilities.join("、") || "无"}
         </Typography>
       </Box>
       <Accordion>

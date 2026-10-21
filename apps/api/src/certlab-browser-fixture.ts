@@ -1,3 +1,4 @@
+import { testUser } from "./test-users.js";
 /** Local-only synthetic browser fixture, never a production entry point. */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,20 +14,7 @@ const apiPort = process.env.CERTLAB_E2E_API_PORT ?? "8000";
 const webPort = process.env.CERTLAB_E2E_WEB_PORT ?? "5173";
 const port = Number(process.env.CERTLAB_E2E_FORGE_PORT ?? "4176");
 const forgeRoot = resolve(process.env.CERTLAB_FORGE_ROOT ?? "../../airic-forge");
-const runtime = new ForgeRuntime({ port, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: join(forgeRoot, "seed/certlab"), webDistDir: join(forgeRoot, "apps/workbench/public"), certLabUrl: `http://127.0.0.1:${apiPort}`, organizationId: "synthetic-browser-institution", allowedOrigin: `http://127.0.0.1:${process.env.CERTLAB_E2E_BUILT === "1" ? apiPort : webPort}`, publicUrl: `http://127.0.0.1:${port}`, initialAdminEmails: new Set() });
-const catalog = runtime.app.catalog.bind(runtime.app);
-runtime.app.catalog = async (token) => {
-  const candidate = await catalog(token);
-  const admin = runtime.db.ensureUser("synthetic-fixture-admin@example.invalid", true);
-  runtime.db.saveCandidate(candidate); runtime.db.accept("certlab", candidate.digest, admin.id);
-  return candidate;
-};
-const identity = runtime.app.identity.bind(runtime.app);
-runtime.app.identity = async (token) => {
-  const actor = await identity(token);
-  await runtime.app.catalog(token);
-  return actor;
-};
+const runtime = new ForgeRuntime({ port, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: join(forgeRoot, "seed/certlab"), webDistDir: join(forgeRoot, "apps/workbench/public"), certLabUrl: `http://127.0.0.1:${apiPort}`, organizationId: "synthetic-browser-institution", allowedOrigin: `http://127.0.0.1:${process.env.CERTLAB_E2E_BUILT === "1" ? apiPort : webPort}`, publicUrl: `http://127.0.0.1:${port}`, });
 const learnedId = "synthetic-browser-source-scope";
 const agents: AgentRunnerPort = { runWork: async ({ tools, context, userMessage, onText, onModelStatus, signal, checkpoint, availableDocumentIds, loadDocument }) => {
   onModelStatus?.();
@@ -102,7 +90,7 @@ const reflectionAgent: ReflectionAgentPort = { analyze: async (input) => {
   if (input.lens.id !== "domain-knowledge" || !citedEventIds.length) return { outcome: "analysis", analysis: "证据不足以证明可复用专业改善，不自动产生提案。", attribution: "", citedEventIds };
   return { outcome: "changes", analysis: "依据原资料读取及人工反馈提出有范围的知识候选，不宣称符合。", attribution: "本 Work 实际来源和工程师反馈", citedEventIds, edits: [{ path: "subject-knowledge/standards/synthetic/2026/source-scope.md", content: `---\nid: ${learnedId}\ntitle: 合成来源范围\nsummary: 保存原版本及实际限制。\ntopics: [source]\nreview_state: candidate\n---\n\n合成候选，不替代专业确认。\n` }] };
 } };
-Object.assign(runtime, { useCases: new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omChanges: runtime.omChanges, omDrafts: runtime.drafts, app: runtime.app, organizationId: runtime.config.organizationId, catalogs: runtime.db, agents, reflectionAgent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: new Set() }) });
+Object.assign(runtime, { useCases: new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omChanges: runtime.omChanges, omDrafts: runtime.drafts, app: runtime.app, organizationId: runtime.config.organizationId, toolSnapshots: runtime.db, agents, reflectionAgent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, }) });
 const app = buildServer(runtime);
 await app.listen({ host: "127.0.0.1", port });
 let stopping = false;

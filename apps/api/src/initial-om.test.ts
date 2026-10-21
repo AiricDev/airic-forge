@@ -17,7 +17,7 @@ test("authorized initial assessment OM resolves nested IDs at a fixed HEAD witho
     const head = om.head("main");
     const wd = om.workDefinition(head, "certification-assessment");
     assert.deepEqual(om.knowledgeIssues(head), []);
-    assert.deepEqual(validateWorkDefinition(wd, new Set(initialCapabilityIds), om.knownKnowledge(head)), []);
+    assert.deepEqual(validateWorkDefinition(wd, om.knownKnowledge(head)), []);
     for (const id of [...wd.knowledge.bootstrap, ...wd.knowledge.available]) {
       const path = om.knowledgePath(head, id);
       assert.match(om.document(head, path), new RegExp(`id: ${id}`));

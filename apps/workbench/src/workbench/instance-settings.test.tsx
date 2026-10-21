@@ -7,7 +7,7 @@ import { theme } from "./theme";
 
 afterEach(() => vi.unstubAllGlobals());
 
-it("retries unavailable instance metadata without inventing defaults and keeps the catalog within settings", async () => {
+it("retries unavailable instance metadata without inventing defaults without catalog management", async () => {
   const settings = {
     operatingModel: {
       repositoryPath: "/srv/actual OM/project",
@@ -33,8 +33,6 @@ it("retries unavailable instance metadata without inventing defaults and keeps t
           ? json({ error: "FixtureSettingsUnavailable" }, 503)
           : json(settings);
       }
-      if (url === "/api/v1/catalog")
-        return json({ accepted: null, candidates: [] });
       throw new Error(`Unexpected request: ${url}`);
     }),
   );
@@ -61,8 +59,9 @@ it("retries unavailable instance metadata without inventing defaults and keeps t
   ).toHaveAttribute("href", settings.integration.mcpUrl);
   expect(screen.getByText("传输类型：streamable-http")).toBeVisible();
   expect(screen.queryByText(/Reflection lens/)).not.toBeInTheDocument();
-  await user.click(screen.getByRole("tab", { name: "能力目录" }));
-  expect(await screen.findByText("暂无能力目录")).toBeVisible();
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "实例设置" })).toBeVisible();
-  expect(screen.getByRole("heading", { name: "能力目录" })).toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: "能力目录" }),
+  ).not.toBeInTheDocument();
 });

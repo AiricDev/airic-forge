@@ -12,7 +12,7 @@ import { initialCapabilityIds, testCatalog } from "./certlab-test-catalog.js";
 
 const locator: AppCommandLocator = { commandId: "command-one", capabilityId: "assessment.start", reportId: "report-one", assessmentId: "assessment-one", resourceKind: "project", resourceId: "project-one", scope: "assessment.start" };
 const receipt = { commandId: locator.commandId, status: "committed", receipt: { key: locator.commandId, resource_kind: "project", resource_id: "project-one", scope: locator.scope, response: { id: locator.assessmentId, record_no: 1 } } };
-const manifest = () => ({ appId: "certlab", organizationId: "synthetic-org", domain: { release: "certlab/v1" }, capabilities: testCatalog().capabilities });
+const manifest = () => ({ appId: "certlab", organizationId: "synthetic-org", domain: { release: "certlab/v1" }, capabilities: testCatalog().tools });
 type FixtureRequest = { url: string; headers: Record<string, unknown>; value: Record<string, unknown>; socket: { destroy(): void } };
 type FixtureResponse = { statusCode: number; setHeader(name: string, value: string): unknown; end(data?: string): unknown };
 const json = (response: FixtureResponse, body: unknown) => { response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(body)); };
@@ -40,7 +40,7 @@ async function fixture(handler: (request: FixtureRequest, response: FixtureRespo
     };
     sdk.setRequestHandler(ListToolsRequestSchema, async (request) => {
       const { value } = await invoke("tools/list", request.params ?? {}, {});
-      const capabilities = value.capabilities as ReturnType<typeof testCatalog>["capabilities"];
+      const capabilities = value.capabilities as ReturnType<typeof testCatalog>["tools"];
       return { ...(value.nextCursor ? { nextCursor: String(value.nextCursor) } : {}), tools: [...(value.noInfo ? [] : [{ name: "integration.info", inputSchema: { type: "object" } }]), ...capabilities.map(c => ({
         name: c.id, title: c.title, description: c.description, inputSchema: c.inputSchema, outputSchema: c.outputSchema,
         _meta: { [executionMeta]: { kind: c.kind, ...(c.receiptScope ? { receiptScope: c.receiptScope } : {}) } },
@@ -76,9 +76,9 @@ test("CertLab identity and catalog bind trusted server Email, organization and a
   });
   try {
     assert.deepEqual(await app.client.identity("synthetic-test"), { appId: "certlab", appUserId: "actor", email: "author@example.invalid", displayName: "Author", organizationId: "synthetic-org" });
-    const catalog = await app.client.catalog("synthetic-test");
-    assert.equal(catalog.capabilities.length, 38);
-    assert.equal(catalog.digest, (await app.client.catalog("synthetic-test")).digest);
+    const catalog = await app.client.discoverTools("synthetic-test");
+    assert.equal(catalog.tools.length, 38);
+    assert.equal(catalog.digest, (await app.client.discoverTools("synthetic-test")).digest);
   } finally { await app.close(); }
 });
 
@@ -117,10 +117,10 @@ test("CertLab rejects invalid origins, absent Email, foreign organization and un
     email = "author@example.invalid";
     value = { ...manifest(), organizationId: "foreign-org" };
     await assert.rejects(() => app.client.identity("synthetic-test"), /AppOrganizationBindingMismatch/);
-    value = { ...manifest(), capabilities: [...testCatalog().capabilities, { ...testCatalog().capabilities[4], id: "assessment.submit" }] };
-    await assert.rejects(() => app.client.catalog("synthetic-test"), /InvalidCapabilityCatalog/);
-    value = { ...manifest(), capabilities: [testCatalog().capabilities[0], testCatalog().capabilities[0]] };
-    await assert.rejects(() => app.client.catalog("synthetic-test"), /InvalidCapabilityCatalog/);
+    value = { ...manifest(), capabilities: [...testCatalog().tools, { ...testCatalog().tools[4], id: "assessment.submit" }] };
+    assert((await app.client.discoverTools("synthetic-test")).tools.some(tool=>tool.id==="assessment.submit"));
+    value = { ...manifest(), capabilities: [testCatalog().tools[0], testCatalog().tools[0]] };
+    await assert.rejects(() => app.client.discoverTools("synthetic-test"), /InvalidAppToolSnapshot/);
   } finally { await app.close(); }
 });
 
@@ -301,25 +301,25 @@ test("verification drafts retain report-owned receipts and context preserves che
   } finally { await app.close(); }
 });
 
-test("new ordinary tools need no Forge method, and catalog ordering does not change acceptance", async () => {
+test("new ordinary tools need no Forge method, and tool ordering does not change the snapshot", async () => {
   const extra = { id: "report.extra-query", title: "Extra", description: "Read an extra fact", kind: "query" as const,
     inputSchema: { type: "object", properties: { report_id: { type: "string" } }, required: ["report_id"] }, outputSchema: { type: "object" } };
-  let capabilities = [...testCatalog().capabilities, extra];
+  let capabilities = [...testCatalog().tools, extra];
   const app = await fixture((req, res) => json(res, req.url === extra.id ? { fact: "discovered dynamically" } : { ...manifest(), capabilities }));
   try {
-    const first = await app.client.catalog("one-user");
+    const first = await app.client.discoverTools("one-user");
     capabilities.reverse();
-    assert.equal((await app.client.catalog("one-user")).digest, first.digest);
+    assert.equal((await app.client.discoverTools("one-user")).digest, first.digest);
     assert.deepEqual(await app.client.query("one-user", extra.id, { report_id: "report" }), { fact: "discovered dynamically" });
-    extra.description = "Changed meaning requires review";
-    assert.notEqual((await app.client.catalog("one-user")).digest, first.digest);
+    extra.description = "Changed meaning is discovered next Turn";
+    assert.notEqual((await app.client.discoverTools("one-user")).digest, first.digest);
     capabilities.push({ ...extra, id: "report.extra.query" });
-    await assert.rejects(() => app.client.catalog("one-user"), /InvalidCapabilityCatalog/);
+    await assert.rejects(() => app.client.discoverTools("one-user"), /InvalidAppToolSnapshot/);
   } finally { await app.close(); }
 });
 
 test("MCP discovery follows bounded pagination and rejects cyclic cursors", async () => {
-  const capabilities = testCatalog().capabilities;
+  const capabilities = testCatalog().tools;
   let loop = false;
   const app = await fixture((req, res) => {
     if (req.url === "tools/list") {
@@ -329,9 +329,9 @@ test("MCP discovery follows bounded pagination and rejects cyclic cursors", asyn
     } else json(res, manifest());
   });
   try {
-    assert.equal((await app.client.catalog("test")).capabilities.length, capabilities.length);
+    assert.equal((await app.client.discoverTools("test")).tools.length, capabilities.length);
     loop = true;
-    await assert.rejects(() => app.client.catalog("test"), /McpCatalogCursorLoop/);
+    await assert.rejects(() => app.client.discoverTools("test"), /McpCatalogCursorLoop/);
   } finally { await app.close(); }
 });
 

@@ -44,12 +44,10 @@ services:
       FORGE_PORT: "4175"
       FORGE_PROJECT_DIR: /project
       FORGE_DATA_DIR: /data
-      FORGE_SEED_PROJECT_DIR: /app/seed/project
       FORGE_WEB_DIST_DIR: /app/apps/workbench/public
       FORGE_CERTREPORTER_URL: http://certreporter:3000
       FORGE_ALLOWED_ORIGIN: ${CERTREPORTER_PUBLIC_ORIGIN:-http://localhost:3000}
       FORGE_PUBLIC_URL: ${FORGE_PUBLIC_URL:-http://localhost:4175}
-      FORGE_INITIAL_ADMIN_EMAILS: ${FORGE_INITIAL_ADMIN_EMAILS:-}
       FORGE_MODEL_PROVIDER: ${FORGE_MODEL_PROVIDER:-}
       FORGE_MODEL_ID: ${FORGE_MODEL_ID:-}
       FORGE_MODEL_API_KEY: ${FORGE_MODEL_API_KEY:-}

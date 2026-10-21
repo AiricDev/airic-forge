@@ -1,4 +1,5 @@
-import type { AppIdentity, CapabilityCatalog, CapabilityDefinition, ForgeUser } from "./model.js";
+import type { UserAdministrationPort } from "./user-administration.js";
+import type { AppIdentity, AppToolSnapshot, AppToolDefinition, ForgeUser } from "./model.js";
 import type { ValidationIssue, WorkDefinition } from "./operating-model.js";
 import type { Work } from "./work.js";
 import type { WorkCheckpoint } from "./work-progress.js";
@@ -80,8 +81,8 @@ export interface OmDraftPort {
   discardDraft(ownerUserId: string, path: string): MaybePromise<void>;
 }
 
-export interface AccountPort {
-  ensureUser(email: string, initialAdmin: boolean): MaybePromise<ForgeUser>;
+export interface AccountPort extends UserAdministrationPort {
+  ensureUser(email: string): MaybePromise<ForgeUser>;
   linkedUserId(appId: string, appUserId: string): MaybePromise<string | undefined>;
   recordAppIdentity(appId: string, appUserId: string, userId: string, email: string): MaybePromise<void>;
   userByEmail(email: string): MaybePromise<ForgeUser | undefined>;
@@ -89,6 +90,12 @@ export interface AccountPort {
   listUsers(): MaybePromise<ForgeUser[]>;
   passwordHash(email: string): MaybePromise<string | undefined>;
   setInitialPassword(userId: string, hash: string): MaybePromise<boolean>;
+}
+
+/** Local operator authority only; not part of browser or Agent account access. */
+export interface PasswordAdministrationPort {
+  userByEmail(email: string): MaybePromise<ForgeUser | undefined>;
+  replacePassword(userId: string, hash: string): MaybePromise<boolean>;
 }
 
 export interface WorkPort {
@@ -178,7 +185,7 @@ export interface AppCommandTarget {
 /** Only the configured CertLab binding implements the live App port. */
 export interface AppPort {
   identity(token: string): Promise<AppIdentity>;
-  catalog(token: string): Promise<CapabilityCatalog>;
+  discoverTools(token: string): Promise<AppToolSnapshot>;
   reportContext(token: string, reportId: string, selection?: Record<string, unknown>): Promise<Record<string, unknown>>;
   query(token: string, capabilityId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
   prepareCommand?(token: string, capabilityId: string, input: Record<string, unknown>): Promise<AppCommandTarget>;
@@ -194,16 +201,15 @@ export interface EvidenceSessionPort {
   clear(ticket: string): MaybePromise<void>;
 }
 
-export interface CatalogPort {
-  saveCandidate(catalog: CapabilityCatalog): MaybePromise<void>;
-  candidate(appId: string, digest: string): MaybePromise<CapabilityCatalog | undefined>;
-  candidates(appId: string): MaybePromise<CapabilityCatalog[]>;
-  accept(appId: string, digest: string, acceptedBy: string): MaybePromise<void>;
-  accepted(appId: string): MaybePromise<CapabilityCatalog | undefined>;
+export interface ToolSnapshotPort {
+  /** Immutable metadata only, never an authorization or approval record. */
+  recordToolSnapshot(snapshot: AppToolSnapshot): MaybePromise<void>;
+  toolSnapshot(appId: string, digest: string): MaybePromise<AppToolSnapshot | undefined>;
+
 }
 
 export interface WorkAgentTool {
-  capability: CapabilityDefinition;
+  capability: AppToolDefinition;
   invoke(input: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 

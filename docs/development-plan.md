@@ -1,12 +1,20 @@
 # AiricForge 分阶段开发计划
 
+2026-10-21：按用户明确决策取消目录人工接受及 WD 工具白名单，改为当前身份 MCP 动态工具发现和不可变快照；[当前契约](contracts/mcp-tool-discovery.md) 取代此前目录审批约定。 [验收与上线记录](acceptance/mcp-tool-discovery-record.md)。
+
+账户角色、初始化、停用收尾及管理接口见 [用户管理契约](user-administration.md)。
+
+2026-10-21：基本用户管理已完成并升级当前实例，包括首管理员、角色/停用管理、审计、并发保护和运行中任务收尾；[验收与备份记录](acceptance/user-administration-record.md)。
+
 > 状态：实施中；以 `airic-forge-prd.md`、`decisions/0001-p0-runtime-contract.md` 和已确认的 CertReporter P0 集成计划为基线。
 > 范围：单实例、单业务 App、多用户；先完成个人工作与学习闭环（P0），再完成组织协作与运行增强（P1）。  
 > 当前进度：阶段 0–5 的本机 P0 交付验收已完成；阶段 6 的组织 OM 治理、个人同步与测量基线已在隔离实例验收。正式生产部署和真实业务成效目标仍需目标环境数据。见 `acceptance/stage-0-record.md` 至 `acceptance/stage-6-record.md`。
 
 ## 当前推进位置
 
-2026-10-14 维护记录：Pi SDK 从 `0.99.2` 升级至精确锁定的 `1.2.0`；构建、类型检查、34 项自动测试与直接 SDK 冒烟验证通过。Codemode、MCP 和 Pi Durable 的适配评估见 [升级记录](acceptance/pi-sdk-1x-upgrade.md)，新增能力尚未启用。
+2026-10-21 维护记录：App 已使用 MCP Streamable HTTP，通过 tools/list 发现、tools/call 调用；清理工作台和当前契约中的 Manifest/OpenAPI 接入描述。每 Turn 记录动态工具快照 digest，保留命令回执恢复，不再要求目录接受或 WD 工具白名单。历史 CertReporter 部署文档仅作归档。验证覆盖 `certlab-contract.test.ts`、`instance-settings.test.ts`、领域用例与工作台浏览器测试；当前接入边界和切换步骤见 [CertLab MCP integration](certlab-integration.md)。
+
+2026-10-14 维护记录：Pi SDK 从 `0.99.2` 升级至精确锁定的 `1.2.0`；构建、类型检查、34 项自动测试与直接 SDK 冒烟验证通过。当时的 Codemode、MCP 和 Pi Durable 适配评估见 [升级记录](acceptance/pi-sdk-1x-upgrade.md)，当时新增能力尚未启用。当前 App MCP 接入见下述维护记录。
 
 严格按 **阶段 0 → 阶段 1 → 阶段 2 → 阶段 3 → 阶段 4 → 阶段 5** 交付。跨阶段发现的缺陷只在阻断当前阶段验收、安全边界或数据正确性时立即修复；其余记入所属阶段，不用零散修补代替阶段完成。
 
@@ -63,7 +71,7 @@
 | 阶段 | 用户可观察的增量 | 主要责任边界与实现内容 | 完成证据 |
 | --- | --- | --- | --- |
 | **1. 可部署的身份与 OM 基础** | 空实例启动；两个 App 用户进入工作台，各自看到个人 OM，管理员可查看但不会改变所有者 | **部署/身份边界：**镜像、`/project` 与 `/data` 初始化、App 身份验证、Web/ACP 会话、所有者/管理员鉴权。**OM 边界：**组织 `main`、个人分支及工作区、已采纳修订读取、WD/SK 解析和结构/引用校验。**界面边界：**把原型中的登录、个人 OM 和管理员用户页接入真实 API | 空目录与已有目录启动；同一身份重复进入不重复建号；两普通用户互不可见；管理员读取他人资源不更换其模型所有者；重启后身份和 OM 仍可读。覆盖 P0-01～05、11 的基础部分 |
-| **2. App 内完成可追溯的 Work** | 在 CertReporter Report 页面打开 Copilot，启动/恢复 Work，看到流式进度；允许的命令得到 App 回执并刷新页面；AiricForge 工作台可查看同一 Work 的 Turn、Action 和上下文来源 | **App 接入边界：**CertReporter 权威投影、App 专用 OpenAPI 候选/接受、能力标识与 WD 白名单、身份 Token 透传、命令幂等与结果查询。**运行边界：**pi-sdk Work Agent 的受限工具集、ACP、每 Turn 固定 OM 和能力目录版本、Context Compiler 与来源清单。**轨迹边界：**规范事件、回执、未知结果及恢复。**界面边界：**CertReporter Drawer 与 Work 详情 | 演示被允许的命令、App 拒绝、越权目标、Token 撤销、页面切换、响应丢失后按同一幂等键查结果；每 Turn 能定位 OM 修订、WD/SK 文档与命令回执；断线与重启后可继续读取。覆盖 P0-06～10、18～19 的运行部分 |
+| **2. App 内完成可追溯的 Work** | 在 CertReporter Report 页面打开 Copilot，启动/恢复 Work，看到流式进度；允许的命令得到 App 回执并刷新页面；AiricForge 工作台可查看同一 Work 的 Turn、Action 和上下文来源 | **App 接入边界：**CertReporter 权威投影、App MCP 工具目录候选/接受、能力标识与 WD 白名单、身份 Token 透传、命令幂等与结果查询。**运行边界：**pi-sdk Work Agent 的受限工具集、ACP、每 Turn 固定 OM 和能力目录版本、Context Compiler 与来源清单。**轨迹边界：**规范事件、回执、未知结果及恢复。**界面边界：**CertReporter Drawer 与 Work 详情 | 演示被允许的命令、App 拒绝、越权目标、Token 撤销、页面切换、响应丢失后按同一幂等键查结果；每 Turn 能定位 OM 修订、WD/SK 文档与命令回执；断线与重启后可继续读取。覆盖 P0-06～10、18～19 的运行部分 |
 | **3. 个人 OM 编辑、提议与采纳** | 普通用户在 Web 中编辑 WD/SK 并保存私有草稿；Reflection 基于 Work 证据形成 Proposal 后查看差异、来源和检查结果，确认采纳；下一轮使用新版本 | **文档治理边界：**草稿不产生 Git 提交或 Proposal；Reflection Proposal 使用独立 worktree、基准与证据、结构/能力/路径/依赖校验、预期 active HEAD 的条件提交；个人 active 分支的外部 Git 提交从下一 Turn 生效。**界面边界：**草稿编辑、差异、冲突和历史视图。**运行边界：**每轮重新解析 active，执行中快照保持不变 | 未采纳草稿不进入运行时；外部 active 提交不被覆盖；并发 Proposal 采纳只有一个成功且另一请求可 rebase；新增 WD 无需重启；旧 Turn 仍能读到原内容。覆盖 P0-12～13、18，并补全 P0-11 |
 | **4. 从轨迹到可审核的 Reflection** | 用户在 Work 打开或恢复唯一的连续 Reflection 会话；Agent 按需读取该 Work 的轨迹，用户用三种 slash lens 形成有证据的 SK/WD 改动或 API 建议；证据不足时保存讨论而不强行产生 Proposal | **学习边界：**Reflection Agent 只读被授权的轨迹证据，只能修改候选 OM 文件，不能调用 App Command API；结果记录 lens 版本、来源事件和归因理由。**治理边界：**每个 Proposal 独立 worktree、并发防混写，复用阶段 3 的审阅与采纳。**建议边界：**API Suggestion 可导出，但不进入工具目录。**界面边界：**Reflection 工作区、提议和建议详情 | 三 lens 都有可演示路径；无证据和仅 API 建议路径不产生空提交；两个并行 Proposal 不混写；从 App 工作到下一轮版本变化的浏览器闭环通过。覆盖 P0-15～17、21 |
 | **5. P0 交付与恢复验收** | AiricForge 镜像可与 CertReporter 同机部署；故障后用户可找到既有工作与未完成提议 | **部署/数据边界：**迁移、故障恢复、备份还原、凭据隔离、日志与健康检查、最小接入说明。**验收边界：**按 PRD 场景执行真实浏览器、API、Git 和 App 回执验证，记录证据与缺口 | 新环境按说明部署；备份与恢复 Forge `/project`、Forge `/data` 及 CertReporter 自身数据后身份、版本、轨迹、Reflection 和 Proposal 一致；P0-01～13、15～21 逐项有结果与证据；安全/未知命令场景实测通过。P0-14 在 PRD 中缺号，不虚构需求 |
@@ -79,7 +87,7 @@
 | --- | --- |
 | 新增或改变 WD/SK 格式 | 文档解析与校验、Git 版本读取、Context Compiler、编辑器/差异视图、样例 OM、迁移说明、相关 P0 场景 |
 | 改变 active 选择或采纳 | 个人分支/引用、并发条件更新、Turn 快照与轨迹来源、Proposal 界面、重启/冲突测试 |
-| 接受或移除 App 能力 | OpenAPI 导入和差异、能力目录历史、WD 白名单、工具注册、现存 Work 兼容规则、命令恢复测试 |
+| 接受或移除 App 能力 | MCP 工具发现和目录差异、能力目录历史、WD 白名单、工具注册、现存 Work 兼容规则、命令恢复测试 |
 | 改变身份或资源关系 | App 身份验证、Web/ACP 鉴权、所有资源查询/写入、管理员视图、越权回归场景 |
 | 新增 Reflection 输出 | Lens 输入与版本、证据权限、结果持久化、提议或 API 建议状态、编辑/审核页面、无提议场景 |
 

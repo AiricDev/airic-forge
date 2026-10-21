@@ -1,7 +1,8 @@
+import { UserAdministration } from "./user-administration.js";
 import { isAllowedOmDocumentPath, isAllowedProposalPath, validateWorkDefinition } from "./operating-model.js";
 import { materialObservation } from "./materials.js";
 import { assembleWorkMemory, pinnedWorkFacts, conversationMessages, CONTEXT_POLICY_VERSION, type WorkContextPorts } from "./work-context.js";
-import type { AccountPort, AgentRunnerPort, AppSessionPort, AppPort, AppCommandLocator, CatalogPort, EvidenceExtractorPort, EvidenceSessionPort, MeasurementPort, OmDraftPort, OperatingModelPort, OrganizationContributionPort, PasswordCodecPort, PasswordSetupPort, ReflectionAgentPort, ReflectionRunStore, ReflectionLens, ReflectionRecord, SessionGrant, SystemPort, TrajectoryPort, WorkFeedbackKind, WorkListFilters, WorkPort, WorkAgentTool, WorkActivity } from "./ports.js";
+import type { AccountPort, AgentRunnerPort, AppSessionPort, AppPort, AppCommandLocator, ToolSnapshotPort, EvidenceExtractorPort, EvidenceSessionPort, MeasurementPort, OmDraftPort, OperatingModelPort, OrganizationContributionPort, PasswordCodecPort, PasswordSetupPort, ReflectionAgentPort, ReflectionRunStore, ReflectionLens, ReflectionRecord, SessionGrant, SystemPort, TrajectoryPort, WorkFeedbackKind, WorkListFilters, WorkPort, WorkAgentTool, WorkActivity } from "./ports.js";
 
 import { PersonalOmChanges } from "./om-changes.js";
 import type { InstanceSettings } from "./ports.js";
@@ -19,8 +20,10 @@ export class ForgeUseCases {
   private readonly runningReflections = new Set<string>();
   readonly reflectionRuns?: ReflectionRuns;
   readonly omChanges?: PersonalOmChanges;
-  constructor(private readonly ports: { accounts: AccountPort; works: WorkPort; om: OperatingModelPort; omChanges?: PersonalOmChanges; reportWorkDefinitionId?: string; omDrafts?: OmDraftPort; organization?: OrganizationContributionPort; measurements?: MeasurementPort; instanceSettings?: InstanceSettings; app: AppPort; organizationId?: string; catalogs: CatalogPort; agents: AgentRunnerPort; reflectionAgent?: ReflectionAgentPort; reflectionRunStore?: ReflectionRunStore; sessions: AppSessionPort; evidenceExtractor?: EvidenceExtractorPort; evidenceSessions?: EvidenceSessionPort; passwordSetups: PasswordSetupPort; passwordCodec: PasswordCodecPort; trajectories: TrajectoryPort; system: SystemPort; initialAdminEmails: Set<string>; workContext?: WorkContextPorts; }) {
+  readonly users: UserAdministration;
+  constructor(private readonly ports: { accounts: AccountPort; works: WorkPort; om: OperatingModelPort; omChanges?: PersonalOmChanges; reportWorkDefinitionId?: string; omDrafts?: OmDraftPort; organization?: OrganizationContributionPort; measurements?: MeasurementPort; instanceSettings?: InstanceSettings; app: AppPort; organizationId?: string; toolSnapshots: ToolSnapshotPort; agents: AgentRunnerPort; reflectionAgent?: ReflectionAgentPort; reflectionRunStore?: ReflectionRunStore; sessions: AppSessionPort; evidenceExtractor?: EvidenceExtractorPort; evidenceSessions?: EvidenceSessionPort; passwordSetups: PasswordSetupPort; passwordCodec: PasswordCodecPort; trajectories: TrajectoryPort; system: SystemPort; workContext?: WorkContextPorts; }) {
     this.omChanges = ports.omChanges;
+    this.users = new UserAdministration(ports.accounts);
     if (ports.reflectionRunStore) this.reflectionRuns = new ReflectionRuns(ports.reflectionRunStore, ports.system);
   }
 
@@ -44,7 +47,8 @@ export class ForgeUseCases {
     const matchedUser = await this.ports.accounts.userByEmail(email);
     if (linkedUserId && matchedUser?.id !== linkedUserId) throw new Error("AppIdentityEmailConflict");
     if (existing && existing.ownerUserId !== matchedUser?.id) throw new Error("WorkNotOwned");
-    const user = await this.ports.accounts.ensureUser(email, this.ports.initialAdminEmails.has(email));
+    const user = await this.ports.accounts.ensureUser(email);
+    return this.users.withActive(user.id, async () => {
     const branch = await this.ports.om.ensureUserBranch(user.id);
     await this.ports.accounts.recordAppIdentity(identity.appId, identity.appUserId, user.id, email);
     const revision = await this.ports.om.head(branch.branch);
@@ -63,16 +67,20 @@ export class ForgeUseCases {
     await this.ports.sessions.put({ ticket, expiresAt, forgeUserId: user.id, workId: work.id, sessionId: session.id, appToken: input.token, reportId: entityId, workType, entityId, selection: work.selection });
     const passwordSetupTicket = user.passwordConfigured ? undefined : await this.ports.passwordSetups.issue(user.id, expiresAt);
     return { user, work, session, ticket, expiresAt, activeRevision: await this.ports.om.head(branch.branch), passwordSetupRequired: !user.passwordConfigured, passwordSetupTicket };
+    });
   }
 
   async appSession(ticket: string): Promise<SessionGrant> {
     const session = await this.ports.sessions.get(ticket);
     if (!session || Date.parse(session.expiresAt) < Date.parse(this.ports.system.now())) { await this.ports.evidenceSessions?.clear(ticket); await this.ports.sessions.remove(ticket); throw new Error("AppSessionExpired"); }
+    const user = await this.ports.accounts.userById(session.forgeUserId);
+    if (!user || user.status === "disabled" || (user.status === "draining" && !this.users.observing(user.id, "work", session.workId))) throw new Error("UserUnavailable");
     return session;
   }
 
   async connectAcp(ticket: string): Promise<SessionGrant> {
     const session = await this.appSession(ticket);
+    await this.users.requireActive(session.forgeUserId);
     if (!await this.ports.sessions.claim(ticket)) throw new Error("AppSessionAlreadyConnected");
     return session;
   }
@@ -91,8 +99,12 @@ export class ForgeUseCases {
   async cancelTurn(ticket: string) {
     const session = await this.appSession(ticket);
     await this.assertActiveWork(session);
+    // Authorization is captured before cancellation: settling the accepted Turn can
+    // complete a drain and revoke this ticket before the cancellation reply is built.
+    const history = await this.workHistory(session.forgeUserId, session.workId);
     await this.stopWork(session.workId);
-    return this.sessionHistory(ticket);
+    const [turns, events] = await Promise.all([this.ports.works.turnsForWork(session.workId), this.ports.trajectories.read(session.workId)]);
+    return { ...history, turns, events, progress: workProgress(events), running: false, cancelling: false, unresolvedCommands: this.unresolvedCommands(events) };
   }
 
   async sessionHistory(ticket: string) {
@@ -104,6 +116,7 @@ export class ForgeUseCases {
 
   async checkpointFeedback(ticket: string, input: CheckpointFeedback, requestId: string) {
     const session = await this.appSession(ticket);
+    await this.users.requireActive(session.forgeUserId);
     await this.assertActiveWork(session);
     if (this.runningWorks.has(session.workId)) throw new Error("WorkTurnAlreadyRunning");
     if (this.feedbackWorks.has(session.workId)) throw new Error("WorkFeedbackInProgress");
@@ -136,6 +149,7 @@ export class ForgeUseCases {
     const context = await this.authoritativeContext(token, "report-authoring", reportId);
     this.assertContextTarget(context, "report-authoring", reportId);
     const user = await this.ports.accounts.userByEmail(identity.email.trim().toLowerCase());
+    if (user) await this.users.requireActive(user.id);
     if (!user || await this.ports.accounts.linkedUserId(identity.appId, identity.appUserId) !== user.id) return { works: [] };
     const page = await this.ports.works.worksPage({ ownerUserId: user.id, workType: "report-authoring", status: "active" }, 0, 1000);
     return { works: page.works.filter((work) => work.entityId === reportId && work.appUserId === identity.appUserId) };
@@ -143,35 +157,12 @@ export class ForgeUseCases {
 
   async attachEvidence(ticket: string, filename: string, mediaType: string, content: Uint8Array) {
     const session = await this.appSession(ticket);
+    await this.users.requireActive(session.forgeUserId);
     await this.assertActiveWork(session);
     if (!this.ports.evidenceExtractor || !this.ports.evidenceSessions) throw new Error("EvidenceNotConfigured");
     const extracted = await this.ports.evidenceExtractor.extract(filename, mediaType, content);
     await this.ports.evidenceSessions.put(ticket, extracted);
     return { digest: extracted.digest, filename: extracted.filename, extraction: { characters: extracted.text.length, warnings: extracted.warnings } };
-  }
-
-  async importCatalog(ticket: string) {
-    const session = await this.appSession(ticket);
-    await this.requireAdmin(session.forgeUserId);
-    const catalog = await this.ports.app.catalog(session.appToken);
-    if (catalog.appId !== "certlab" || catalog.domainRelease !== "certlab/v1") throw new Error("UnsupportedAppCatalog");
-    await this.ports.catalogs.saveCandidate(catalog);
-    return catalog;
-  }
-
-  async acceptCatalog(ticket: string, digest: string) {
-    const session = await this.appSession(ticket);
-    await this.requireAdmin(session.forgeUserId);
-    const candidate = await this.ports.catalogs.candidate("certlab", digest);
-    if (!candidate) throw new Error("CatalogCandidateNotFound");
-    await this.ports.catalogs.accept("certlab", digest, session.forgeUserId);
-    return candidate;
-  }
-
-  async catalogOverview(actorUserId: string) {
-    await this.requireAdmin(actorUserId);
-    const [accepted, candidates] = await Promise.all([this.ports.catalogs.accepted("certlab"), this.ports.catalogs.candidates("certlab")]);
-    return { accepted: accepted ?? null, candidates: candidates.filter((candidate) => candidate.digest !== accepted?.digest) };
   }
 
   async instanceSettings(actorUserId: string) {
@@ -180,15 +171,12 @@ export class ForgeUseCases {
     return this.ports.instanceSettings;
   }
 
-  async acceptCatalogFromWorkspace(actorUserId: string, digest: string) {
-    await this.requireAdmin(actorUserId);
-    const candidate = await this.ports.catalogs.candidate("certlab", digest);
-    if (!candidate) throw new Error("CatalogCandidateNotFound");
-    await this.ports.catalogs.accept("certlab", digest, actorUserId);
-    return candidate;
+  async startTurn(ticket: string, userMessage: string, onText?: (text: string) => void, evidenceDigests: string[] = [], requestId?: string, onTurn?: (turnId: string) => void, onContextStatus?: (status: "organizing" | "ready" | "failed") => void, onActivity?: (activity: WorkActivity) => void) {
+    const session = await this.appSession(ticket);
+    return this.users.run(session.forgeUserId, "work", session.workId, () => this.startTurnAccepted(ticket, userMessage, onText, evidenceDigests, requestId, onTurn, onContextStatus, onActivity));
   }
 
-  async startTurn(ticket: string, userMessage: string, onText?: (text: string) => void, evidenceDigests: string[] = [], requestId?: string, onTurn?: (turnId: string) => void, onContextStatus?: (status: "organizing" | "ready" | "failed") => void, onActivity?: (activity: WorkActivity) => void) {
+  private async startTurnAccepted(ticket: string, userMessage: string, onText?: (text: string) => void, evidenceDigests: string[] = [], requestId?: string, onTurn?: (turnId: string) => void, onContextStatus?: (status: "organizing" | "ready" | "failed") => void, onActivity?: (activity: WorkActivity) => void) {
     const session = await this.appSession(ticket);
     await this.assertActiveWork(session);
     if (!userMessage.trim() || userMessage.length > 4000) throw new Error("WorkMessageRequired");
@@ -222,11 +210,12 @@ export class ForgeUseCases {
     const userId = await this.ports.works.userForWork(session.workId);
     if (!userId) throw new Error("WorkNotFound");
     const revision = await this.ports.om.head(`users/${userId}`);
-    const [catalog, currentCatalog, definition, context] = await Promise.all([
-      this.ports.catalogs.accepted("certlab"), this.ports.app.catalog(session.appToken), this.ports.om.workDefinition(revision, this.workDefinitionId(workType)), this.authoritativeContext(session.appToken, workType, entityId, session.selection),
+    const [discovered, definition, context] = await Promise.all([
+      this.ports.app.discoverTools(session.appToken), this.ports.om.workDefinition(revision, this.workDefinitionId(workType)), this.authoritativeContext(session.appToken, workType, entityId, session.selection),
     ]);
-    if (!catalog) throw new Error("CapabilityCatalogNotAccepted");
-    if (catalog.digest !== currentCatalog.digest) throw new Error("CapabilityCatalogChanged");
+    const catalog = structuredClone(discovered);
+    if (catalog.appId !== "certlab" || catalog.domainRelease !== "certlab/v1") throw new Error("UnsupportedAppTools");
+    await this.ports.toolSnapshots.recordToolSnapshot(catalog);
     this.assertContextTarget(context, workType, entityId);
     const resource = context.resource as Record<string, unknown>;
     const work = await this.ports.works.work(session.workId);
@@ -234,7 +223,7 @@ export class ForgeUseCases {
     context.workDefinitionId = definition.id;
     await assertRunning();
     if (typeof context.entityTitle === "string" && context.entityTitle.trim()) await this.ports.works.setWorkEntityTitle(session.workId, context.entityTitle.trim().slice(0, 300));
-    const issues = validateWorkDefinition(definition, new Set(catalog.capabilities.map((capability) => capability.id)), await this.ports.om.knownKnowledge(revision));
+    const issues = validateWorkDefinition(definition, await this.ports.om.knownKnowledge(revision));
     if (issues.length) throw new Error(`InvalidOperatingModel: ${issues.map((issue) => `${issue.path} ${issue.message}`).join("; ")}`);
     const documents = await Promise.all([
       ...definition.documents.filter((document) => document.load === "required").map(async (document) => ({ id: document.id, path: `work-definitions/${definition.id}/${document.path}`, revision, reason: "work-definition" as const, content: await this.ports.om.document(revision, `work-definitions/${definition.id}/${document.path}`) })),
@@ -333,9 +322,8 @@ export class ForgeUseCases {
       await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId,
         turnId: turn.id, type: "message", at: this.ports.system.now(), payload: { contextStatus: status } });
     };
-    const forbidden = new Set(["assessment.submit", "assessment.confirm", "report.issue", "report.send"]);
     const controlTools = new Set(["command.context", "command.receipt"]);
-    const tools: WorkAgentTool[] = catalog.capabilities.filter((capability) => !forbidden.has(capability.id) && !controlTools.has(capability.id) && !capability.id.startsWith("report-type.") && definition.capabilities.allowed.includes(capability.id)).map((capability) => ({
+    const tools: WorkAgentTool[] = catalog.tools.filter((capability) => !controlTools.has(capability.id)).map((capability) => ({
       capability,
       invoke: (input) => {
         const operation = monitor(capability.title, async () => {
@@ -484,7 +472,7 @@ export class ForgeUseCases {
       if (modelActivity?.status === "running") { await finishActivity(modelActivity); modelActivity = undefined; }
       await Promise.allSettled([...operations]);
       controller.signal.throwIfAborted();
-      if (!checkpointWritten && (definition.capabilities.allowed.includes("command.context") || definition.capabilities.allowed.some(id => ["asset.read", "asset.search", "asset.read-location"].includes(id)))
+      if (!checkpointWritten && catalog.tools.some(tool => ["command.context", "asset.read", "asset.search", "asset.read-location"].includes(tool.id))
         && (progress.checkAt === "step" || handoffReason || unresolvedCommand)) {
         const facts = (await this.ports.trajectories.read(session.workId)).filter((event) =>
           event.turnId === turn.id && (event.type === "observation"
@@ -553,6 +541,7 @@ export class ForgeUseCases {
     return this.ports.works.reflectionsForUser(actorUserId);
   }
   async openPersonalReflection(actorUserId: string, question: string) {
+    await this.users.requireActive(actorUserId);
     if (!await this.ports.accounts.userById(actorUserId)) throw new Error("Unauthorized");
     if (typeof question !== "string" || !question.trim() || question.length > 4000) throw new Error("ReflectionMessageRequired");
     await this.ports.om.ensureUserBranch(actorUserId);
@@ -561,6 +550,7 @@ export class ForgeUseCases {
     return this.reflectionDetail(actorUserId, reflection.id);
   }
   async mutateOmDraft<T>(actorUserId: string, scope: string, action: () => Promise<T>): Promise<T> {
+    await this.users.requireActive(actorUserId);
     const reflectionId = scope.startsWith("reflection:") ? scope.slice(11) : undefined;
     if (reflectionId) {
       const reflection = await this.readableReflection(actorUserId, reflectionId);
@@ -571,6 +561,7 @@ export class ForgeUseCases {
   }
 
   async openWorkReflection(actorUserId: string, workId: string) {
+    await this.users.requireActive(actorUserId);
     const work = await this.ports.works.work(workId);
     if (!work || work.ownerUserId !== actorUserId) throw new Error("WorkNotOwned");
     const existing = (await this.ports.works.reflectionsForWork(workId)).at(-1);
@@ -601,6 +592,18 @@ export class ForgeUseCases {
   }
 
   async startReflectionRun(actorUserId: string, reflectionId: string, message: string, requestId: string) {
+    let resolve!: (value: { run: import("./ports.js").ReflectionRun; created: boolean }) => void;
+    let reject!: (error: unknown) => void;
+    const accepted = new Promise<{ run: import("./ports.js").ReflectionRun; created: boolean }>((yes, no) => { resolve = yes; reject = no; });
+    void this.users.run(actorUserId, "reflection", reflectionId, async () => {
+      const result = await this.startReflectionRunAccepted(actorUserId, reflectionId, message, requestId);
+      resolve(result);
+      await this.requireReflectionRuns().wait(reflectionId, result.run.id);
+    }).catch(reject);
+    return accepted;
+  }
+
+  private async startReflectionRunAccepted(actorUserId: string, reflectionId: string, message: string, requestId: string) {
     const reflection = await this.readableReflection(actorUserId, reflectionId);
     if (reflection.ownerUserId !== actorUserId) throw new Error("ReflectionNotOwned");
     if (typeof requestId !== "string" || !/^[a-zA-Z0-9_-]{8,100}$/.test(requestId)) throw new Error("ReflectionRequestIdRequired");
@@ -870,13 +873,13 @@ export class ForgeUseCases {
     await organization.abandonContribution(id, expectedRevision);
   }
 
-  async completeWork(ticket: string, workId: string): Promise<void> { const session = await this.appSession(ticket); if (session.workId !== workId) throw new Error("WorkNotOwned"); await this.assertActiveWork(session); await this.ports.works.completeWork(session.workId); await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId, type: "message", at: this.ports.system.now(), payload: { kind: "work.completed", sessionId: session.sessionId } }); }
-  async setPassword(ticket: string, password: string): Promise<void> { const hash = this.ports.passwordCodec.hash(password); const userId = await this.ports.passwordSetups.consume(ticket, this.ports.system.now()); if (!userId) throw new Error("PasswordSetupTicketExpired"); if (!await this.ports.accounts.setInitialPassword(userId, hash)) throw new Error("PasswordAlreadyConfigured"); }
-  async login(email: string, password: string) { const user = await this.ports.accounts.userByEmail(email); const hash = user && await this.ports.accounts.passwordHash(user.email); return user && hash && this.ports.passwordCodec.verify(password, hash) ? user : undefined; }
-  async webUser(userId: string) { return this.ports.accounts.userById(userId); }
+  async completeWork(ticket: string, workId: string): Promise<void> { const session = await this.appSession(ticket); await this.users.requireActive(session.forgeUserId); if (session.workId !== workId) throw new Error("WorkNotOwned"); await this.assertActiveWork(session); await this.ports.works.completeWork(session.workId); await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId, type: "message", at: this.ports.system.now(), payload: { kind: "work.completed", sessionId: session.sessionId } }); }
+  async setPassword(ticket: string, password: string): Promise<void> { const hash = this.ports.passwordCodec.hash(password); const userId = await this.ports.passwordSetups.consume(ticket, this.ports.system.now()); if (!userId) throw new Error("PasswordSetupTicketExpired"); await this.users.withActive(userId, async () => { if (!await this.ports.accounts.setInitialPassword(userId, hash)) throw new Error("PasswordAlreadyConfigured"); }); }
+  async login(email: string, password: string) { const user = await this.ports.accounts.userByEmail(email); const hash = user && await this.ports.accounts.passwordHash(user.email); return user?.status === "active" && hash && this.ports.passwordCodec.verify(password, hash) ? user : undefined; }
+  async webUser(userId: string) { const user = await this.ports.accounts.userById(userId); return user?.status === "disabled" ? undefined : user; }
   async listUsers(actorUserId: string) {
     const actor = await this.ports.accounts.userById(actorUserId);
-    if (actor?.role !== "admin") throw new Error("Forbidden");
+    if (actor?.role !== "admin" || actor.status !== "active") throw new Error("Forbidden");
     return this.ports.accounts.listUsers();
   }
   async worksForUser(actorUserId: string, ownerUserId: string, page = 1) {
@@ -930,6 +933,7 @@ export class ForgeUseCases {
   }
 
   async savePersonalOmDraft(actorUserId: string, ownerUserId: string, path: string, content: string, baseRevision: string) {
+    await this.users.requireActive(actorUserId);
     if (actorUserId !== ownerUserId) throw new Error("Forbidden");
     if (!isAllowedProposalPath(path) || typeof content !== "string" || content.length > 100_000 || !content.trim()) throw new Error("InvalidOmDraft");
     const snapshot = await this.personalOm(actorUserId, ownerUserId);
@@ -946,6 +950,7 @@ export class ForgeUseCases {
   }
 
   async discardPersonalOmDraft(actorUserId: string, ownerUserId: string, path: string) {
+    await this.users.requireActive(actorUserId);
     if (actorUserId !== ownerUserId) throw new Error("Forbidden");
     await this.personalOm(actorUserId, ownerUserId);
     if (!isAllowedProposalPath(path)) throw new Error("InvalidOmPath");
@@ -965,6 +970,7 @@ export class ForgeUseCases {
   async trajectory(ticket: string, workId: string) { const session = await this.appSession(ticket); if (session.workId !== workId) throw new Error("WorkNotOwned"); return this.ports.trajectories.read(workId); }
   async recoverCommand(ticket: string, commandId: string) {
     const session = await this.appSession(ticket);
+    await this.users.requireActive(session.forgeUserId);
     await this.assertActiveWork(session);
     const events = await this.ports.trajectories.read(session.workId);
     const pending = this.unresolvedCommands(events).find((item) => item.commandId === commandId);
@@ -985,8 +991,6 @@ export class ForgeUseCases {
     return [...latest.values()].filter((item) => item.status === "pending" || item.status === "unknown");
   }
   private async validateOmCandidate(candidate: string): Promise<void> {
-    const catalog = await this.ports.catalogs.accepted("certlab");
-    if (!catalog) throw new Error("CapabilityCatalogNotAccepted");
     const issues = await this.ports.om.knowledgeIssues(candidate);
     if (issues.length) throw new Error(`InvalidOperatingModel: ${issues.map((issue) => `${issue.path} ${issue.message}`).join("; ")}`);
     const knownKnowledge = await this.ports.om.knownKnowledge(candidate);
@@ -994,7 +998,7 @@ export class ForgeUseCases {
     for (const path of files.filter((path) => /^work-definitions\/[a-z0-9-]+\/work\.yml$/.test(path))) {
       const id = path.split("/")[1];
       const definition = await this.ports.om.workDefinition(candidate, id);
-      issues.push(...validateWorkDefinition(definition, new Set(catalog.capabilities.map((capability) => capability.id)), knownKnowledge));
+      issues.push(...validateWorkDefinition(definition, knownKnowledge));
       for (const document of definition.documents) {
         try { await this.ports.om.document(candidate, `work-definitions/${id}/${document.path}`); }
         catch { issues.push({ path: `work-definitions/${id}/documents.${document.id}.path`, message: "document does not exist" }); }
@@ -1023,11 +1027,12 @@ export class ForgeUseCases {
   private async authorizedOmOwner(actorUserId: string, ownerUserId: string) {
     const actor = await this.ports.accounts.userById(actorUserId);
     const owner = await this.ports.accounts.userById(ownerUserId);
-    if (!actor || !owner || (actor.id !== owner.id && actor.role !== "admin")) throw new Error("Forbidden");
+    if (!actor || actor.status === "disabled" || !owner || (actor.id !== owner.id && actor.role !== "admin")) throw new Error("Forbidden");
     return owner;
   }
   private async requireAdmin(userId: string): Promise<void> {
-    if ((await this.ports.accounts.userById(userId))?.role !== "admin") throw new Error("Forbidden");
+    const actor = await this.ports.accounts.userById(userId);
+    if (actor?.role !== "admin" || actor.status !== "active") throw new Error("Forbidden");
   }
   private organizationPort(): OrganizationContributionPort {
     if (!this.ports.organization) throw new Error("OrganizationNotConfigured");

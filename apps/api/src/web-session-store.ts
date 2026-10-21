@@ -23,6 +23,7 @@ export class InMemoryWebSessionStore {
     session.userId = userId;
     return true;
   }
+  revokeUser(userId: string): void { for (const [token, session] of this.#sessions) if (session.userId === userId || session.originalUserId === userId) this.#sessions.delete(token); }
   revoke(token: string | undefined): void { if (token) this.#sessions.delete(token); }
 }
 

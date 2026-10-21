@@ -5,7 +5,7 @@ import { CertLabClient } from "./certlab-client.js";
 import { omFixture } from "./om-test-fixture.js";
 import { buildServer } from "./server.js";
 
-test("integration settings describe the configured App's actual Manifest and OpenAPI endpoints", () => {
+test("integration settings describe the configured App's MCP endpoint and transport", () => {
   const client = new CertLabClient("https://app.example:8443/", "organization-one");
   assert.deepEqual(client.describeIntegration(), {
     appId: "certlab", organizationId: "organization-one", baseUrl: "https://app.example:8443",

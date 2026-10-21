@@ -11,12 +11,11 @@ function fixture(overrides: Partial<OrganizationContribution> = {}) {
     contribution: () => current, contributions: () => [current], createContribution: () => {}, saveSelection: () => {}, abandonContribution: () => {},
   };
   const useCases = new ForgeUseCases({
-    accounts: { userById: (id: string) => ({ id, role: id === "admin" ? "admin" : "user" }) } as never,
+    accounts: { userById: (id: string) => ({ id, status: "active", version: 0, role: id === "admin" ? "admin" : "user" }) } as never,
     organization,
     om: { head: (branch: string) => branch === "main" ? "main-base" : "candidate", acceptContribution: () => { accepted++; return "merge"; }, knowledgeIssues: () => [], knownKnowledge: () => new Set(), listFiles: () => [] } as never,
-    catalogs: { accepted: () => ({ capabilities: [] }) } as never,
-    works: {} as never, app: {} as never, agents: {} as never, sessions: {} as never, passwordSetups: {} as never, passwordCodec: {} as never, trajectories: {} as never, system: {} as never, initialAdminEmails: new Set(),
-  });
+    toolSnapshots: {} as never,
+    works: {} as never, app: {} as never, agents: {} as never, sessions: {} as never, passwordSetups: {} as never, passwordCodec: {} as never, trajectories: {} as never, system: {} as never, });
   return { useCases, accepted: () => accepted };
 }
 

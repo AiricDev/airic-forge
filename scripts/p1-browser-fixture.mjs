@@ -1,3 +1,4 @@
+import { testUser } from "../apps/api/dist/test-users.js";
 #!/usr/bin/env node
 // Populate an isolated Stage 6 browser fixture. Never use an existing data root.
 import { existsSync, mkdirSync } from 'node:fs';
@@ -16,13 +17,13 @@ const om = new GitOperatingModel(join(root, 'project'), data, resolve(import.met
 om.initialize();
 const db = new ForgeDatabase(data);
 try {
-  const admin = db.ensureUser('p1-admin@example.invalid', true);
-  const author = db.ensureUser('p1-author@example.invalid', false);
-  const member = db.ensureUser('p1-member@example.invalid', false);
+  const admin = testUser(db, 'p1-admin@example.invalid', true);
+  const author = testUser(db, 'p1-author@example.invalid', false);
+  const member = testUser(db, 'p1-member@example.invalid', false);
   for (const user of [admin, author, member]) { db.setInitialPassword(user.id, hashPassword(password)); om.ensureUserBranch(user.id); }
   const ids = ['report.context', 'report.read', 'report.gaps', 'report.update-master', 'report.update-data', 'report-type.context', 'report-type.read', 'report-type.list-published-standards', 'report-type.preview', 'report-type.update-draft'];
-  const catalog = { id: 'p1-demo-catalog', appId: 'certreporter', domainRelease: 'certreporter/v1', digest: 'p1-demo-digest', acceptedAt: '', capabilities: ids.map((id) => ({ id, kind: id.includes('update') ? 'command' : 'query', title: id, description: '', inputSchema: {}, outputSchema: {} })) };
-  db.saveCandidate(catalog); db.accept('certreporter', catalog.digest, admin.id);
+  const catalog = { id: 'p1-demo-catalog', appId: 'certreporter', domainRelease: 'certreporter/v1', digest: 'p1-demo-digest', discoveredAt: '', tools: ids.map((id) => ({ id, kind: id.includes('update') ? 'command' : 'query', title: id, description: '', inputSchema: {}, outputSchema: {} })) };
+  db.recordToolSnapshot(catalog);
   const authorBranch = om.ensureUserBranch(author.id);
   const base = om.head(authorBranch.branch);
   const proposal = om.createProposal(author.id, 'p1-demo-author', base);

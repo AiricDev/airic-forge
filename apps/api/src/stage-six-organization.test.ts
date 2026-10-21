@@ -1,3 +1,4 @@
+import { testUser } from "./test-users.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -85,14 +86,14 @@ test("reviewed and accepted contribution details read immutable commits without 
 
 test("administrator selectively accepts personal OM and member sync preserves old HEAD", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-six-"));
-  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
+  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", };
   const runtime = new ForgeRuntime(config);
   try {
-    const admin = runtime.db.ensureUser("admin@example.com", true);
-    const author = runtime.db.ensureUser("author@example.com", false);
-    const member = runtime.db.ensureUser("member@example.com", false);
+    const admin = testUser(runtime.db, "admin@example.com", true);
+    const author = testUser(runtime.db, "author@example.com", false);
+    const member = testUser(runtime.db, "member@example.com", false);
     const catalog = testCatalog();
-    runtime.db.saveCandidate(catalog); runtime.db.accept("certlab", catalog.digest, admin.id);
+    runtime.db.recordToolSnapshot(catalog);
     const useCases: ForgeUseCases = runtime.useCases;
     const authorBranch = runtime.om.ensureUserBranch(author.id);
     const memberBranch = runtime.om.ensureUserBranch(member.id);
@@ -147,10 +148,10 @@ test("administrator selectively accepts personal OM and member sync preserves ol
 
 test("a reviewed organization candidate cannot overwrite a newer main HEAD", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-six-stale-"));
-  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
+  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", };
   const runtime = new ForgeRuntime(config);
   try {
-    const author = runtime.db.ensureUser("author@example.com", false);
+    const author = testUser(runtime.db, "author@example.com", false);
     const user = runtime.om.ensureUserBranch(author.id);
     const first = runtime.om.createProposal(author.id, "a", runtime.om.head(user.branch));
     const path = "work-definitions/report-authoring/policy.md";
@@ -189,13 +190,13 @@ test("organization sync preserves conflicts in a draft until resolved and direct
 });
 test("organization HTTP routes expose main to members while keeping private evidence and baseline administrative", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-six-http-"));
-  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
+  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", };
   const runtime = new ForgeRuntime(config);
   const app = buildServer(runtime);
   try {
-    const admin = runtime.db.ensureUser("admin@example.com", true);
-    const author = runtime.db.ensureUser("author@example.com", false);
-    const reader = runtime.db.ensureUser("reader@example.com", false);
+    const admin = testUser(runtime.db, "admin@example.com", true);
+    const author = testUser(runtime.db, "author@example.com", false);
+    const reader = testUser(runtime.db, "reader@example.com", false);
     for (const user of [admin, author, reader]) runtime.om.ensureUserBranch(user.id);
     const work = runtime.db.createWork(author.id, "certlab", "report-authoring", "report-1");
     const cookie = (id: string) => ({ cookie: `forge_session=${runtime.webSessions.issue(id)}` });

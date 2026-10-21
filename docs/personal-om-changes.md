@@ -4,6 +4,12 @@
 
 ## OM 版本与维护
 
+运行时只使用 `FORGE_PROJECT_DIR` 指定的 OM 仓库，不再读取 `FORGE_SEED_PROJECT_DIR`。
+已有仓库保留其内容和历史；缺失 OM 时创建带初始空提交的 `main`，不自动导入
+示例 WD 或知识。已有但尚无提交的仓库也会完成初始提交，只纳入 OM 的三个文档目录。
+空 OM 可启动服务，但没有 WD 时不能执行对应 Work，须先由使用者维护 OM。
+测试夹具和显式导入仍可在程序内提供初始文档，不属于启动配置或回退路径。
+
 - OM 的版本就是 Git commit，历史版本以「短 commit hash + 提交信息首行」标识；读取和定位版本使用完整 commit hash，不依赖额外的 release 分支。
 - 后续 OM 更新、部署和升级不再创建 `releases/*` 备份分支。维护操作需要记录变更前后版本时，记录 commit hash 和提交首行即可，正常提交保留前驱历史。
 - `main`、`users/<userId>` 分别承载组织和个人生效版本；`contributions/<contributionId>` 承载选定的组织贡献。

@@ -2,40 +2,6 @@ schemaVersion: 1
 id: report-authoring
 title: CertLab report assessment
 description: Advance the explicit single-report goal using authoritative assessments and human checkpoints.
-capabilities:
-  allowed:
-    - report.context
-    - assessment.context
-    - assessment.history
-    - command.receipt
-    - assessment.start
-    - assessment.save-draft
-    - assessment.reverify
-    - command.context
-    - test-task.list
-    - finding.list
-    - work-item.context
-    - output.context
-    - report.output-readiness
-    - test-task.create
-    - test-task.edit
-    - finding.create
-    - finding.edit
-    - work-item.block
-    - work-item.respond
-    - work-item.complete
-    - report.output-configure
-    - test-plan.generate
-    - finding-export.generate
-    - report.generate
-    - job.retry
-    - asset.list
-    - asset.locations
-    - asset.revisions
-    - asset.read
-    - asset.search
-    - asset.read-location
-    - asset.impact-preview
 documents:
   - id: policy
     path: policy.md
@@ -67,4 +33,3 @@ knowledge:
   available: []
 completion:
   mode: user
-  requiredCapabilities: []

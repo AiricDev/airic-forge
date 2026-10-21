@@ -1,3 +1,4 @@
+import { testUser } from "./test-users.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -15,13 +16,12 @@ test("two users are isolated; an admin can inspect without becoming the OM owner
     seedProjectDir: resolve(process.cwd(), "../../seed/certlab"),
     webDistDir: join(root, "missing-web"),
     certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173",
-    initialAdminEmails: new Set(["admin@example.com"]),
-  };
+    };
   const runtime = new ForgeRuntime(config);
-  const alice = runtime.db.ensureUser("  ALICE@example.com ", false);
-  const repeated = runtime.db.ensureUser("alice@EXAMPLE.com", false);
-  const bob = runtime.db.ensureUser("bob@example.com", false);
-  const admin = runtime.db.ensureUser("admin@example.com", true);
+  const alice = testUser(runtime.db, "  ALICE@example.com ", false);
+  const repeated = testUser(runtime.db, "alice@EXAMPLE.com", false);
+  const bob = testUser(runtime.db, "bob@example.com", false);
+  const admin = testUser(runtime.db, "admin@example.com", true);
   assert.equal(alice.id, repeated.id);
   assert.notEqual(alice.id, bob.id);
   runtime.db.recordAppIdentity("certlab", "app-alice", alice.id, alice.email);
@@ -32,12 +32,11 @@ test("two users are isolated; an admin can inspect without becoming the OM owner
     runtime.om.ensureUserBranch(user.id);
     assert.equal(runtime.db.setInitialPassword(user.id, hashPassword("stage-one-password")), true);
   }
-  const catalog = { id: "catalog-1", appId: "certlab", domainRelease: "certlab/v1", digest: "digest-1", acceptedAt: "", capabilities: [
+  const catalog = { id: "catalog-1", appId: "certlab", domainRelease: "certlab/v1", digest: "digest-1", discoveredAt: "", tools: [
     { id: "report.context", kind: "query" as const, title: "Context", description: "", inputSchema: {}, outputSchema: {} },
   ] };
-  runtime.db.saveCandidate(catalog);
-  runtime.db.accept("certlab", catalog.digest, admin.id);
-  assert.equal(runtime.db.accepted("certlab")?.digest, catalog.digest);
+  runtime.db.recordToolSnapshot(catalog);
+  assert.equal(runtime.db.toolSnapshot("certlab", catalog.digest)?.digest, catalog.digest);
   const bobWork = runtime.db.createWork(bob.id, "certlab", "report-authoring", "report-bob");
   const bobTurn = runtime.db.nextTurn(bobWork.id, runtime.om.head(`users/${bob.id}`), catalog.digest, "context-digest");
   runtime.trajectories.append({ id: "event-bob", workId: bobWork.id, turnId: bobTurn.id, type: "turn.started", at: bobTurn.startedAt, payload: { omRevision: bobTurn.omRevision } });
@@ -67,7 +66,7 @@ test("two users are isolated; an admin can inspect without becoming the OM owner
     const inspected = await app.inject({ method: "GET", url: `/api/v1/om/users/${bob.id}`, headers: { cookie: adminCookie } });
     assert.equal(inspected.statusCode, 200);
     assert.equal(inspected.json().owner.id, bob.id);
-    assert.equal((await app.inject({ method: "GET", url: "/api/v1/users", headers: { cookie: adminCookie } })).json().users.length, 3);
+    assert.equal((await app.inject({ method: "GET", url: "/api/v1/users", headers: { cookie: adminCookie } })).json().users.length, runtime.db.listUsers().length);
     const history = await app.inject({ method: "GET", url: `/api/v1/works/${bobWork.id}`, headers: { cookie: adminCookie } });
     assert.equal(history.statusCode, 200);
     assert.equal(history.json().work.ownerUserId, bob.id);
@@ -76,10 +75,10 @@ test("two users are isolated; an admin can inspect without becoming the OM owner
     await app.close(); runtime.db.close();
     const restarted = new ForgeRuntime(config);
     try {
-      assert.equal(restarted.db.ensureUser("alice@example.com", false).id, alice.id);
+      assert.equal(testUser(restarted.db, "alice@example.com", false).id, alice.id);
       assert.equal(restarted.db.linkedUserId("certlab", "app-alice"), alice.id);
       assert.equal(restarted.om.head(`users/${alice.id}`), revision);
-      assert.equal(restarted.db.accepted("certlab")?.digest, catalog.digest);
+      assert.equal(restarted.db.toolSnapshot("certlab", catalog.digest)?.digest, catalog.digest);
       assert.equal(restarted.drafts.draftsForUser(alice.id)[0]?.content, draftContent);
       assert.equal(restarted.om.head(`users/${alice.id}`), revision);
       assert.equal(restarted.db.work(bobWork.id)?.ownerUserId, bob.id);

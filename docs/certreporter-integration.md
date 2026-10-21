@@ -1,9 +1,9 @@
 # CertReporter P0 integration
 
-Legacy/current implementation reference. The approved 2026-10-15 direction is
-to replace this single-App binding with CertLab, not add another App.
-See [CertLab integration](certlab-integration.md). B0 is documentation only;
-this client and existing data remain untouched until separately authorized B1.
+Historical P0 integration record only. The current App is CertLab over MCP;
+see [CertLab integration](certlab-integration.md). The endpoints and Drawer
+instructions below describe the retired CertReporter binding, not a supported
+runtime protocol or deployment guide.
 
 CertReporter remains the owner of report state, authorization, schema validation,
 revision checks and command receipts. AiricForge receives a CertReporter bearer

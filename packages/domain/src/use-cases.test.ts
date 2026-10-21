@@ -11,8 +11,7 @@ test("expired ACP grants are removed before any app capability can be used", asy
     passwordSetups: { issue: () => "setup", consume: () => undefined },
     passwordCodec: { hash: (value) => value, verify: () => false },
     system: { id: () => "id", digest: () => "digest", now: () => "2026-10-02T00:00:00.000Z" },
-    initialAdminEmails: new Set(),
-    accounts: {} as never, works: {} as never, om: {} as never, app: {} as never, catalogs: {} as never, agents: {} as never, trajectories: {} as never,
+    accounts: { userById: (id: string) => ({ id, status: "active", version: 0, role: "user" }), finishUserDrain: () => false } as never, works: {} as never, om: {} as never, app: {} as never, toolSnapshots: { recordToolSnapshot: () => {} } as never, agents: {} as never, trajectories: {} as never,
   });
   await assert.rejects(() => useCases.appSession("expired"), /AppSessionExpired/);
   assert.equal(grants.has("expired"), false);
@@ -21,12 +20,11 @@ test("expired ACP grants are removed before any app capability can be used", asy
 test("bootstrap validates the authoritative report before creating a Forge account or Work", async () => {
   let writes = 0;
   const useCases = new ForgeUseCases({
-    app: { identity: async () => ({ appId: "certlab", appUserId: "a", email: "a@example.com", displayName: "A" }), reportContext: async () => ({ resource: { namespace: "certlab", resourceType: "report", resourceId: "other-report" } }), catalog: async () => { throw new Error("unused"); }, openApi: async () => { throw new Error("unused"); } } as never,
+    app: { identity: async () => ({ appId: "certlab", appUserId: "a", email: "a@example.com", displayName: "A" }), reportContext: async () => ({ resource: { namespace: "certlab", resourceType: "report", resourceId: "other-report" } }), discoverTools: async () => { throw new Error("unused"); } } as never,
     accounts: { ensureUser: () => { writes++; throw new Error("must not create user"); } } as never,
     works: { createWork: () => { writes++; throw new Error("must not create Work"); } } as never,
-    om: {} as never, catalogs: {} as never, agents: {} as never, sessions: {} as never, passwordSetups: {} as never, passwordCodec: {} as never, trajectories: {} as never,
-    system: { id: () => "id", digest: () => "digest", now: () => "2026-10-02T00:00:00.000Z" }, initialAdminEmails: new Set(),
-  });
+    om: {} as never, toolSnapshots: { recordToolSnapshot: () => {} } as never, agents: {} as never, sessions: {} as never, passwordSetups: {} as never, passwordCodec: {} as never, trajectories: {} as never,
+    system: { id: () => "id", digest: () => "digest", now: () => "2026-10-02T00:00:00.000Z" }, });
   await assert.rejects(() => useCases.bootstrap({ token: "app-token", reportId: "requested-report" }), /InvalidReportContext/);
   assert.equal(writes, 0);
 });
@@ -37,17 +35,16 @@ test("bootstrap rejects an App identity whose verified Email now maps to another
     app: {
       identity: async () => ({ appId: "certlab", appUserId: "app-alice", email: "bob@example.com", displayName: "Bob" }),
       reportContext: async () => ({ resource: { namespace: "certlab", resourceType: "report", resourceId: "report-1" } }),
-      catalog: async () => { throw new Error("unused"); },
+      discoverTools: async () => { throw new Error("unused"); },
     } as never,
     accounts: {
       linkedUserId: () => "forge-alice",
-      userByEmail: () => ({ id: "forge-bob", email: "bob@example.com", role: "user", activeBranch: "users/forge-bob", createdAt: "2026-10-02T00:00:00.000Z", passwordConfigured: true }),
+      userByEmail: () => ({ id: "forge-bob", email: "bob@example.com", role: "user", status: "active", version: 0, activeBranch: "users/forge-bob", createdAt: "2026-10-02T00:00:00.000Z", passwordConfigured: true }),
       ensureUser: () => { writes++; throw new Error("must not create user"); },
     } as never,
     works: { createWork: () => { writes++; throw new Error("must not create Work"); } } as never,
-    om: {} as never, catalogs: {} as never, agents: {} as never, sessions: {} as never, passwordSetups: {} as never, passwordCodec: {} as never, trajectories: {} as never,
-    system: { id: () => "id", digest: () => "digest", now: () => "2026-10-02T00:00:00.000Z" }, initialAdminEmails: new Set(),
-  });
+    om: {} as never, toolSnapshots: { recordToolSnapshot: () => {} } as never, agents: {} as never, sessions: {} as never, passwordSetups: {} as never, passwordCodec: {} as never, trajectories: {} as never,
+    system: { id: () => "id", digest: () => "digest", now: () => "2026-10-02T00:00:00.000Z" }, });
   await assert.rejects(() => useCases.bootstrap({ token: "app-token", reportId: "report-1" }), /AppIdentityEmailConflict/);
   assert.equal(writes, 0);
 });
@@ -57,9 +54,8 @@ test("a Work ticket cannot complete a different Work", async () => {
   const useCases = new ForgeUseCases({
     sessions: { get: () => ({ ticket: "grant", expiresAt: "2026-10-03T00:00:00.000Z", forgeUserId: "user", workId: "own-work", sessionId: "session", appToken: "app-token", reportId: "report" }), claim: () => undefined, put: () => {}, remove: () => {} },
     works: { completeWork: () => { completed = true; } } as never,
-    accounts: {} as never, om: {} as never, app: {} as never, catalogs: {} as never, agents: {} as never, passwordSetups: {} as never, passwordCodec: {} as never, trajectories: {} as never,
-    system: { id: () => "id", digest: () => "digest", now: () => "2026-10-02T00:00:00.000Z" }, initialAdminEmails: new Set(),
-  });
+    accounts: { userById: (id: string) => ({ id, status: "active", version: 0, role: "user" }), finishUserDrain: () => false } as never, om: {} as never, app: {} as never, toolSnapshots: { recordToolSnapshot: () => {} } as never, agents: {} as never, passwordSetups: {} as never, passwordCodec: {} as never, trajectories: {} as never,
+    system: { id: () => "id", digest: () => "digest", now: () => "2026-10-02T00:00:00.000Z" }, });
   await assert.rejects(() => useCases.completeWork("grant", "other-work"), /WorkNotOwned/);
   assert.equal(completed, false);
 });
@@ -84,10 +80,9 @@ test("opening a Work Reflection twice returns one conversation and one introduct
       proposalForReflection: () => undefined,
     } as never,
     om: { head: () => "revision-1" } as never,
-    accounts: { userById: (id: string) => id === "owner" ? { id, role: "user" } : undefined } as never, catalogs: {} as never, app: {} as never, agents: {} as never, sessions: {} as never,
+    accounts: { userById: (id: string) => id === "owner" ? { id, role: "user", status: "active", version: 0 } : { id, role: "user", status: "active", version: 0 } } as never, toolSnapshots: { recordToolSnapshot: () => {} } as never, app: {} as never, agents: {} as never, sessions: {} as never,
     passwordSetups: {} as never, passwordCodec: {} as never, trajectories: {} as never,
-    system: { id: () => "id", digest: () => "digest", now: () => "now" }, initialAdminEmails: new Set(),
-  });
+    system: { id: () => "id", digest: () => "digest", now: () => "now" }, });
   const first = await useCases.openWorkReflection("owner", "work-1");
   const second = await useCases.openWorkReflection("owner", "work-1");
   assert.equal(first.reflection.id, second.reflection.id);
@@ -97,41 +92,11 @@ test("opening a Work Reflection twice returns one conversation and one introduct
   await assert.rejects(() => useCases.openWorkReflection("other", "work-1"), /WorkNotOwned/);
 });
 
-test("only an admin can import and accept a catalog whose capabilities have OpenAPI paths", async () => {
-  const candidate = { id: "catalog-1", appId: "certlab", domainRelease: "certlab/v1", digest: "digest-1", acceptedAt: "", capabilities: [
-    { id: "report.context", kind: "query" as const, title: "Context", description: "", inputSchema: {}, outputSchema: {} },
-    { id: "assessment.save-draft", kind: "command" as const, title: "Update", description: "", inputSchema: {}, outputSchema: {} },
-  ] };
-  let imported = false; let accepted = false;
-  const grant = (forgeUserId: string) => ({ ticket: forgeUserId, expiresAt: "2026-10-03T00:00:00.000Z", forgeUserId, workId: "work", sessionId: "session", appToken: "app-token", reportId: "report" });
-  const useCases = new ForgeUseCases({
-    sessions: { get: (ticket) => grant(ticket), claim: () => undefined, put: () => {}, remove: () => {} },
-    accounts: { userById: (id: string) => ({ id, email: `${id}@example.com`, role: id === "admin" ? "admin" : "user", activeBranch: `users/${id}`, createdAt: "2026-10-02T00:00:00.000Z", passwordConfigured: true }) } as never,
-    app: { catalog: async () => candidate } as never,
-    catalogs: { saveCandidate: () => { imported = true; }, candidate: () => imported ? candidate : undefined, candidates: () => imported ? [candidate] : [], accept: () => { accepted = true; }, accepted: () => undefined },
-    works: {} as never, om: {} as never, agents: {} as never, passwordSetups: {} as never, passwordCodec: {} as never, trajectories: {} as never,
-    system: { id: () => "id", digest: () => "digest", now: () => "2026-10-02T00:00:00.000Z" }, initialAdminEmails: new Set(),
-  });
-  await assert.rejects(() => useCases.importCatalog("user"), /Forbidden/);
-  assert.equal(imported, false);
-  await useCases.importCatalog("admin");
-  assert.equal(imported, true);
-  await useCases.acceptCatalog("admin", "digest-1");
-  assert.equal(accepted, true);
-  const overview = await useCases.catalogOverview("admin");
-  assert.equal(overview.accepted, null);
-  assert.equal(overview.candidates[0]?.digest, "digest-1");
-  await assert.rejects(() => useCases.catalogOverview("user"), /Forbidden/);
-  accepted = false;
-  await useCases.acceptCatalogFromWorkspace("admin", "digest-1");
-  assert.equal(accepted, true);
-  await assert.rejects(() => useCases.acceptCatalogFromWorkspace("user", "digest-1"), /Forbidden/);
-});
 
-test("a Work Turn exposes only accepted and allowed tools, records an unknown command, and reconciles without replay", async () => {
+test("a Work Turn exposes MCP tools without catalog acceptance or WD restrictions, records an unknown command, and reconciles without replay", async () => {
   const events: Array<{ type: string; turnId?: string; payload: Record<string, unknown> }> = [];
   const calls: string[] = [];
-  const catalog = { id: "catalog", appId: "certlab", domainRelease: "certlab/v1", digest: "accepted", acceptedAt: "now", capabilities: [
+  const catalog = { id: "catalog", appId: "certlab", domainRelease: "certlab/v1", digest: "accepted", discoveredAt: "now", tools: [
     { id: "report.context", title: "Context", description: "", kind: "query" as const, inputSchema: {}, outputSchema: {} },
     { id: "assessment.save-draft", receiptScope: "assessment.save_draft", title: "Update", description: "", kind: "command" as const, inputSchema: {}, outputSchema: {} },
     { id: "report.unallowed", title: "Unallowed", description: "", kind: "command" as const, inputSchema: {}, outputSchema: {} },
@@ -142,16 +107,16 @@ test("a Work Turn exposes only accepted and allowed tools, records an unknown co
     sessions: { get: () => grant, claim: () => grant, put: () => {}, remove: () => {} },
     works: { work: () => ({ id: "work", goal: "Save draft", ownerUserId: "user", entityId: "report", appId: "certlab", status: "active" }), activeWork: () => ({ id: "work" }), userForWork: () => "user", nextTurn: () => ({ id: "turn", workId: "work", sequence: 1, status: "running", omRevision: "head", catalogDigest: "accepted", contextDigest: "context", startedAt: "now" }), completeTurn: () => {} } as never,
     om: { head: () => "head", workDefinition: () => ({ schemaVersion: 1, id: "report-authoring", title: "Report", description: "", capabilities: { allowed: ["report.context", "assessment.save-draft"] }, documents: [], knowledge: { bootstrap: [], available: [] }, completion: { mode: "user", requiredCapabilities: [] } }), knownKnowledge: () => new Set() } as never,
-    catalogs: { accepted: () => catalog } as never,
+    toolSnapshots: { recordToolSnapshot: () => {}, toolSnapshot: () => catalog } as never,
     app: {
-      catalog: async () => catalog,
+      discoverTools: async () => catalog,
       reportContext: async () => ({ resource: { namespace: "certlab", resourceType: "report", resourceId: "report", projectId: "project" } }),
       query: async () => ({ assessment: { id: "assessment", report_id: "report", record_no: 3 } }),
       submitCommand: async (_token: string, id: string, body: Record<string, unknown>) => { calls.push(id); assert.equal(body.expectedDomainRelease, "certlab/v1"); return { status: "unknown" as const }; },
       receipt: async () => { calls.push("receipt"); return calls.filter((item) => item === "receipt").length > 1 ? { status: "committed" } : undefined; },
     } as never,
     agents: { runWork: async ({ tools }: { tools: Array<{ capability: { id: string }; invoke: (input: Record<string, unknown>) => Promise<unknown> }> }) => {
-      assert.deepEqual(tools.map((tool) => tool.capability.id), ["report.context", "assessment.save-draft"]);
+      assert.deepEqual(tools.map((tool) => tool.capability.id), ["report.context", "assessment.save-draft", "report.unallowed"]);
       await assert.rejects(() => tools[1].invoke({ report_id: "other", assessment_id: "assessment", expected_record_no: 3 }), /CommandTargetMismatch/);
       const outcome = await tools[1].invoke({ assessment_id: "assessment", expected_record_no: 3 }) as Record<string, unknown>;
       assert.equal(outcome.status, "unknown");
@@ -162,8 +127,7 @@ test("a Work Turn exposes only accepted and allowed tools, records an unknown co
     } } as never,
     trajectories: { append: (event: { type: string; turnId?: string; payload: Record<string, unknown> }) => { events.push(event); }, read: () => events } as never,
     system: { id: (prefix) => `${prefix}_${++nextId}`, now: () => "2026-10-02T00:00:00.000Z", digest: () => "context" },
-    accounts: {} as never, passwordSetups: {} as never, passwordCodec: {} as never, initialAdminEmails: new Set(),
-  });
+    accounts: { userById: (id: string) => ({ id, status: "active", version: 0, role: "user" }), finishUserDrain: () => false } as never, passwordSetups: {} as never, passwordCodec: {} as never, });
   const activities: WorkActivity[] = [];
   await useCases.startTurn("ticket", "Update this report", undefined, [], undefined, undefined, undefined, value => activities.push(value));
   assert.equal(activities[0].phase, "preparing");

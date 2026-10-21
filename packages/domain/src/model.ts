@@ -5,6 +5,8 @@ export interface ForgeUser {
   id: string;
   email: string;
   role: UserRole;
+  status: import("./user-administration.js").UserStatus;
+  version: number;
   passwordConfigured: boolean;
   activeBranch: string;
   createdAt: string;
@@ -18,17 +20,17 @@ export interface AppIdentity {
   organizationId?: string;
 }
 
-export interface CapabilityCatalog {
+export interface AppToolSnapshot {
   source?: "mcp";
   id: string;
   appId: string;
   domainRelease: string;
   digest: string;
-  acceptedAt: string;
-  capabilities: CapabilityDefinition[];
+  discoveredAt: string;
+  tools: AppToolDefinition[];
 }
 
-export interface CapabilityDefinition {
+export interface AppToolDefinition {
   id: string;
   title: string;
   description: string;

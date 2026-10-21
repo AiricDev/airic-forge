@@ -1,4 +1,4 @@
-import type { CapabilityCatalog, ForgeUseCases } from "@airic-forge/domain";
+import type { AppToolSnapshot, ForgeUseCases } from "@airic-forge/domain";
 
 export async function acknowledgeCheckpoint(useCases: ForgeUseCases, ticket: string) {
   const progress = (await useCases.sessionHistory(ticket)).progress;
@@ -18,7 +18,7 @@ export const initialCapabilityIds = [
   "report.output-configure", "test-plan.generate", "finding-export.generate", "report.generate", "job.retry",
   "asset.list", "asset.locations", "asset.revisions", "asset.read", "asset.search", "asset.read-location", "asset.impact-preview",
 ];
-export function testCatalog(digest = "accepted"): CapabilityCatalog {
+export function testCatalog(digest = "accepted"): AppToolSnapshot {
   const scopes: Record<string, string> = {
     "verification.save-draft": "verification.save:{report_id}",
     "fact.save-draft": "fact.save_draft:{report_id}",
@@ -40,8 +40,8 @@ export function testCatalog(digest = "accepted"): CapabilityCatalog {
   };
   return {
     id: "catalog", appId: "certlab", domainRelease: "certlab/v1", digest,
-    acceptedAt: "",
-    capabilities: initialCapabilityIds.map((id) => ({
+    discoveredAt: "",
+    tools: initialCapabilityIds.map((id) => ({
       id, kind: scopes[id] ? "command" : "query", title: id, description: "",
       inputSchema: { type: "object" }, outputSchema: { type: "object" },
       ...(scopes[id] ? { receiptScope: scopes[id] } : {}),

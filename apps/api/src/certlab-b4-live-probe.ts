@@ -17,7 +17,7 @@ const root = mkdtempSync(join(tmpdir(), "forge-certlab-b4-"));
 const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"),
   seedProjectDir: scene.omSource, reportWorkDefinitionId: "certification-assessment",
   webDistDir: join(root, "web"), certLabUrl: scene.origin, organizationId: scene.organizationId,
-  allowedOrigin: "http://localhost", initialAdminEmails: new Set(["synthetic-engineer@example.invalid"]) });
+  allowedOrigin: "http://localhost", });
 const commands: string[] = [];
 let turns = 0;
 let pixelsDelivered = 0;
@@ -66,13 +66,12 @@ const agents: AgentRunnerPort = { runWork: async ({ tools, context, documents, l
 try {
   const useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om,
     reportWorkDefinitionId: runtime.config.reportWorkDefinitionId, app: runtime.app,
-    organizationId: scene.organizationId, catalogs: runtime.db, agents, sessions: runtime.sessions,
+    organizationId: scene.organizationId, toolSnapshots: runtime.db, agents, sessions: runtime.sessions,
     passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword },
-    trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: runtime.config.initialAdminEmails });
+    trajectories: runtime.trajectories, system: systemPort,  });
   const session = await useCases.bootstrap({ token: scene.token, reportId: scene.reportId });
-  const candidate = await useCases.importCatalog(session.ticket);
-  assert.equal(candidate.capabilities.length, 38);
-  await useCases.acceptCatalog(session.ticket, candidate.digest);
+  const candidate = await runtime.app.discoverTools(scene.token);
+  assert.equal(candidate.tools.length, 38);
   const head = runtime.om.head(session.user.activeBranch);
   await useCases.startTurn(session.ticket, "Read source v1");
   const first = await useCases.sessionHistory(session.ticket);

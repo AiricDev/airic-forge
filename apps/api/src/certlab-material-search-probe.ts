@@ -11,7 +11,7 @@ let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const scene = JSON.parse(input) as {origin: string; token: string; organizationId: string; reportId: string; omSource: string};
 const root = mkdtempSync(join(tmpdir(), "forge-material-search-"));
-const runtime = new ForgeRuntime({port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: scene.omSource, reportWorkDefinitionId: "report-authoring", webDistDir: join(root, "web"), certLabUrl: scene.origin, organizationId: scene.organizationId, allowedOrigin: "http://localhost", initialAdminEmails: new Set(["material-acceptance@example.invalid"])});
+const runtime = new ForgeRuntime({port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: scene.omSource, reportWorkDefinitionId: "report-authoring", webDistDir: join(root, "web"), certLabUrl: scene.origin, organizationId: scene.organizationId, allowedOrigin: "http://localhost", });
 let originalText = "";
 let pixels = "";
 const agents: AgentRunnerPort = {runWork: async ({tools}) => {
@@ -30,10 +30,9 @@ const agents: AgentRunnerPort = {runWork: async ({tools}) => {
   return {text: "已读取固定来源；扫描文字仅用于查找，需核对原件。"};
 }};
 try {
-  const useCases = new ForgeUseCases({accounts: runtime.db, works: runtime.db, om: runtime.om, reportWorkDefinitionId: runtime.config.reportWorkDefinitionId, app: runtime.app, organizationId: scene.organizationId, catalogs: runtime.db, agents, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: {hash: hashPassword, verify: verifyPassword}, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: runtime.config.initialAdminEmails});
+  const useCases = new ForgeUseCases({accounts: runtime.db, works: runtime.db, om: runtime.om, reportWorkDefinitionId: runtime.config.reportWorkDefinitionId, app: runtime.app, organizationId: scene.organizationId, toolSnapshots: runtime.db, agents, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: {hash: hashPassword, verify: verifyPassword}, trajectories: runtime.trajectories, system: systemPort, });
   const session = await useCases.bootstrap({token: scene.token, reportId: scene.reportId});
-  const catalog = await useCases.importCatalog(session.ticket);
-  await useCases.acceptCatalog(session.ticket, catalog.digest);
+  const catalog = await runtime.app.discoverTools(scene.token);
   const head = runtime.om.head(session.user.activeBranch);
   await useCases.startTurn(session.ticket, "Find source by keywords and verify native position");
   const history = await useCases.sessionHistory(session.ticket);

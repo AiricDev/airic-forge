@@ -1,3 +1,4 @@
+import { testUser } from "./test-users.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -9,7 +10,7 @@ import { ForgeDatabase } from "./database.js";
 
 test("Work remembers authorized entity titles, refreshes renamed objects and keeps names when context omits them", async () => {
   const root = mkdtempSync(join(tmpdir(), "forge-work-title-"));
-  const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve("../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost", initialAdminEmails: new Set() });
+  const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve("../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost", });
   let title: string | undefined = "Equipment safety report";
   let resourceId = "report-uuid";
   runtime.app.identity = async () => ({ appId: "certlab", organizationId: "synthetic-org", appUserId: "author", email: "title-owner@example.invalid", displayName: "Author" });
@@ -30,7 +31,7 @@ test("Work remembers authorized entity titles, refreshes renamed objects and kee
     resourceId = "other-report";
     await assert.rejects(() => runtime.useCases.bootstrap({ token: "fixture", reportId: "report-uuid" }), /InvalidReportContext/);
     assert.equal(runtime.db.work(first.work.id)?.entityTitle, "Renamed safety report");
-    const stranger = runtime.db.ensureUser("title-stranger@example.invalid", false);
+    const stranger = testUser(runtime.db, "title-stranger@example.invalid", false);
     await assert.rejects(() => runtime.useCases.workHistory(stranger.id, first.work.id), /Forbidden/);
   } finally { runtime.db.close(); rmSync(root, { recursive: true, force: true }); }
 });
@@ -39,7 +40,7 @@ test("older Work databases gain optional names without losing records and names 
   const root = mkdtempSync(join(tmpdir(), "forge-work-title-migration-"));
   let db = new ForgeDatabase(root);
   try {
-    const owner = db.ensureUser("migration@example.invalid", false);
+    const owner = testUser(db, "migration@example.invalid", false);
     const work = db.createWork(owner.id, "certreporter", "report-authoring", "original-id");
     db.close();
     const legacy = new DatabaseSync(join(root, "forge.sqlite"));

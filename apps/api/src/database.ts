@@ -1,23 +1,27 @@
-import { mkdirSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
+import { mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { CapabilityCatalog, ForgeUser, OmDraft, OrganizationContribution, ReflectionLens, ReflectionMessage, ReflectionOutcome, ReflectionRecord, ReflectionRun, TurnRecord, UserRole, Work, WorkFeedback, WorkFeedbackKind, WorkListFilters } from "@airic-forge/domain";
+import type { AppToolSnapshot, ForgeUser, OmDraft, OrganizationContribution, ReflectionLens, ReflectionMessage, ReflectionOutcome, ReflectionRecord, ReflectionRun, TurnRecord, UserRole, Work, WorkFeedback, WorkFeedbackKind, WorkListFilters } from "@airic-forge/domain";
+import { changedUser, validateUserChange, type UserChange, type UserDetail, type UserAdminEvent } from "@airic-forge/domain";
 import { id, normalizeEmail } from "./ids.js";
 import type { OmWorkspace, GitToken } from "@airic-forge/domain";
 
 export class ForgeDatabase {
   readonly #db: DatabaseSync;
 
-  constructor(dataDir: string, options: { migrateMcpCatalogs?: boolean } = {}) {
-    mkdirSync(dataDir, { recursive: true });
-    this.#db = new DatabaseSync(join(dataDir, "forge.sqlite"));
-    const tables = new Set((this.#db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>).map(row => row.name));
-    if (tables.has("catalog_candidates") && !tables.has("mcp_catalog_candidates") && !options.migrateMcpCatalogs) {
-      this.#db.close();
-      throw new Error("McpCatalogMigrationRequired: back up the data root, then run scripts/migrate-mcp-catalogs.mjs --data-dir <absolute-path> --apply");
-    }
+  constructor(dataDir: string, options: { existingOnly?: boolean } = {}) {
+    const path = join(dataDir, "forge.sqlite");
+    if (options.existingOnly) {
+      if (!statSync(path).isFile()) throw new Error("ExistingForgeDatabaseRequired");
+    } else mkdirSync(dataDir, { recursive: true });
+    this.#db = new DatabaseSync(path);
+    // Local maintenance must not initialize schema, migrate catalogs, or change journal mode.
+    if (options.existingOnly) return;
+    this.#db.exec("PRAGMA busy_timeout = 5000");
     this.#db.exec("PRAGMA journal_mode = WAL");
     this.#migrate();
+    this.#migrateUsers();
   }
 
   close(): void { this.#db.close(); }
@@ -52,7 +56,10 @@ export class ForgeDatabase {
   gitTokens(ownerUserId: string): GitToken[] {
     return (this.#db.prepare("SELECT * FROM git_tokens WHERE owner_user_id=? ORDER BY rowid DESC").all(ownerUserId) as Record<string, unknown>[]).map((row) => this.#gitToken(row));
   }
-  saveGitToken(token: GitToken, secretDigest: string): void { this.#db.prepare("INSERT INTO git_tokens VALUES (?, ?, ?, ?, ?, NULL)").run(token.id, token.ownerUserId, token.name, secretDigest, token.expiresAt); }
+  saveGitToken(token: GitToken, secretDigest: string): void {
+    const result = this.#db.prepare("INSERT INTO git_tokens SELECT ?, ?, ?, ?, ?, NULL FROM users WHERE id=? AND status='active'").run(token.id, token.ownerUserId, token.name, secretDigest, token.expiresAt, token.ownerUserId);
+    if (result.changes !== 1) throw new Error("Unauthorized");
+  }
   gitTokenByDigest(secretDigest: string): GitToken | undefined {
     const row = this.#db.prepare("SELECT * FROM git_tokens WHERE secret_digest=?").get(secretDigest) as Record<string, unknown> | undefined;
     return row ? this.#gitToken(row) : undefined;
@@ -216,20 +223,12 @@ export class ForgeDatabase {
         at TEXT NOT NULL
       ) STRICT;
       CREATE INDEX IF NOT EXISTS work_feedback_work ON work_feedback(work_id, at);
-      CREATE TABLE IF NOT EXISTS mcp_catalog_candidates (
-        app_id TEXT NOT NULL,
-        digest TEXT NOT NULL,
-        catalog_json TEXT NOT NULL,
-        imported_at TEXT NOT NULL,
-        PRIMARY KEY (app_id, digest)
+      CREATE TABLE IF NOT EXISTS mcp_tool_snapshots (
+        app_id TEXT NOT NULL, digest TEXT NOT NULL, snapshot_json TEXT NOT NULL, discovered_at TEXT NOT NULL,
+        PRIMARY KEY (app_id,digest)
       ) STRICT;
-      CREATE TABLE IF NOT EXISTS mcp_accepted_catalogs (
-        app_id TEXT PRIMARY KEY,
-        digest TEXT NOT NULL,
-        accepted_by TEXT NOT NULL REFERENCES users(id),
-        accepted_at TEXT NOT NULL,
-        FOREIGN KEY (app_id, digest) REFERENCES mcp_catalog_candidates(app_id, digest)
-      ) STRICT;
+      CREATE TRIGGER IF NOT EXISTS immutable_mcp_tool_snapshot_update BEFORE UPDATE ON mcp_tool_snapshots BEGIN SELECT RAISE(ABORT,'ToolSnapshotImmutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_mcp_tool_snapshot_delete BEFORE DELETE ON mcp_tool_snapshots BEGIN SELECT RAISE(ABORT,'ToolSnapshotImmutable'); END;
     `);
     const proposalColumns = this.#db.prepare("PRAGMA table_info(proposals)").all() as Array<{ name: string }>;
     if (!proposalColumns.some((column) => column.name === "source")) {
@@ -314,14 +313,97 @@ export class ForgeDatabase {
     if (current) this.saveWorkspace({ ...current, edits: current.edits.filter((edit) => edit.path !== path) });
   }
 
-  ensureUser(email: string, isInitialAdmin: boolean): ForgeUser {
+  ensureUser(email: string): ForgeUser {
     const normalized = normalizeEmail(email);
-    const existing = this.#db.prepare("SELECT * FROM users WHERE email = ?").get(normalized) as Record<string, unknown> | undefined;
-    if (existing) return this.#user(existing);
-    const user = { id: id("usr"), email: normalized, role: isInitialAdmin ? "admin" : "user" as UserRole, activeBranch: "", createdAt: new Date().toISOString() };
-    user.activeBranch = `users/${user.id}`;
-    this.#db.prepare("INSERT INTO users (id, email, role, active_branch, created_at) VALUES (?, ?, ?, ?, ?)").run(user.id, user.email, user.role, user.activeBranch, user.createdAt);
-    return { ...user, passwordConfigured: false };
+    this.#db.exec("BEGIN IMMEDIATE");
+    try {
+      const existing = this.userByEmail(normalized);
+      if (existing) { this.#db.exec("COMMIT"); return existing; }
+      const first = !(this.#db.prepare("SELECT 1 FROM users LIMIT 1").get());
+      const user: ForgeUser = { id: id("usr"), email: normalized, role: first ? "admin" : "user", status: "active", version: 0, passwordConfigured: false, activeBranch: "", createdAt: new Date().toISOString() };
+      user.activeBranch = `users/${user.id}`;
+      this.#db.prepare("INSERT INTO users (id, email, role, active_branch, created_at, status, version) VALUES (?, ?, ?, ?, ?, ?, ?)").run(user.id, user.email, user.role, user.activeBranch, user.createdAt, user.status, user.version);
+      if (first) this.#appendUserEvent(null, user.id, "initial-administrator", "First verified App user", { ...user, role: "user" }, user, "bootstrap");
+      this.#db.exec("COMMIT"); return user;
+    } catch (error) { this.#db.exec("ROLLBACK"); throw error; }
+  }
+
+  #migrateUsers(): void {
+    this.#db.exec("BEGIN IMMEDIATE");
+    try {
+      const columns = new Set((this.#db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>).map(row => row.name));
+      if (!columns.has("status")) this.#db.exec("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','draining','disabled'))");
+      if (!columns.has("version")) this.#db.exec("ALTER TABLE users ADD COLUMN version INTEGER NOT NULL DEFAULT 0 CHECK(version >= 0)");
+      this.#db.exec(`CREATE TABLE IF NOT EXISTS account_migrations (name TEXT PRIMARY KEY) STRICT;
+        CREATE TABLE IF NOT EXISTS user_admin_events (
+          id TEXT PRIMARY KEY, actor_user_id TEXT, target_user_id TEXT NOT NULL REFERENCES users(id),
+          request_id TEXT NOT NULL, reason TEXT NOT NULL, before_json TEXT NOT NULL, after_json TEXT NOT NULL,
+          at TEXT NOT NULL, input_json TEXT NOT NULL, response_json TEXT NOT NULL, UNIQUE(actor_user_id,request_id)
+        ) STRICT;
+        CREATE TRIGGER IF NOT EXISTS immutable_user_admin_update BEFORE UPDATE ON user_admin_events BEGIN SELECT RAISE(ABORT,'UserAdminHistoryImmutable'); END;
+        CREATE TRIGGER IF NOT EXISTS immutable_user_admin_delete BEFORE DELETE ON user_admin_events BEGIN SELECT RAISE(ABORT,'UserAdminHistoryImmutable'); END;`);
+      if (!this.#db.prepare("SELECT 1 FROM account_migrations WHERE name='first-administrator-v1'").get()) {
+        if (!this.#db.prepare("SELECT 1 FROM users WHERE role='admin' LIMIT 1").get()) {
+          const row = this.#db.prepare("SELECT * FROM users ORDER BY created_at,rowid LIMIT 1").get() as Record<string, unknown> | undefined;
+          if (row) {
+            const before = this.#user(row), after = { ...before, role: "admin" as const, version: before.version + 1 };
+            this.#db.prepare("UPDATE users SET role='admin',version=version+1 WHERE id=?").run(before.id);
+            this.#appendUserEvent(null, before.id, "initial-administrator-upgrade", "Initialize the first existing user as administrator", before, after, "migration");
+          }
+        }
+        this.#db.prepare("INSERT INTO account_migrations VALUES ('first-administrator-v1')").run();
+      }
+      this.#db.exec("COMMIT");
+    } catch (error) { this.#db.exec("ROLLBACK"); throw error; }
+  }
+
+  #appendUserEvent(actorId: string | null, targetId: string, requestId: string, reason: string, before: ForgeUser, after: ForgeUser, input: string): void {
+    const snapshot = (user: ForgeUser) => JSON.stringify({ role: user.role, status: user.status, version: user.version });
+    this.#db.prepare("INSERT INTO user_admin_events VALUES (?,?,?,?,?,?,?,?,?,?)").run(id("uae"), actorId, targetId, requestId, reason, snapshot(before), snapshot(after), new Date().toISOString(), input, JSON.stringify(after));
+  }
+
+  userDetail(userId: string, page: number): UserDetail {
+    const user = this.userById(userId); if (!user) throw new Error("UserNotFound");
+    const identities = (this.#db.prepare("SELECT app_id,app_user_id,email FROM app_identities WHERE forge_user_id=? ORDER BY app_id,app_user_id").all(userId) as Record<string, unknown>[]).map(row => ({ appId: String(row.app_id), appUserId: String(row.app_user_id), email: String(row.email) }));
+    const rows = this.#db.prepare("SELECT * FROM user_admin_events WHERE target_user_id=? ORDER BY rowid DESC LIMIT 20 OFFSET ?").all(userId, (page - 1) * 20) as Record<string, unknown>[];
+    const history: UserAdminEvent[] = rows.map(row => ({ id: String(row.id), actorUserId: row.actor_user_id === null ? null : String(row.actor_user_id), targetUserId: userId, requestId: String(row.request_id), reason: String(row.reason), before: JSON.parse(String(row.before_json)), after: JSON.parse(String(row.after_json)), at: String(row.at) }));
+    const total = Number((this.#db.prepare("SELECT COUNT(*) AS count FROM user_admin_events WHERE target_user_id=?").get(userId) as { count: number }).count);
+    return { user, identities, history, page, total };
+  }
+
+  changeUser(actorId: string, userId: string, input: UserChange, inFlight: boolean): ForgeUser {
+    validateUserChange(input);
+    this.#db.exec("BEGIN IMMEDIATE");
+    try {
+      const actor = this.userById(actorId), target = this.userById(userId);
+      if (actor?.role !== "admin" || actor.status !== "active") throw new Error("Forbidden");
+      if (!target) throw new Error("UserNotFound");
+      const fingerprint = JSON.stringify({ userId, expectedVersion: input.expectedVersion, reason: input.reason, role: input.role ?? null, enabled: input.enabled ?? null });
+      const prior = this.#db.prepare("SELECT target_user_id,input_json,response_json FROM user_admin_events WHERE actor_user_id=? AND request_id=?").get(actorId,input.requestId) as { target_user_id: string; input_json: string; response_json: string } | undefined;
+      if (prior) {
+        if (prior.input_json !== fingerprint || prior.target_user_id !== userId) throw new Error("UserRequestConflict");
+        this.#db.exec("COMMIT"); return JSON.parse(prior.response_json) as ForgeUser;
+      }
+      const admins = Number((this.#db.prepare("SELECT COUNT(*) AS count FROM users WHERE role='admin' AND status='active'").get() as { count: number }).count);
+      const result = changedUser(actor, target, input, admins, inFlight);
+      const updated = this.#db.prepare("UPDATE users SET role=?,status=?,version=? WHERE id=? AND version=?").run(result.role,result.status,result.version,userId,input.expectedVersion);
+      if (updated.changes !== 1) throw new Error("UserVersionConflict");
+      if (result.status !== "active") this.#db.prepare("UPDATE git_tokens SET revoked_at=? WHERE owner_user_id=? AND revoked_at IS NULL").run(new Date().toISOString(),userId);
+      this.#appendUserEvent(actorId,userId,input.requestId,input.reason,target,result,fingerprint);
+      this.#db.exec("COMMIT"); return result;
+    } catch (error) { this.#db.exec("ROLLBACK"); throw error; }
+  }
+
+  finishUserDrain(userId: string): boolean {
+    this.#db.exec("BEGIN IMMEDIATE");
+    try {
+      const before = this.userById(userId);
+      if (!before || before.status !== "draining") { this.#db.exec("COMMIT"); return false; }
+      const after = { ...before, status: "disabled" as const, version: before.version + 1 };
+      this.#db.prepare("UPDATE users SET status='disabled',version=version+1 WHERE id=?").run(userId);
+      this.#appendUserEvent(null,userId,id("drain"),"Accepted executions have settled",before,after,"drain");
+      this.#db.exec("COMMIT"); return true;
+    } catch (error) { this.#db.exec("ROLLBACK"); throw error; }
   }
 
   recordAppIdentity(appId: string, appUserId: string, userId: string, email: string): void {
@@ -359,34 +441,18 @@ export class ForgeDatabase {
 
   setInitialPassword(userId: string, passwordHash: string): boolean { return this.#db.prepare("UPDATE users SET password_hash=? WHERE id=? AND password_hash IS NULL").run(passwordHash, userId).changes === 1; }
 
-  saveCandidate(catalog: CapabilityCatalog): void {
-    const serialized = JSON.stringify({ ...catalog, acceptedAt: "" });
-    const existing = this.#db.prepare("SELECT catalog_json FROM mcp_catalog_candidates WHERE app_id=? AND digest=?").get(catalog.appId, catalog.digest) as { catalog_json: string } | undefined;
-    if (existing && existing.catalog_json !== serialized) throw new Error("CatalogDigestCollision");
-    this.#db.prepare("INSERT OR IGNORE INTO mcp_catalog_candidates (app_id, digest, catalog_json, imported_at) VALUES (?, ?, ?, ?)")
-      .run(catalog.appId, catalog.digest, serialized, new Date().toISOString());
+  replacePassword(userId: string, passwordHash: string): boolean { return this.#db.prepare("UPDATE users SET password_hash=? WHERE id=?").run(passwordHash, userId).changes === 1; }
+
+  recordToolSnapshot(snapshot: AppToolSnapshot): void {
+    const serialized = JSON.stringify({ ...snapshot, discoveredAt: "" });
+    const existing = this.#db.prepare("SELECT snapshot_json FROM mcp_tool_snapshots WHERE app_id=? AND digest=?").get(snapshot.appId,snapshot.digest) as {snapshot_json:string}|undefined;
+    if (existing && !isDeepStrictEqual(JSON.parse(existing.snapshot_json), JSON.parse(serialized))) throw new Error("ToolSnapshotDigestCollision");
+    this.#db.prepare("INSERT OR IGNORE INTO mcp_tool_snapshots VALUES (?,?,?,?)").run(snapshot.appId,snapshot.digest,serialized,snapshot.discoveredAt || new Date().toISOString());
   }
 
-  candidate(appId: string, digest: string): CapabilityCatalog | undefined {
-    const row = this.#db.prepare("SELECT catalog_json FROM mcp_catalog_candidates WHERE app_id=? AND digest=?").get(appId, digest) as { catalog_json: string } | undefined;
-    return row ? JSON.parse(row.catalog_json) as CapabilityCatalog : undefined;
-  }
-
-  candidates(appId: string): CapabilityCatalog[] {
-    return (this.#db.prepare("SELECT catalog_json FROM mcp_catalog_candidates WHERE app_id=? ORDER BY imported_at DESC, digest DESC").all(appId) as Array<{ catalog_json: string }>).map((row) => JSON.parse(row.catalog_json) as CapabilityCatalog);
-  }
-
-  accept(appId: string, digest: string, acceptedBy: string): void {
-    if (!this.candidate(appId, digest)) throw new Error("CatalogCandidateNotFound");
-    this.#db.prepare(`INSERT INTO mcp_accepted_catalogs (app_id, digest, accepted_by, accepted_at) VALUES (?, ?, ?, ?)
-      ON CONFLICT(app_id) DO UPDATE SET digest=excluded.digest, accepted_by=excluded.accepted_by, accepted_at=excluded.accepted_at`)
-      .run(appId, digest, acceptedBy, new Date().toISOString());
-  }
-
-  accepted(appId: string): CapabilityCatalog | undefined {
-    const row = this.#db.prepare("SELECT c.catalog_json, a.accepted_at FROM mcp_accepted_catalogs a JOIN mcp_catalog_candidates c ON c.app_id=a.app_id AND c.digest=a.digest WHERE a.app_id=?")
-      .get(appId) as { catalog_json: string; accepted_at: string } | undefined;
-    return row ? { ...(JSON.parse(row.catalog_json) as CapabilityCatalog), acceptedAt: row.accepted_at } : undefined;
+  toolSnapshot(appId: string, digest: string): AppToolSnapshot | undefined {
+    const row = this.#db.prepare("SELECT snapshot_json,discovered_at FROM mcp_tool_snapshots WHERE app_id=? AND digest=?").get(appId,digest) as {snapshot_json:string;discovered_at:string}|undefined;
+    return row ? { ...JSON.parse(row.snapshot_json), discoveredAt:row.discovered_at } as AppToolSnapshot : undefined;
   }
 
   userForWork(workId: string): string | undefined {
@@ -546,7 +612,7 @@ export class ForgeDatabase {
     this.#db.prepare("UPDATE reflections SET lens_id=?, lens_version=?, lens_prompt=?, evidence_ids_json=?, updated_at=? WHERE id=?")
       .run(lens.id, lens.version, lens.prompt, JSON.stringify(evidenceEventIds), new Date().toISOString(), reflectionId);
   }
-  #user(row: Record<string, unknown>): ForgeUser { return { id: String(row.id), email: String(row.email), role: row.role as UserRole, passwordConfigured: typeof row.password_hash === "string", activeBranch: String(row.active_branch), createdAt: String(row.created_at) }; }
+  #user(row: Record<string, unknown>): ForgeUser { return { id: String(row.id), email: String(row.email), role: row.role as UserRole, status: row.status as ForgeUser["status"], version: Number(row.version), passwordConfigured: typeof row.password_hash === "string", activeBranch: String(row.active_branch), createdAt: String(row.created_at) }; }
   #lens(row: Record<string, unknown>): ReflectionLens { return { id: String(row.id) as ReflectionLens["id"], version: Number(row.version), enabled: Number(row.enabled) === 1, prompt: String(row.prompt) }; }
   #reflection(row: Record<string, unknown>): ReflectionRecord { return { id: String(row.id), ...(row.work_id == null ? {} : { workId: String(row.work_id) }), ownerUserId: String(row.owner_user_id), lensId: String(row.lens_id), lensVersion: Number(row.lens_version), lensPrompt: String(row.lens_prompt), question: String(row.question), evidenceEventIds: JSON.parse(String(row.evidence_ids_json)) as string[], omRevision: String(row.om_revision), status: String(row.status), ...(row.outcome ? { outcome: row.outcome as ReflectionOutcome } : {}), ...(row.analysis ? { analysis: String(row.analysis) } : {}), ...(row.attribution ? { attribution: String(row.attribution) } : {}), ...(row.suggestion_markdown ? { suggestionMarkdown: String(row.suggestion_markdown) } : {}) }; }
   #work(row: Record<string, unknown>): Work { return { id: String(row.id), ownerUserId: String(row.owner_user_id), appId: String(row.app_id) as Work["appId"], workType: String(row.work_type) as Work["workType"], entityId: String(row.entity_id), ...(typeof row.entity_title === "string" ? { entityTitle: row.entity_title } : {}), ...(typeof row.goal === "string" ? { goal: row.goal } : {}), ...(typeof row.app_user_id === "string" ? { appUserId: row.app_user_id } : {}), ...(typeof row.selection_json === "string" ? { selection: JSON.parse(row.selection_json) as Record<string, unknown> } : {}), status: row.status === "completed" ? "completed" : "active", createdAt: String(row.created_at), updatedAt: String(row.updated_at) }; }

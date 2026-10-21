@@ -1,6 +1,5 @@
 import { resolve } from "node:path";
 
-const list = (value: string | undefined) => new Set((value ?? "").split(",").map((entry) => entry.trim().toLowerCase()).filter(Boolean));
 
 export interface ForgeConfig {
   port: number;
@@ -8,14 +7,14 @@ export interface ForgeConfig {
   trustedProxy?: string;
   projectDir: string;
   dataDir: string;
-  seedProjectDir: string;
+  /** Explicit fixture/import source for programmatic callers, never loaded from env. */
+  seedProjectDir?: string;
   reportWorkDefinitionId?: string;
   webDistDir: string;
   certLabUrl: string;
   organizationId: string;
   allowedOrigin: string;
   publicUrl?: string;
-  initialAdminEmails: Set<string>;
   testIdentitySwitch?: boolean;
   modelProvider?: string;
   modelId?: string;
@@ -32,14 +31,12 @@ export function loadConfig(env = process.env): ForgeConfig {
     trustedProxy: env.FORGE_TRUST_PROXY,
     projectDir: resolve(env.FORGE_PROJECT_DIR ?? "./runtime/certlab/project"),
     dataDir: resolve(env.FORGE_DATA_DIR ?? "./runtime/certlab/data"),
-    seedProjectDir: resolve(env.FORGE_SEED_PROJECT_DIR ?? "./seed/certlab"),
     reportWorkDefinitionId: env.FORGE_REPORT_WORK_DEFINITION,
     webDistDir: resolve(env.FORGE_WEB_DIST_DIR ?? "./apps/workbench/public"),
     certLabUrl: (env.FORGE_CERTLAB_URL ?? "http://127.0.0.1:8000").replace(/\/$/, ""),
     organizationId: (env.FORGE_ORGANIZATION_ID ?? "").trim(),
     allowedOrigin: env.FORGE_ALLOWED_ORIGIN ?? "http://127.0.0.1:5173",
     publicUrl: (env.FORGE_PUBLIC_URL ?? "http://127.0.0.1:4175").replace(/\/$/, ""),
-    initialAdminEmails: list(env.FORGE_INITIAL_ADMIN_EMAILS),
     testIdentitySwitch: env.FORGE_ENABLE_TEST_IDENTITY_SWITCH === "true",
     modelProvider: env.FORGE_MODEL_PROVIDER,
     modelId: env.FORGE_MODEL_ID,

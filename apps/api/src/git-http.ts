@@ -92,7 +92,7 @@ export function registerGitHttp(app: FastifyInstance, runtime: ForgeRuntime) {
       const code = error instanceof Error ? error.message : "";
       if (code === "Unauthorized") return reply.header("WWW-Authenticate", 'Basic realm="Forge personal OM"').code(401).send("Authentication required");
       if (code === "Forbidden") return reply.code(403).send("Personal OM access denied");
-      const safe = /^(ActiveRevisionChanged|OmWriteInProgress|OmNonFastForward|OmPathNotAllowed|OmFileTooLarge|GitRefNotAllowed|CapabilityCatalogNotAccepted|UserWorktreeDirty|GitHttpsRequired)$/.test(code) ? code : code.startsWith("InvalidOperatingModel:") ? "InvalidOperatingModel" : "GitRequestRejected";
+      const safe = /^(ActiveRevisionChanged|OmWriteInProgress|OmNonFastForward|OmPathNotAllowed|OmFileTooLarge|GitRefNotAllowed|UserWorktreeDirty|GitHttpsRequired)$/.test(code) ? code : code.startsWith("InvalidOperatingModel:") ? "InvalidOperatingModel" : "GitRequestRejected";
       return reply.code(409).send(safe);
     } finally { if (directory) rmSync(directory, { recursive: true, force: true }); if (transfer) transfers.delete(transfer); }
   };

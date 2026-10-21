@@ -1,5 +1,7 @@
 # CertLab MCP integration
 
+账户角色、初始化、停用收尾及管理接口见 [用户管理契约](user-administration.md)。
+
 Forge connects to one configured CertLab and one certification organization through MCP.
 The authoritative wire contract is CertLab `docs/api/assistant-protocol.md`.
 Historical B1–B5 records do not define current HTTP endpoints.
@@ -27,12 +29,14 @@ forwarded on redirects. An SDK connection is not a user, Work or business receip
 Each published capability is a named MCP tool. Standard tool schemas/descriptions
 replace manifest plus OpenAPI-path validation. Only minimal execution kind/receipt
 scope metadata is namespaced under `ai.airic/execution`; it is not another manifest.
-The internal catalog is a normalized review snapshot, not a second wire protocol.
-
-Administrators accept the actual catalog; WD explicitly allows business tools.
-Schema/description/execution-hint changes require review; discovery order does not.
-Control tools (`integration.info`, `command.context`, `command.receipt`) are not exposed
-to the model. MCP annotations are hints, never authorization or replay guarantees.
+Forge normalizes the currently discovered tools into an immutable per-Turn snapshot
+(`AppToolSnapshot` / `AppToolDefinition`). There is no independent capability registry,
+manual import/acceptance, or WD tool allowlist. MCP is authoritative for publishing tools
+and enforcing the current App user's permissions. Metadata changes are discovered on the
+next Turn; discovery failure never falls back to a previous snapshot.
+Control tools (`integration.info`, `command.context`, `command.receipt`) stay runtime-owned.
+MCP annotations are hints, never authorization or replay guarantees.
+See [MCP tool discovery](contracts/mcp-tool-discovery.md) for the current contract.
 
 The model provides business input only. Forge enforces the bound report and injects
 original commandId/release/correlation in MCP call metadata. Request IDs are not
@@ -56,23 +60,11 @@ unchanged. Existing Work/Action/receipt identities and historical trajectories r
 There is no legacy protocol fallback. CertLab removes `/airic/v1/*` and the
 Agent OpenAPI generator. Human REST/OpenAPI remains intact.
 
-Back up and stop the existing Forge before cutover. Build the new code, then inspect:
-
-```bash
-node scripts/migrate-mcp-catalogs.mjs --data-dir /absolute/forge-data
-```
-
-Only after operator approval, add `--apply`. This creates separate MCP catalog
-tables, preserves legacy catalog/acceptance rows and all user/Work/OM/trajectory data,
-and is idempotent. Runtime refuses an unmigrated legacy catalog root. Do not point
-the migration at a live database. It does not import tools or accept a catalog.
-
-After both services are updated, rebootstrap and explicitly import/accept the MCP
-catalog in the existing administrator flow. Old acceptance does not authorize MCP.
-Stable capability IDs let existing WDs continue without silently rewriting active OM.
-Unknown historical actions retain original locators and reconcile through MCP.
-Deploying, applying the migration to business data and accepting the production
-catalog are separate operator actions, not side effects of this refactor.
+Back up and stop Forge before deploying. The runtime automatically creates the immutable
+`mcp_tool_snapshots` table. Existing catalog/acceptance rows, users, Work, OM and trajectories
+remain historical and unchanged; no legacy approval is reused as authority. Reconnect the
+Copilot after restart: no import, approval or WD tool-range update is required. Unknown
+historical actions retain their original locators and reconcile through MCP.
 
 CertLab now runs its existing Django API/SPA and MCP through the same ASGI process,
 using the official Python SDK and Gunicorn Uvicorn worker. Static files remain nginx-owned.
@@ -82,7 +74,7 @@ using the official Python SDK and Gunicorn Uvicorn worker. Static files remain n
 Forge: `pnpm build`, `pnpm check`, `pnpm test`, `pnpm test:e2e`.
 The targeted `certlab-contract.test.ts` exercises real SDK transport, dynamic tools,
 paged catalogs, canonical ordering, credential isolation, material results and receipts.
-`mcp-catalog-migration.test.ts` proves explicit, non-destructive, repeatable cutover.
+`mcp-catalog-migration.test.ts` verifies immutable discovered snapshots and preservation of historical approval rows.
 
 CertLab's assistant tests use its real ASGI MCP endpoint. The joint
 `tools/verify_airic_b1.py` probe uses real HTTP/MCP and temporary roots, with deterministic

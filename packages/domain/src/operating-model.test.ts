@@ -7,19 +7,18 @@ const definition: WorkDefinition = {
   id: "report-authoring",
   title: "Report authoring",
   description: "Test",
-  capabilities: { allowed: ["report.context"] },
   documents: [{ id: "policy", path: "policy.md", title: "Policy", role: "policy", load: "required" }],
   knowledge: { bootstrap: ["sk:report-model"], available: [] },
-  completion: { mode: "user", requiredCapabilities: [] },
+  completion: { mode: "user" },
 };
 
-test("work definition accepts an allowed capability and known knowledge", () => {
-  assert.deepEqual(validateWorkDefinition(definition, new Set(["report.context"]), new Set(["sk:report-model"])), []);
+test("work definition validates knowledge without a tool allowlist", () => {
+  assert.deepEqual(validateWorkDefinition(definition, new Set(["sk:report-model"])), []);
 });
 
-test("work definition rejects a capability outside the accepted catalog", () => {
-  const issues = validateWorkDefinition(definition, new Set(), new Set(["sk:report-model"]));
-  assert.match(issues[0]?.message ?? "", /accepted capability catalog/);
+test("work definition still rejects unresolved knowledge", () => {
+  const issues = validateWorkDefinition(definition,new Set());
+  assert.match(issues[0]?.message ?? "", /does not resolve/);
 });
 
 test("governed nested knowledge and precedents never allow traversal or arbitrary source files", () => {

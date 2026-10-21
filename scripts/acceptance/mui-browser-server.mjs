@@ -1,3 +1,4 @@
+import { testUser } from "../../apps/api/dist/test-users.js";
 // Real API + disposable SQLite/Git/trajectory storage. Only the model adapter is deterministic.
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,7 +20,7 @@ mkdirSync(legacyType, { recursive: true });
 cpSync(join(seed, 'work-definitions/report-authoring'), legacyType, { recursive: true });
 const manifestPath = join(legacyType, 'work.yml');
 writeFileSync(manifestPath, readFileSync(manifestPath, 'utf8').replace(/^id: report-authoring$/m, 'id: report-type-definition'));
-const runtime = new ForgeRuntime({ port, bindHost: '127.0.0.1', projectDir: join(root, 'project'), dataDir: join(root, 'data'), seedProjectDir: seed, webDistDir: resolve('apps/workbench/public'), certLabUrl: 'http://127.0.0.1:1', organizationId: 'synthetic-mui-institution', allowedOrigin: `http://127.0.0.1:${port}`, initialAdminEmails: new Set(), testIdentitySwitch: true });
+const runtime = new ForgeRuntime({ port, bindHost: '127.0.0.1', projectDir: join(root, 'project'), dataDir: join(root, 'data'), seedProjectDir: seed, webDistDir: resolve('apps/workbench/public'), certLabUrl: 'http://127.0.0.1:1', organizationId: 'synthetic-mui-institution', allowedOrigin: `http://127.0.0.1:${port}`, testIdentitySwitch: true });
 function pause(ms, signal) {
   return new Promise((resolve, reject) => {
     const finish = () => { signal?.removeEventListener('abort', cancel); resolve(); };
@@ -63,20 +64,23 @@ const reflectionAgent = { analyze: async (input) => {
   if (input.lens.id === 'api-suggestion') return { outcome: 'api-suggestion', analysis: '需要证据位置能力。', attribution: '能力缺口', citedEventIds: ids, suggestionMarkdown: '# API Suggestion\n\nAdd report.evidence-location.' };
   return { outcome: 'analysis', analysis: '可以继续讨论这个 Work。', attribution: '', citedEventIds: ids };
 } };
-runtime.useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omChanges: runtime.omChanges, omDrafts: runtime.drafts, organization: runtime.organization, measurements: runtime.db, instanceSettings: runtime.instanceSettings, app: runtime.app, organizationId: runtime.config.organizationId, catalogs: runtime.db, agents: { runWork: async () => ({ text: 'Fixture response' }) }, reflectionAgent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: new Set() });
+runtime.useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omChanges: runtime.omChanges, omDrafts: runtime.drafts, organization: runtime.organization, measurements: runtime.db, instanceSettings: runtime.instanceSettings, app: runtime.app, organizationId: runtime.config.organizationId, toolSnapshots: runtime.db, agents: { runWork: async () => ({ text: 'Fixture response' }) }, reflectionAgent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, });
 const password = 'MUI-browser-password-123';
-const setupUser = runtime.db.ensureUser('mui-setup@example.invalid', false);
+const initialAdmin = runtime.db.ensureUser('mui-initial-admin@example.invalid');
+const manager = testUser(runtime.db, 'mui-manager@example.invalid', true);
+const managed = testUser(runtime.db, 'mui-managed@example.invalid', false);
+for (const user of [initialAdmin, manager, managed]) { runtime.db.setInitialPassword(user.id, hashPassword(password)); runtime.om.ensureUserBranch(user.id); }
+const setupUser = testUser(runtime.db, 'mui-setup@example.invalid', false);
 runtime.om.ensureUserBranch(setupUser.id);
 const setupTicket = runtime.passwordSetups.issue(setupUser.id, new Date(Date.now() + 3600000).toISOString());
 const metadata = process.env.FORGE_E2E_METADATA || join(root, 'fixture.json');
 writeFileSync(metadata, JSON.stringify({ setupTicket }), { flag: 'wx', mode: 0o600 });
-const admin = runtime.db.ensureUser('mui-admin@example.invalid', true);
-const owner = runtime.db.ensureUser('mui-owner@example.invalid', false);
-const member = runtime.db.ensureUser('mui-member@example.invalid', false);
+const admin = testUser(runtime.db, 'mui-admin@example.invalid', true);
+const owner = testUser(runtime.db, 'mui-owner@example.invalid', false);
+const member = testUser(runtime.db, 'mui-member@example.invalid', false);
 for (const user of [admin, owner, member]) { runtime.db.setInitialPassword(user.id, hashPassword(password)); runtime.om.ensureUserBranch(user.id); }
 const catalog = { ...testCatalog('mui-accepted'), id: 'mui-catalog' };
-runtime.db.saveCandidate(catalog); runtime.db.accept('certlab', catalog.digest, admin.id);
-runtime.db.saveCandidate({ ...catalog, id: 'mui-candidate', digest: 'mui-candidate', capabilities: [...catalog.capabilities, { id: 'report.evidence-location', kind: 'query', title: 'Evidence location', description: '证据位置', inputSchema: {}, outputSchema: {} }] });
+runtime.db.recordToolSnapshot(catalog);
 const policy = 'work-definitions/report-authoring/policy.md';
 const base = runtime.om.head(`users/${owner.id}`);
 await createTestOmCommit(runtime, owner.id, [{ path: policy, content: runtime.om.document(base, policy) + '\n\nPreserve evidence source locations.\n' }], 'Shared policy');

@@ -39,7 +39,7 @@ test("migrated report-authoring package resolves every declared document", () =>
     const revision = om.head("main");
     const definition = om.workDefinition(revision, "report-authoring");
     const knownCapabilities = new Set(["report.context", "report.read", "report.gaps", "report.update-master", "report.update-data"]);
-    assert.deepEqual(validateWorkDefinition(definition, knownCapabilities, om.knownKnowledge(revision)), []);
+    assert.deepEqual(validateWorkDefinition(definition, om.knownKnowledge(revision)), []);
     assert.equal(definition.documents.length, 5);
     for (const document of definition.documents) {
       assert.ok(om.document(revision, `work-definitions/report-authoring/${document.path}`).length > 0);

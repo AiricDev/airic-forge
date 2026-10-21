@@ -14,7 +14,7 @@ export function registerOmHttp(app: FastifyInstance, runtime: ForgeRuntime) {
     try { return reply.send(await action(authorized(request))); }
     catch (error) {
       const code = error instanceof Error ? error.message : "";
-      const safe = /^(Unauthorized|Forbidden|ReflectionNotOwned|ReflectionAlreadyRunning|Om[A-Za-z]+|ActiveRevisionChanged|OrganizationRevisionChanged|OrganizationAlreadyCurrent|InvalidOmDraft|InvalidGitToken|ReflectionMessageRequired|CapabilityCatalogNotAccepted|UserWorktreeDirty)$/.test(code) ? code : code.startsWith("InvalidOperatingModel:") ? code : "OmRequestFailed";
+      const safe = /^(Unauthorized|Forbidden|ReflectionNotOwned|ReflectionAlreadyRunning|Om[A-Za-z]+|ActiveRevisionChanged|OrganizationRevisionChanged|OrganizationAlreadyCurrent|InvalidOmDraft|InvalidGitToken|ReflectionMessageRequired|UserWorktreeDirty)$/.test(code) ? code : code.startsWith("InvalidOperatingModel:") ? code : "OmRequestFailed";
       return reply.code(code === "Unauthorized" ? 401 : ["Forbidden", "ReflectionNotOwned"].includes(code) ? 403 : /Changed|Conflict|InProgress|Running|Exists/.test(code) ? 409 : 400).send({ error: safe });
     }
   };

@@ -1,3 +1,4 @@
+import { testUser } from "./test-users.js";
 /** B5: real HTTP business, real Forge governance, synthetic models only. */
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -13,7 +14,7 @@ let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const scene = JSON.parse(input) as { origin: string; token: string; organizationId: string; reportId: string; assessmentId: string; omSource: string; assets: Record<string, { id: string; revisionId: string }> };
 const root = mkdtempSync(join(tmpdir(), "forge-certlab-b5-"));
-const config = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: scene.omSource, reportWorkDefinitionId: "certification-assessment", webDistDir: join(root, "web"), certLabUrl: scene.origin, organizationId: scene.organizationId, allowedOrigin: "http://localhost", initialAdminEmails: new Set(["synthetic-engineer@example.invalid"]) };
+const config = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: scene.omSource, reportWorkDefinitionId: "certification-assessment", webDistDir: join(root, "web"), certLabUrl: scene.origin, organizationId: scene.organizationId, allowedOrigin: "http://localhost", };
 const commands: string[] = [];
 const knowledgePath = "subject-knowledge/standards/synthetic/2026/clauses/1/source-scope.md";
 const precedentPath = "precedents/synthetic/2026/source-scope.md";
@@ -69,7 +70,7 @@ const reflectionAgent: ReflectionAgentPort = { analyze: async (request) => {
   await assert.rejects(() => request.writeDraftFile!("work-definitions/certification-assessment/policy.md", "Not allowed", cited, "Wrong lens"), /InvalidReflectionChange/);
   return { outcome: "changes", analysis: "Propose source-scope knowledge, not a professional conclusion.", attribution: "Actual original-source event, business receipts and engineer correction.", citedEventIds: cited, edits: [{ path: knowledgePath, content: learned(knowledgeId) }, { path: precedentPath, content: learned(precedentId) }] };
 } };
-const compose = (runtime: ForgeRuntime) => new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omChanges: runtime.omChanges, omDrafts: runtime.drafts, organization: runtime.organization, measurements: runtime.db, reportWorkDefinitionId: config.reportWorkDefinitionId, organizationId: config.organizationId, app: runtime.app, catalogs: runtime.db, agents, reflectionAgent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
+const compose = (runtime: ForgeRuntime) => new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omChanges: runtime.omChanges, omDrafts: runtime.drafts, organization: runtime.organization, measurements: runtime.db, reportWorkDefinitionId: config.reportWorkDefinitionId, organizationId: config.organizationId, app: runtime.app, toolSnapshots: runtime.db, agents, reflectionAgent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort,  });
 let runtime = new ForgeRuntime(config);
 Object.assign(runtime, { useCases: compose(runtime) });
 let server = buildServer(runtime);
@@ -85,8 +86,7 @@ const http = async (path: string, body?: unknown, method = body === undefined ? 
 try {
   const session = await http("/api/v1/app-sessions/bootstrap", { appId: "certlab", workType: "report-authoring", entityId: scene.reportId }, "POST", { Authorization: `Bearer ${scene.token}` }, 201);
   const useCases = runtime.useCases;
-  const catalog = await useCases.importCatalog(session.ticket);
-  await useCases.acceptCatalog(session.ticket, catalog.digest);
+  const catalog = await runtime.app.discoverTools(scene.token);
   await http(`/api/v1/app-sessions/${session.passwordSetupTicket}/password`, { password: "Synthetic-learning-password-123" }, "POST", {}, 204);
   await http("/api/v1/auth/login", { email: session.user.email, password: "Synthetic-learning-password-123" });
   const m1 = runtime.om.head(session.user.activeBranch);
@@ -104,7 +104,7 @@ try {
   assert(changedPaths.includes(knowledgePath) && changedPaths.includes(precedentPath));
   assert.equal(runtime.om.head(session.user.activeBranch), m1);
   assert.equal(original.turns[0].omRevision, m1);
-  const other = runtime.db.ensureUser("synthetic-other@example.invalid", false);
+  const other = testUser(runtime.db, "synthetic-other@example.invalid", false);
   const otherCookie = `forge_session=${runtime.webSessions.issue(other.id)}`;
   await http(`${draftUrl}/commit`, { digest: draft.digest, requestId: "unauthorized-b5" }, "POST", { Cookie: otherCookie }, 403);
   await http(`${draftUrl}/commit`, { digest: "wrong", requestId: "wrong-digest-b5" }, "POST", {}, 409);

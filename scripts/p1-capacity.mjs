@@ -1,3 +1,4 @@
+import { testUser } from "../apps/api/dist/test-users.js";
 #!/usr/bin/env node
 // Isolated local baseline. Never points at a live Forge data directory.
 import { mkdtempSync, appendFileSync, rmSync } from 'node:fs';
@@ -22,7 +23,7 @@ try {
   const users = [];
   const works = [];
   for (let i = 0; i < 20; i++) {
-    const user = db.ensureUser(`capacity-${i}@example.invalid`, false);
+    const user = testUser(db, `capacity-${i}@example.invalid`, false);
     om.ensureUserBranch(user.id);
     users.push(user);
     for (let j = 0; j < 5; j++) {

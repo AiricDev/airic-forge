@@ -53,8 +53,23 @@ export class ForgeRuntime {
     }
     this.drafts = new GitOmWorkspaces(this.om);
     this.organization = new GitContributions(this.om);
-    this.omChanges = new PersonalOmChanges({ accounts: this.db, catalogs: this.db, om: this.om, drafts: this.drafts, system: systemPort });
+    this.omChanges = new PersonalOmChanges({ accounts: this.db, om: this.om, drafts: this.drafts, system: systemPort });
     this.gitAccess = new GitAccess({ accounts: this.db, tokens: this.db, system: systemPort });
-    this.useCases = new ForgeUseCases({ accounts: this.db, works: this.db, om: this.om, omChanges: this.omChanges, reportWorkDefinitionId: config.reportWorkDefinitionId, omDrafts: this.drafts, organization: this.organization, measurements: this.db, instanceSettings: this.instanceSettings, app: this.app, organizationId: config.organizationId, catalogs: this.db, agents: new PiWorkAgentRunner(config), workContext: { summarizer: new PiContextSummarizer(config), summaries: new FileContextSummaryStore(config.dataDir), inputTokens: config.contextInputTokens, outputTokens: config.contextOutputTokens }, reflectionAgent: new PiReflectionAgentRunner(config), reflectionRunStore: this.db, sessions: this.sessions, evidenceExtractor: new LocalEvidenceExtractor(), evidenceSessions: this.evidenceSessions, passwordSetups: this.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: this.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
+    this.useCases = new ForgeUseCases({ accounts: this.db, works: this.db, om: this.om, omChanges: this.omChanges, reportWorkDefinitionId: config.reportWorkDefinitionId, omDrafts: this.drafts, organization: this.organization, measurements: this.db, instanceSettings: this.instanceSettings, app: this.app, organizationId: config.organizationId, toolSnapshots: this.db, agents: new PiWorkAgentRunner(config), workContext: { summarizer: new PiContextSummarizer(config), summaries: new FileContextSummaryStore(config.dataDir), inputTokens: config.contextInputTokens, outputTokens: config.contextOutputTokens }, reflectionAgent: new PiReflectionAgentRunner(config), reflectionRunStore: this.db, sessions: this.sessions, evidenceExtractor: new LocalEvidenceExtractor(), evidenceSessions: this.evidenceSessions, passwordSetups: this.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: this.trajectories, system: systemPort,  });
+    this.bindUserLifecycle();
+    // No model execution survives a process restart; interrupted work remains historical.
+    for (const user of this.db.listUsers()) if (user.status === "draining") this.db.finishUserDrain(user.id);
+
   }
+  private readonly boundUserLifecycles = new WeakSet<object>();
+  bindUserLifecycle(): void {
+    if (this.boundUserLifecycles.has(this.useCases.users)) return;
+    this.boundUserLifecycles.add(this.useCases.users);
+    this.useCases.users.onDisabled(userId => {
+      this.webSessions.revokeUser(userId);
+      this.passwordSetups.revokeUser(userId);
+      for (const ticket of this.sessions.revokeUser(userId)) this.evidenceSessions.clear(ticket);
+    });
+  }
+
 }

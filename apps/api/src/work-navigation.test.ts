@@ -1,3 +1,4 @@
+import { testUser } from "./test-users.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -12,13 +13,13 @@ test("Work list is paginated and detail keeps the original ownership boundary", 
   const webDistDir = join(root, "web");
   mkdirSync(webDistDir);
   writeFileSync(join(webDistDir, "index.html"), "<html>AiricForge Work</html>");
-  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir, certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set() };
+  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir, certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", };
   const runtime = new ForgeRuntime(config);
   const app = buildServer(runtime);
   try {
-    const owner = runtime.db.ensureUser("work-owner@example.invalid", false);
-    const stranger = runtime.db.ensureUser("work-stranger@example.invalid", false);
-    const admin = runtime.db.ensureUser("work-admin@example.invalid", true);
+    const owner = testUser(runtime.db, "work-owner@example.invalid", false);
+    const stranger = testUser(runtime.db, "work-stranger@example.invalid", false);
+    const admin = testUser(runtime.db, "work-admin@example.invalid", true);
     runtime.om.ensureUserBranch(owner.id);
     const manifestUrl = `/api/v1/om/users/${owner.id}/manifest?path=work-definitions%2Freport-authoring%2Fwork.yml`;
     const manifest = await app.inject({ method: "GET", url: manifestUrl, headers: { cookie: `forge_session=${runtime.webSessions.issue(owner.id)}` } });

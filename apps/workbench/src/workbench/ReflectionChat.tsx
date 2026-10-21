@@ -139,6 +139,7 @@ export function ReflectionChat({
   detail,
   events,
   canWrite,
+  canCancel = canWrite,
   href,
   select,
   onChanged,
@@ -147,6 +148,7 @@ export function ReflectionChat({
   detail: ReflectionDetail;
   events: TrajectoryEvent[];
   canWrite: boolean;
+  canCancel?: boolean;
   href: (id: string) => string;
   select: (id: string) => void;
   onChanged: () => void;
@@ -239,8 +241,9 @@ export function ReflectionChat({
           <Stack spacing={2}>
             {!canWrite && (
               <Alert severity="info">
-                当前为只读查看。请由这个 Work 的原作者发起
-                Reflection、发送消息及采纳个人提议。
+                {canCancel
+                  ? "账号停用中，仅可观察或停止已受理任务。"
+                  : "当前为只读查看。请由这个 Work 的原作者发起 Reflection、发送消息及采纳个人提议。"}
               </Alert>
             )}
             <ThreadPrimitive.Viewport asChild autoScroll>
@@ -334,7 +337,7 @@ export function ReflectionChat({
               >
                 重新连接 / 核对状态
               </Button>
-              {canWrite && state.active && (
+              {canCancel && state.active && (
                 <Button
                   color="warning"
                   startIcon={<StopIcon />}

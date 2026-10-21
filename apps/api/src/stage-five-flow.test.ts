@@ -15,13 +15,13 @@ import type { ForgeConfig } from "./config.js";
 
 test("single-report Work binds record number and current-Turn evidence through Git, SQLite and JSONL", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-five-"));
-  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", initialAdminEmails: new Set(["admin@example.com"]) };
+  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", };
   const catalog = testCatalog();
   let recordNo = 1;
   let commands = 0;
   const app: AppPort = {
     identity: async () => ({ appId: "certlab", appUserId: "admin", email: "admin@example.com", displayName: "Admin" }),
-    catalog: async () => catalog,
+    discoverTools: async () => catalog,
     reportContext: async () => ({ resource: { namespace: "certlab", resourceType: "report", resourceId: "report-1", projectId: "project-1" } }),
     query: async () => ({ assessment: { id: "assessment-1", report_id: "report-1", record_no: recordNo } }),
     submitCommand: async (_token, capabilityId, body) => { assert.equal(capabilityId, "assessment.save-draft"); assert.equal((body.input as Record<string, unknown>).expected_record_no, recordNo); commands++; recordNo++; return { status: "committed", receipt: { commandId: body.commandId, status: "committed", result: { record_no: recordNo } } }; },
@@ -35,7 +35,7 @@ test("single-report Work binds record number and current-Turn evidence through G
       return { text: "Still available" };
     }
     seenEvidence = evidence?.[0]?.text ?? "";
-    assert.deepEqual(tools.map((tool) => tool.capability.id), runtime.om.workDefinition(runtime.om.head("main"), "report-authoring").capabilities.allowed.filter((id) => !["command.context", "command.receipt"].includes(id)));
+    assert.deepEqual(tools.map((tool) => tool.capability.id), catalog.tools.filter(tool => !["command.context", "command.receipt"].includes(tool.id)).map(tool=>tool.id));
     assert(tools.every((tool) => ids.includes(tool.capability.id)));
     await assert.rejects(() => tools[0].invoke({ report_id: "other" }), /CommandTargetMismatch/);
     const save = tools.find((tool) => tool.capability.id === "assessment.save-draft")!;
@@ -47,12 +47,11 @@ test("single-report Work binds record number and current-Turn evidence through G
   const runtime = new ForgeRuntime(config);
   try {
     const evidenceSessions = new InMemoryEvidenceSessionStore();
-    const useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, app, catalogs: runtime.db, agents, sessions: new InMemoryAppSessionStore(), evidenceExtractor: new LocalEvidenceExtractor(), evidenceSessions, passwordSetups: new InMemoryPasswordSetupStore(), passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: config.initialAdminEmails });
+    const useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, app, toolSnapshots: runtime.db, agents, sessions: new InMemoryAppSessionStore(), evidenceExtractor: new LocalEvidenceExtractor(), evidenceSessions, passwordSetups: new InMemoryPasswordSetupStore(), passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort,  });
     await assert.rejects(() => useCases.bootstrap({ token: "app-token", workType: "report-type-definition", entityId: "type-1" }), /UnsupportedAppContext/);
     const session = await useCases.bootstrap({ token: "app-token", reportId: "report-1" });
     assert.equal(session.work.workType, "report-authoring");
-    const candidate = await useCases.importCatalog(session.ticket);
-    await useCases.acceptCatalog(session.ticket, candidate.digest);
+    const candidate = catalog;
     const uploaded = await useCases.attachEvidence(session.ticket, "reference.txt", "text/plain", new TextEncoder().encode("Source fact for this turn"));
     const result = await useCases.startTurn(session.ticket, "Save draft", undefined, [uploaded.digest]);
     assert.equal(result.reply, "Draft saved");

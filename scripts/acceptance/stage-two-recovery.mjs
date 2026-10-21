@@ -21,7 +21,7 @@ const config = {
   webDistDir: join(root, 'web'),
   certReporterUrl: process.env.STAGE2_CERTREPORTER_URL ?? 'http://127.0.0.1:8000',
   allowedOrigin: 'http://127.0.0.1:3000',
-  initialAdminEmails: new Set([fixture.email.trim().toLowerCase()]),
+  .toLowerCase()]),
 };
 const runtime = new ForgeRuntime(config);
 const client = runtime.certReporter;
@@ -29,7 +29,7 @@ let receiptChecks = 0;
 let submissions = 0;
 const app = {
   identity: (token) => client.identity(token),
-  catalog: (token) => client.catalog(token),
+  discoverTools: (token) => client.discoverTools(token),
   reportContext: (token, id, selection) => client.reportContext(token, id, selection),
   query: (token, id, input) => client.query(token, id, input),
   submitCommand: async (token, id, body) => {
@@ -57,18 +57,16 @@ const agents = { runWork: async ({ context, tools }) => {
 } };
 const useCases = new ForgeUseCases({
   accounts: runtime.db, works: runtime.db, om: runtime.om, certReporter: app,
-  catalogs: runtime.db, agents, sessions: new InMemoryAppSessionStore(),
+  toolSnapshots: runtime.db, agents, sessions: new InMemoryAppSessionStore(),
   passwordSetups: new InMemoryPasswordSetupStore(),
   passwordCodec: { hash: hashPassword, verify: verifyPassword },
   trajectories: runtime.trajectories, system: systemPort,
-  initialAdminEmails: config.initialAdminEmails,
 });
 
 try {
   const before = await client.reportContext(fixture.token, fixture.reportId);
   const session = await useCases.bootstrap({ token: fixture.token, reportId: fixture.reportId });
-  const candidate = await useCases.importCatalog(session.ticket);
-  await useCases.acceptCatalog(session.ticket, candidate.digest);
+  const candidate = await runtime.app.discoverTools("app-token");
   await useCases.startTurn(session.ticket, 'Save the test report name; simulate a lost response.');
   const recovered = await useCases.recoverCommand(session.ticket, unknown.commandId);
   const after = await client.reportContext(fixture.token, fixture.reportId);

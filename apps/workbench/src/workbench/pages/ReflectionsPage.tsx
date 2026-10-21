@@ -18,6 +18,7 @@ import { ReflectionChat } from "../ReflectionChat";
 import { OmDraftReview } from "../OmDraftReview";
 export function ReflectionsPage({
   navigation: n,
+  user,
 }: {
   navigation: Navigation;
   user: User;
@@ -49,11 +50,12 @@ export function ReflectionsPage({
       <Feedback {...c} />
       <TextField
         label="新讨论主题"
+        disabled={user.status !== "active"}
         value={question}
         onChange={(e) => setQuestion(e.target.value)}
       />
       <Button
-        disabled={c.busy || !question.trim()}
+        disabled={user.status !== "active" || c.busy || !question.trim()}
         onClick={() =>
           void c.run(async () => {
             const value = await command<ReflectionDetail>(
@@ -113,7 +115,8 @@ export function ReflectionsPage({
                 key={`chat:${id}`}
                 detail={selected}
                 events={[]}
-                canWrite={true}
+                canWrite={user.status === "active"}
+                canCancel={true}
                 href={() => "#"}
                 select={() => {}}
                 onChanged={detail.reload}
@@ -122,7 +125,7 @@ export function ReflectionsPage({
               <OmDraftReview
                 key={`draft:${id}`}
                 scope={`reflection:${id}`}
-                canWrite={true}
+                canWrite={user.status === "active"}
                 busy={running}
                 refreshKey={selected}
                 onChanged={detail.reload}

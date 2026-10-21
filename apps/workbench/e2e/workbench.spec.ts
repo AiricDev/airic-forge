@@ -14,11 +14,6 @@ async function login(page: Page, role: "owner" | "admin" | "member" = "owner") {
   ).toBeVisible();
 }
 async function nav(page: Page, name: string) {
-  if (name === "能力目录") {
-    await nav(page, "实例设置");
-    await page.getByRole("tab", { name: "能力目录", exact: true }).click();
-    return;
-  }
   await page.getByRole("button", { name, exact: true }).click();
 }
 async function work(page: Page, entity: string) {
@@ -281,13 +276,10 @@ test("explicit stop keeps a partial answer and administrator observation cannot 
   await screenshot(page, "reflection-admin-readonly");
 });
 
-test("catalog failure retains Dialog and restores focus; all administrative pages have visual evidence", async ({
-  page,
-}) => {
+test("all administrative pages have visual evidence", async ({ page }) => {
   await login(page, "admin");
   await screenshot(page, "dashboard");
   for (const [label, name] of [
-    ["能力目录", "catalog"],
     ["组织贡献", "contributions"],
     ["用户与资源", "users"],
     ["实例设置", "settings"],
@@ -303,27 +295,6 @@ test("catalog failure retains Dialog and restores focus; all administrative page
       await page.getByRole("button", { name: /Domain Knowledge/ }).click();
     await screenshot(page, name);
   }
-  await nav(page, "能力目录");
-  const accept = page.getByRole("button", { name: "接受候选目录" });
-  await accept.click();
-  await page.getByRole("dialog").getByRole("button", { name: "取消" }).click();
-  await expect(accept).toBeFocused();
-  await page.route("**/accept-from-workspace", (route) =>
-    route.fulfill({
-      status: 503,
-      json: { error: "FixtureCatalogUnavailable" },
-    }),
-  );
-  await accept.click();
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "接受目录" })
-    .click();
-  await expect(page.getByRole("dialog").getByRole("alert")).toContainText(
-    "FixtureCatalogUnavailable",
-  );
-  await page.getByRole("dialog").getByRole("button", { name: "取消" }).click();
-  await page.unroute("**/accept-from-workspace");
   await nav(page, "Operating Model");
   await page.getByRole("combobox", { name: "OM 分支" }).click();
   await page
@@ -530,12 +501,12 @@ test("independent OM discussions survive reload and Git credentials can be revok
   await expect(page.getByText(/浏览器测试电脑.*已撤销/)).toBeVisible();
 });
 
-test("instance settings contain integration sources, OM paths and nested capability management", async ({
+test("instance settings show integration and OM paths without capability management", async ({
   page,
 }) => {
   await login(page, "admin");
   await expect(
-    page.getByRole("navigation").getByRole("button").first(),
+    page.getByRole("navigation").getByRole("button").last(),
   ).toHaveText("成效基线");
   await expect(
     page.getByRole("button", { name: "组织治理", exact: true }),
@@ -553,7 +524,7 @@ test("instance settings contain integration sources, OM paths and nested capabil
   const response = await page.request.get("/api/v1/instance-settings");
   expect(response.status()).toBe(200);
   const settings = await response.json();
-  const panel = page.getByRole("tabpanel");
+  const panel = page.locator("main");
   await expect(
     panel.getByText(settings.operatingModel.repositoryPath, { exact: true }),
   ).toBeVisible();
@@ -567,19 +538,23 @@ test("instance settings contain integration sources, OM paths and nested capabil
   ).toBeVisible();
   await expect(panel.getByText("传输类型：streamable-http")).toBeVisible();
   await expect(
+    panel.getByText(/能力列表与输入输出定义来自 App 的 MCP 工具/),
+  ).toBeVisible();
+  await expect(panel.getByText(/Manifest|OpenAPI/)).toHaveCount(0);
+  await expect(
     panel.getByRole("link", {
       name: settings.integration.mcpUrl,
       exact: true,
     }),
   ).toHaveAttribute("href", settings.integration.mcpUrl);
   await expect(panel.getByText(/Reflection lens|Lens 提示词/)).toHaveCount(0);
-  await page.getByRole("tab", { name: "能力目录", exact: true }).click();
+  await expect(page.getByRole("tab")).toHaveCount(0);
   await expect(
     page.getByRole("heading", { name: "能力目录", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "接受候选目录" }),
-  ).toBeVisible();
+  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "接受候选目录" })).toHaveCount(
+    0,
+  );
   await nav(page, "Lens 管理");
   await expect(
     page.getByRole("heading", { name: "Lens 管理", exact: true }),

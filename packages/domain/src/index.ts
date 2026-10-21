@@ -10,3 +10,6 @@ export * from "./materials.js";
 export * from "./work-context.js";
 export * from "./om-changes.js";
 export * from "./git-access.js";
+export * from "./password-administration.js";
+
+export * from "./user-administration.js";

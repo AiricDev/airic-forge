@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import {
+  Alert,
   AppBar,
   Avatar,
   Box,
@@ -28,7 +29,7 @@ import SettingsIcon from "@mui/icons-material/Settings";
 import AssessmentIcon from "@mui/icons-material/Assessment";
 import PsychologyIcon from "@mui/icons-material/Psychology";
 import type { AuthResult, User } from "./types";
-import { command } from "./api";
+import { api, ApiError, command } from "./api";
 import { useCommand, useResource } from "./hooks";
 import { Feedback, ResourceState } from "./ui";
 import { UnsavedChangesProvider, useUnsavedChanges } from "./UnsavedChanges";
@@ -157,7 +158,6 @@ function AccountWorkspace() {
   );
 }
 const primary = [
-  { view: "measurements", label: "成效基线", icon: AssessmentIcon },
   { view: "dashboard", label: "工作台", icon: DashboardIcon },
   { view: "om", label: "Operating Model", icon: DescriptionIcon },
   { view: "works", label: "Work 与轨迹", icon: WorkHistoryIcon },
@@ -169,6 +169,7 @@ const admin = [
   { view: "users", label: "用户与资源", icon: PeopleIcon },
   { view: "settings", label: "实例设置", icon: SettingsIcon },
   { view: "lenses", label: "Lens 管理", icon: PsychologyIcon },
+  { view: "measurements", label: "成效基线", icon: AssessmentIcon },
 ] as const;
 function Workbench({
   account,
@@ -177,13 +178,42 @@ function Workbench({
   account: AuthResult;
   onLogout: () => void;
 }) {
-  const user = account.user;
+  const [user, setUser] = useState(account.user);
+  const refreshAccount = async () => {
+    try {
+      const result = await api<AuthResult>("/api/v1/auth/me");
+      setUser(result.user);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) onLogout();
+    }
+  };
+  useEffect(() => {
+    const refresh = () => {
+      void refreshAccount();
+    };
+    window.addEventListener("focus", refresh);
+    const interval = window.setInterval(refresh, 5000);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.clearInterval(interval);
+    };
+  }, []);
+
   const n = useNavigation();
   const { guard } = useUnsavedChanges();
   const c = useCommand();
   const users = useResource<{
     users: User[];
-  }>(user.role === "admin" ? "/api/v1/users" : null);
+  }>(
+    user.role === "admin" && user.status === "active" ? "/api/v1/users" : null,
+  );
+  useEffect(() => {
+    if (n.view !== "users" || user.role !== "admin" || user.status !== "active")
+      return;
+    users.reload();
+    const interval = window.setInterval(users.reload, 3000);
+    return () => window.clearInterval(interval);
+  }, [n.view, user.role, user.status, users.reload]);
   const [mobile, setMobile] = useState(false);
   const [menu, setMenu] = useState<HTMLElement | null>(null);
   const [branch, setBranch] = useState(user.id);
@@ -213,30 +243,27 @@ function Workbench({
       </Toolbar>
       <Divider />
       <List aria-label="主导航">
-        {primary
-          .filter(
-            ({ view }) => view !== "measurements" || user.role === "admin",
-          )
-          .map(({ view, label, icon: Icon }) => (
-            <ListItemButton
-              key={view}
-              selected={
-                n.view === view ||
-                (view === "works" && n.view === "work-detail") ||
-                (view === "om" && n.view === "organization")
-              }
-              onClick={() => {
-                navigate(view);
-              }}
-            >
-              <ListItemIcon>
-                <Icon />
-              </ListItemIcon>
-              <ListItemText primary={label} />
-            </ListItemButton>
-          ))}
+        {primary.map(({ view, label, icon: Icon }) => (
+          <ListItemButton
+            key={view}
+            disabled={user.status !== "active"}
+            selected={
+              n.view === view ||
+              (view === "works" && n.view === "work-detail") ||
+              (view === "om" && n.view === "organization")
+            }
+            onClick={() => {
+              navigate(view);
+            }}
+          >
+            <ListItemIcon>
+              <Icon />
+            </ListItemIcon>
+            <ListItemText primary={label} />
+          </ListItemButton>
+        ))}
       </List>
-      {user.role === "admin" && (
+      {user.role === "admin" && user.status === "active" && (
         <>
           <Divider />
           <List aria-label="管理导航">
@@ -353,7 +380,10 @@ function Workbench({
               onClose={() => setMenu(null)}
             >
               <MenuItem disabled>
-                {user.email} · {user.role === "admin" ? "管理员" : "用户"}
+                {user.email} ·{" "}
+                {user.role === "admin" && user.status === "active"
+                  ? "管理员"
+                  : "用户"}
               </MenuItem>
               <MenuItem
                 onClick={() => {
@@ -378,7 +408,12 @@ function Workbench({
           sx={{ p: { xs: 2, md: 3 }, maxWidth: 1800, mx: "auto" }}
         >
           <Feedback {...c} />
-          {user.role === "admin" && (
+          {user.status === "draining" && (
+            <Alert severity="warning">
+              账号停用中。已受理任务允许结束；当前仅可查看任务进度或主动停止，不能开始新操作。
+            </Alert>
+          )}
+          {user.role === "admin" && user.status === "active" && (
             <ResourceState {...users} retry={users.reload} />
           )}
           <Suspense
@@ -415,11 +450,15 @@ function Workbench({
               <ReflectionsPage navigation={n} user={user} />
             )}
             {n.view === "git-access" && <GitAccessPage />}
-            {user.role === "admin" && (
+            {user.role === "admin" && user.status === "active" && (
               <>
                 {n.view === "users" && (
                   <UsersPage
                     users={users.data?.users ?? []}
+                    changed={async () => {
+                      await refreshAccount();
+                      users.reload();
+                    }}
                     openOm={openOm}
                     openWorks={(id) => n.list({ owner: id, page: 1 })}
                   />

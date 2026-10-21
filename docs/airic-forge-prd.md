@@ -1,5 +1,7 @@
 # Airic Forge PRD
 
+2026-10-21 当前决策：工具直接来自当前用户的 MCP；取消目录人工接受和 WD 工具白名单。当前完整契约见 [MCP 工具发现](contracts/mcp-tool-discovery.md)。
+
 > 产品暂名：Airic Forge  
 >
 > 文档版本：0.1   
@@ -63,7 +65,7 @@ Airic 的产品价值围绕一个持续循环形成：
 * C02 首版一个实例连接一个业务 App支持多用户，不扩展为多 App 平台
 * C03 实例挂载的项目仅维护 Operating Model 文档，App 适配遵循标准契约，不在个人项目里编写启动或业务接入代码
 * C04 App 提供包含业务逻辑和约束的 API，Airic 学习如何使用能力；新的业务能力仍由 App 团队开发
-* C05 App 通过专用 OpenAPI 文档暴露Agent可用的能力
+* C05 App 通过 MCP tools/list 发布 Agent 可用的工具
 * C06 App 提供与页面对应的文本数据和页面说明，Copilot 能理解当前页面，并通过业务能力API完成操作
 * C07 采用同一 Git 仓库、个人分支和组织 `main`个人维护自己的版本，组织吸收个人贡献，个人合入组织更新
 * C08 active Operating Model 应与用户/Work 相关；用户agent选择的OM需明确模型所有者与版本快照。
@@ -97,7 +99,7 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 | **角色** | **职责** | **Airic 资源权限边界** |
 |:---:|-----|--------------|
 | 普通用户 | 在 App 中使用 Copilot；创建、维护和采纳个人 OM；查看和使用自己关联的 Work、Session 与轨迹 | 对自己创建或归属的 Session、Work、个人 OM、个人 branch 和 worktree 拥有完全控制权；可查看组织已发布且对成员可见的内容 |
-| 管理员 | 初始化和管理 Airic 实例；管理 App 接入、能力目录及组织内容；处理运营与治理事务 | 可访问和管理所有用户的 Airic 数据，包括用户、Session、Work、轨迹、个人 OM、个人 branch 和 worktree，以及组织内容 |
+| 管理员 | 初始化和管理 Airic 实例；管理 App 接入及组织内容；处理运营与治理事务 | 可访问和管理所有用户的 Airic 数据，包括用户、Session、Work、轨迹、个人 OM、个人 branch 和 worktree，以及组织内容 |
 | App 开发团队 | 发布页面上下文和 Agent 可调用的业务 API；评估并实现 API 能力建议 | 不因该职责自动获得 Airic 管理员权限；业务 API 的权限、状态、事务和执行结果始终由 App 控制 |
 | 部署运维人员 | 部署、备份、恢复 Airic 服务及管理外部 Git remote | 负责运行环境与数据运维；不因运维职责自动取得 App 业务操作权限 |
 
@@ -118,14 +120,14 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 * 装配并运行 Agent；维护 Work、轮次、动作和规范化轨迹。
 * 维护个人与组织的 Operating Model，提供文档编辑、提议、审核、采纳和历史查看。
 * 根据模型所有者和 Work 上下文提供operating model，组装context。
-* 管理经过接受的 App 能力目录，并按工作定义与适用规则限制工具可用范围。
+* 通过当前用户 MCP 发现业务工具并记录每轮快照，权限由 App 控制。
 * 提供独立 Web 工作台和可嵌入 App 的交互入口。
 * 查看agent session，运行 Reflection，管理模型改进和 API 建议。
 
 ### **5.2 业务 App 负责**
 
 * 提供与页面对应的，文本形式的页面数据接口，包括页面说明、页面数据和业务对象引用，使 Copilot 获得当前工作上下文。
-* 提供selected适合 Agent 调用的Command API，通过OpenAPI文档将接口提供给Airic。
+* 通过 MCP 发布适合 Agent 调用的业务工具，读写行为仍由 App 授权和执行。
 * 使用与网页端同样的access token验证来自agent的api请求。
 * 在前端接入 Copilot 面板、页面上下文和操作后的数据刷新。
 * 根据 API 能力建议决定是否开发、发布新能力。
@@ -142,7 +144,7 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 | 对象  | 定义与用途 |
 |-----|-------|
 | Operating Model（OM） | Agent 持续使用的工作方法与知识的版本化集合 |
-| Work Definition（WD） | 某类工作的入口定义，包括目标、方法、完成条件、知识引用和允许能力 |
+| Work Definition（WD） | 某类工作的入口定义，包括目标、方法、完成条件和知识引用 |
 | Subject Knowledge（SK） | 可复用的领域知识、术语、经验和判断依据；在产品中称为知识文档 |
 | 个人版本 | 个人分支 HEAD 对应、供其 Agent 下一 Turn 使用的模型快照；所有者采纳与外部 Git 提交均可更新 HEAD |
 | 组织版本 | 组织在 `main` 中采纳并维护的共享模型内容 |
@@ -166,19 +168,19 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 * Airic 以 Docker Image 交付，提供 Web 工作台、Agent 运行服务和嵌入式 Copilot 接口。
 * `/project` 保存 Git 管理的 OM 文档；`/data` 保存用户、资源归属、Work、Session、轨迹、提议、采纳记录及运行数据。
 * 空 `/project` 可由 Airic 初始化为 Git 项目；已有项目内容不得被启动流程覆盖。
-* Airic 管理员可完成实例初始化，并管理 App 接入、能力目录和组织内容。
+* Airic 管理员可完成实例初始化，并管理 App 接入和组织内容。
 * 重启后可恢复用户与资源关联、个人及组织版本、Work、Session、轨迹和提议状态。
 * Git remote 的推送、拉取、备份与恢复由部署运维人员负责。
 
 ### **FR-02 App 能力接入**
 
-* Airic 接受业务 App 专门发布的 OpenAPI 文档，用于描述允许 Agent 调用的 Command API。
+* Airic 通过业务 App 的 MCP tools/list 发现工具，规范化为当前 Turn 的不可变工具快照；通过 tools/call 调用业务工具。
 * Airic 不默认将整个 App API 暴露给 Agent。
 * 能力契约应描述稳定能力标识、命令用途、输入输出 Schema、业务对象约束及版本信息。
 * Command API 应支持幂等标识、预期版本、命令回执和结果查询；网络超时或响应丢失时，不得直接认定业务操作失败。
-* 导入新版能力目录时，Airic 展示新增、修改、删除及受影响内容；管理员接受前，运行时继续使用已接受目录。
-* 能力目录被接受后，Work Definition 仍须显式声明允许使用的能力。
-* API 能力建议及未被接受的接口描述不得进入 Agent 可调用工具目录。
+* 每个 Turn 重新发现当前用户 MCP 工具；新增、描述和 Schema 变更在下一轮生效，不需要人工接受。
+* WD 不设置工具白名单；MCP 端决定发布哪些工具并检查用户业务权限。
+* API 能力建议不是可执行工具；只有 App 通过 MCP 实际发布的工具才能调用。
 
 ### **FR-03 App 身份接入与用户自动创建**
 
@@ -191,6 +193,8 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 * Email 更换、多个 App 身份映射同一 Airic 用户及身份冲突处理规则：Unknown。
 
 ### **FR-04 资源权限与管理员访问**
+
+账户初始化、角色管理、停用收尾及审计的当前契约见 [用户管理](user-administration.md)。
 
 * 普通用户对自己创建或归属的 Session、Work、轨迹、个人 OM、个人 branch 和 worktree 拥有完整控制权。
 * 普通用户默认不能访问其他用户的 Session、Work、轨迹、个人 OM、branch 或 worktree。
@@ -213,7 +217,7 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 ### **FR-06 个人 Operating Model 创作**
 
 * 用户可通过无代码界面创建和维护 Work Definition 与知识文档。
-* Work Definition 可声明目标、方法、完成条件、知识引用和允许使用的 App 能力。
+* Work Definition 可声明目标、方法、完成条件和知识引用。
 * 知识文档可被多个 Work Definition 引用。
 * 编辑草稿和 Proposal worktree 修改均不得自动改变运行时正在使用的 OM 版本；个人 active 分支的普通 Git 提交从下一 Turn 生效。
 * Reflection 形成的 Proposal 必须包含来源和基准版本，并使用独立 worktree，不得覆盖用户个人 worktree 中的外部修改。
@@ -273,13 +277,13 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 * 用户或 Reflection 可创建 API 能力建议，记录业务场景、现有能力限制、建议操作、输入输出、权限要求及失败语义。
 * 针对命令型能力建议，应包含幂等、版本控制和结果查询要求。
 * 用户可在 Airic 中查看、跟进 API 能力建议给 App 开发团队；App 团队决定是否实现并发布新能力。
-* 新能力只有在 App 发布 OpenAPI 文档、Airic 管理员接受能力目录且相关 Work Definition 明确允许后，才可被 Agent 使用。
+* 新工具由 App 通过 MCP 发布，Agent 下一轮直接发现；实际操作权限由 MCP 端检查。
 
 ### **FR-13 无代码工作台**
 
 * 普通用户的主要入口包括 OM、Work（包含其 Reflection）和 Proposal（包含差异、rebase、校验与采纳）。
 * 用户直接在个人 OM 文件中编辑并保存私有草稿；草稿不创建 Proposal，也不改变 active HEAD。Work Reflection 在有轨迹证据时才形成 Proposal。
-* 管理员工作台提供用户与资源查看、组织内容维护、贡献审核、能力目录接受及实例治理入口。
+* 管理员工作台提供用户与资源查看、组织内容维护、贡献审核及实例治理入口。
 * 工作台应支持 Work Definition 与知识文档编辑、差异查看、Proposal 来源查看、检查结果查看、一次确认采纳和版本历史查看。
 * 工作台应支持个人贡献、组织版本浏览、组织更新合入和冲突处理。
 * Git branch、worktree、提交和原始 Markdown 作为可展开的高级信息，不作为普通用户完成主要操作的前置条件。
@@ -345,9 +349,9 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 1. 用户或 API Suggestion Reflection 发现当前 App API 无法支持所需工作，或现有 API 设计影响操作效率和正确性。
 2. Airic 创建 API 能力建议，记录业务场景、现有能力限制、建议操作、输入输出、权限要求、失败语义，以及命令所需的幂等、版本控制和结果查询机制。
 3. 用户或管理员在 Airic 中查看和跟进该建议。
-4. App 开发团队决定是否实现该建议，并在实现后通过新版 OpenAPI 文档发布能力。
-5. Airic 管理员查看能力目录变更并决定是否接受。
-6. 用户在对应 Work Definition 中明确允许该能力，并完成个人采纳后，Agent 才能在后续 Turn 中使用该新能力。
+4. App 开发团队决定是否实现该建议，并在实现后通过 MCP 发布新版工具定义。
+5. Airic 在下一轮通过当前用户 MCP 发现该工具并保存快照。
+6. Agent 可使用 MCP 发布的工具；涉及工作方法的知识改进仍通过原个人 OM 采纳流程生效。
 
 ## **9. 数据与版本规则**
 
@@ -397,7 +401,7 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 
 ### **11.1 验收环境与证据**
 
-使用 CertReporter 的真实 Report 页面及 `report-authoring`，至少准备两个普通用户和一个 AiricForge 管理员，并为各身份配置可区分的 CertReporter 业务权限。CertReporter 应提供身份接口、权威 `report.context` 投影、专用 OpenAPI 文档、Command API 和按 `commandId` 查询命令回执。
+当前使用 CertLab 的真实 Report 页面及 `report-authoring`，至少准备两个普通用户和一个 AiricForge 管理员，并为各身份配置可区分的 CertLab 业务权限。CertLab 应提供身份接口、权威 `report.context` 投影、MCP 工具发现与调用、业务命令及按原 `commandId` 查询命令回执的工具。
 
 验收证据包括界面操作结果、身份与资源关联、Git 分支和 worktree 状态、实际提交、Work/Session/Turn 轨迹及 App 命令回执。不能只以 Agent 回复“已完成”判定通过。
 
@@ -412,7 +416,7 @@ Airic 不将 App Token 本身作为独立的 Airic 用户身份。App 仍负责�
 | P0-03 | 同一用户重复进入或从两个入口访问 | 已验证的同一规范化 Email 关联到同一个 AiricForge 用户，不重复创建个人资源；用户设置独立密码后通过短期 HttpOnly Web 会话登录 |
 | P0-04 | 伪造 Email、使用失效 Token 或访问他人资源 | 客户端自报 Email 不能代替 App 身份校验；未认证请求被拒绝；普通用户不能读取或操作其他用户的个人资源 |
 | P0-05 | 管理员查看和管理用户资源 | 可以访问所有用户的 Airic 资源，包括原始 Session 和轨迹；查看其他用户 Work 不会改变其模型所有者；管理员权限不赋予额外 App 业务权限 |
-| P0-06 | 导入新的 Command API 目录 | 可查看差异与影响；接受前不进入工具目录；接受后仍需 WD 明确允许；API 建议本身不可调用 |
+| P0-06 | MCP 发布新工具 | 当前用户下一轮直接发现；无需人工接受或 WD 授权；API 建议本身不可调用 |
 | P0-07 | App 页面启动一个业务 Work | 页面说明、文本数据、work 类型、entity_id 与当前用户正确关联；Airic 通过 ACP 向 Copilot 同步运行状态和进度 |
 | P0-08 | Agent 调用 Command API | 使用当前 App 用户的 Access Token；App 校验身份、目标、业务状态和规则；成功依据回执确认，页面随后刷新对应数据 |
 | P0-09 | 页面切换、Token 撤销或跨业务目标调用 | 已发出的命令保持原目标；撤销后不能继续执行业务操作；App 拒绝越权目标；界面不会将上下文文本当作授权 |
@@ -465,7 +469,7 @@ Airic Forge 要验证的是：实际工作产生的经验能否沉淀为可复�
 | 领域知识复用 | 从轨迹沉淀的 SK 是否在后续相关工作中被使用 | 结合实际引用、任务结果和用户反馈判断；被读取不等于有帮助 |
 | 工作正确性 | 重复错误、错误重试、用户纠正、业务拒绝与返工的变化 | 同时观察完成结果，避免用更少交互掩盖错误或未完成工作 |
 | 组织吸收与扩散 | 被吸收的个人改进、成员同步情况、冲突处理成本 | 在 P1 开始统计，保留个人来源与组织版本对应关系 |
-| API 改进闭环 | API 建议被 App 团队采纳、发布及实际使用的情况 | 建议导出、App 发布、目录接受、WD 允许和后续使用分别记录 |
+| API 改进闭环 | API 建议被 App 团队采纳、发布及实际使用的情况 | 建议导出、App MCP 发布、工具快照和后续使用分别记录 |
 | 可靠性与归因 | Turn 来源完整性、未知命令恢复、重复效果、恢复失败 | 用可验证事件和 App 回执核对，不能从 Agent 文本推测成功 |
 
 ### **12.2 测量阶段**
@@ -488,7 +492,7 @@ P1 在这些记录之上补充统计口径、反馈入口和比较视图。对�
 
 ### **13.1 P0 契约归档**
 
-原 D04、D07、D08、D10 的 P0 行为合同已归入 ADR 0001 与 ADR 0002，分别涵盖 Proposal worktree 恢复、ACP 与页面上下文、App token 生命周期、能力目录接受和命令未知结果恢复。具体机制与故障验收仍在对应开发阶段完成，不能以 ADR 存在代替验收通过。
+原 D04、D07、D08、D10 的 P0 行为合同已归入 ADR 0001 与 ADR 0002，分别涵盖 Proposal worktree 恢复、ACP 与页面上下文、App token 生命周期和命令未知结果恢复（工具发现按当前 MCP 契约）。具体机制与故障验收仍在对应开发阶段完成，不能以 ADR 存在代替验收通过。
 
 
 ### **13.2 后续细化与范围控制**

@@ -1,5 +1,5 @@
 import { isAllowedOmDocumentPath, validateWorkDefinition } from "./operating-model.js";
-import type { AccountPort, CatalogPort, OperatingModelPort, SystemPort } from "./ports.js";
+import type { AccountPort, OperatingModelPort, SystemPort } from "./ports.js";
 
 export interface OmEdit { path: string; content: string | null; }
 /** Saved editing state, not an approval entity. Scope separates independent discussions. */
@@ -30,7 +30,7 @@ export interface OmRevisionPort {
 
 export class PersonalOmChanges {
   private readonly writers = new Set<string>();
-  constructor(private readonly ports: { accounts: AccountPort; catalogs: CatalogPort; om: OperatingModelPort & OmRevisionPort; drafts: OmWorkspacePort; system: SystemPort }) {}
+  constructor(private readonly ports: { accounts: AccountPort; om: OperatingModelPort & OmRevisionPort; drafts: OmWorkspacePort; system: SystemPort }) {}
 
   async own(actor: string, owner: string) {
     if (actor !== owner || !await this.ports.accounts.userById(actor)) throw new Error("Forbidden");
@@ -44,14 +44,12 @@ export class PersonalOmChanges {
     try { return await action(); } finally { this.writers.delete(owner); }
   }
   async validate(revision: string) {
-    const catalog = await this.ports.catalogs.accepted("certlab");
-    if (!catalog) throw new Error("CapabilityCatalogNotAccepted");
     const issues = await this.ports.om.knowledgeIssues(revision);
     const known = await this.ports.om.knownKnowledge(revision);
     const files = await this.ports.om.listFiles(revision);
     for (const path of files.filter((path) => /^work-definitions\/[a-z0-9-]+\/work\.yml$/.test(path))) {
       const definition = await this.ports.om.workDefinition(revision, path.split("/")[1]);
-      issues.push(...validateWorkDefinition(definition, new Set(catalog.capabilities.map((item) => item.id)), known));
+      issues.push(...validateWorkDefinition(definition, known));
       for (const document of definition.documents) {
         try { await this.ports.om.document(revision, `work-definitions/${definition.id}/${document.path}`); }
         catch { issues.push({ path, message: `missing document ${document.path}` }); }

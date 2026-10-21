@@ -9,7 +9,7 @@
 * 运行 Work Agent：在业务 App 页面内执行用户任务，调用已授权的 Command API，并记录可追溯轨迹。
 * 运行 Reflection Agent：基于单个 Work 的轨迹进行多轮对话，并持续维护该 Reflection 的 Proposal。
 * 管理 OM 版本：以 Git 为唯一事实来源，commit 即采纳；支持多个并行 Proposal。
-* 管理运行数据：用户、Work、Reflection、Proposal 元数据、能力目录，以及指向轨迹文件的位置引用。
+* 管理运行数据：用户、Work、Reflection、Proposal 元数据、MCP 工具快照，以及指向轨迹文件的位置引用。
 
 技术选型的既定约束：Node.js + pnpm 开发后端；使用 pi-sdk 实现系统内各类 agent 能力；通过 ACP 协议对接 App 内嵌 Copilot 以及 Web 工作台内的 Reflection 对话。其余选型为本方案提出的建议。
 
@@ -41,8 +41,8 @@ Accountable role: Unknown。
 | 数据库 | SQLite（WAL 模式） | 单实例部署、随 `/data` 备份恢复、无额外服务依赖 |
 | ORM / 迁移 | Drizzle ORM + drizzle-kit | 类型安全、迁移文件可随镜像发布 |
 | Git 操作 | `simple-git` + 受控 `git` CLI 调用 | worktree、分支、commit trailer 操作需要原生 CLI 能力 |
-| 校验 | Zod | 请求体、OpenAPI 能力契约、`work.yml` manifest 校验 |
-| OpenAPI 解析 | `@apidevtools/swagger-parser` | 解析 App 发布的 Agent 专用 OpenAPI 文档 |
+| 校验 | Zod | 请求体与 `work.yml` manifest 校验 |
+| MCP 接入 | `@modelcontextprotocol/sdk` + Ajv 2020 | Streamable HTTP 工具发现与调用；校验工具输入输出 Schema |
 | 日志 | pino | 结构化日志，便于事件与轨迹关联 |
 | 测试 | Vitest + 临时仓库夹具 | 单元与集成测试；Git 与轨迹文件行为使用夹具验证 |
 
@@ -134,12 +134,12 @@ entrypoints/bootstrap 作为组合根，把 adapters 注入 use-cases，并启�
 | updateProposalFromReflection | 将对话结论持续写入 Proposal worktree | AgentRunnerPort、ProposalWorkspacePort |
 | adoptProposal | 在 active 分支创建 commit，更新 active OM | OperatingModelRepository、LockPort |
 | abandonProposal | 删除候选分支与 worktree，保留对话记录 | ProposalWorkspacePort |
-| importCapabilityCatalog | 解析并比较 OpenAPI 目录，产出差异 | CapabilityCatalogRepository |
+| importCapabilityCatalog | 发现 MCP 工具并比较规范化目录，产出差异 | CapabilityCatalogRepository |
 | mergeContribution | 选择性合并个人改动至组织 `main` | OperatingModelRepository |
 
 ### Agent 运行模型（pi-sdk）
 
-依赖基线（2026-10-14）：`@earendil-works/pi-ai` 与 `@earendil-works/pi-coding-agent` 同步精确锁定为 `1.2.0`，传递依赖由 `pnpm-lock.yaml` 固定。当前 SDK 会话显式关闭扩展发现，不自动启用 CLI 的 MCP、Codemode 或 tool search；这些能力需要经 adapter 显式接入并保持既有工具白名单。Pi Durable 暂未接入，评估与验证记录见 [Pi 1.x 升级评估](acceptance/pi-sdk-1x-upgrade.md)。
+依赖基线（2026-10-14）：`@earendil-works/pi-ai` 与 `@earendil-works/pi-coding-agent` 同步精确锁定为 `1.2.0`，传递依赖由 `pnpm-lock.yaml` 固定。当前 SDK 会话显式关闭扩展发现，不自动启用 CLI 的 MCP、Codemode 或 tool search；这些能力需要经 adapter 显式接入，工具权限以 App MCP 为准。Pi Durable 暂未接入，评估与验证记录见 [Pi 1.x 升级评估](acceptance/pi-sdk-1x-upgrade.md)。
 
 两类 agent 共用 pi-sdk 的 `createAgentSession`，差异在 cwd、工具集与系统提示；两者都通过 `AgentRunnerPort` 暴露给 use-cases：
 
@@ -170,13 +170,12 @@ Git 保存 OM 内容与版本；轨迹文件保存 Work 的执行过程；SQLite
 
 | 表 | 关键字段 | 说明 |
 | --- | --- | --- |
-| `users` | `id`、`email`、`role`、`active_branch`、`created_at` | Email 来自 App 身份接口；`role` 为 user/admin |
+| `users` | `id`、`email`、`role`、`status`、`version`、`active_branch`、`created_at` | Email 来自 App 身份接口；`role` 为 user/admin |
 | `works` | `id`、`user_id`、`work_type`、`entity_id`、`status`、`wd_package`、`om_commit_latest`、`trajectory_path`、`trajectory_segment`、`trajectory_offset`、`last_activity_at` | Work 是唯一工作主体；轨迹内容在文件中，表内仅存位置与游标 |
 | `reflections` | `id`、`work_id`(unique)、`lens`、`status`、`transcript_path`、`created_at`、`updated_at` | 与 Work 一对一；对话正文同样以文件保存 |
 | `proposals` | `id`、`reflection_id`、`branch_ref`、`base_commit`、`state`、`adopted_commit`、`updated_at` | state: open/adopted/abandoned；OM 变更内容在 Git 中 |
 | `worktree_leases` | `id`、`proposal_id`、`path`、`holder`、`acquired_at`、`expires_at` | 支撑 worktree 按需创建与回收 |
-| `capability_catalogs` | `id`、`version`、`status`、`spec_hash`、`accepted_by`、`accepted_at` | 仅 accepted 目录进入运行时 |
-| `capabilities` | `id`、`catalog_id`、`operation_id`、`schema_json`、`change_type` | 供 WD 授权与工具注入 |
+| `mcp_tool_snapshots` | `app_id`、`digest`、`snapshot_json`、`discovered_at` | 每轮 tools/list 的不可变快照，仅供追溯，非授权 |
 
 ### 关系要点
 
@@ -190,7 +189,7 @@ Git 保存 OM 内容与版本；轨迹文件保存 Work 的执行过程；SQLite
 * `works(user_id, status)`、`works(work_type, entity_id)`、`works(last_activity_at)`
 * `reflections(work_id)` 唯一索引
 * `proposals(reflection_id, state)`、`worktree_leases(expires_at)`
-* `capability_catalogs(status, version)`
+* `mcp_tool_snapshots(app_id, digest)` 复合主键；触发器禁止更新、删除
 
 ## API Design
 
@@ -216,8 +215,6 @@ Git 保存 OM 内容与版本；轨迹文件保存 Work 的执行过程；SQLite
 | `GET /api/v1/om/versions` | 已采纳版本列表（commit SHA、摘要、时间） |
 | `GET /api/v1/om/tree?commit=` | 指定 commit 的 OM 文件树 |
 | `GET /api/v1/om/file?commit=&path=` | 指定 commit 的文件内容 |
-| `POST /api/v1/admin/capability-catalogs` | 导入候选 OpenAPI 目录并返回差异 |
-| `POST /api/v1/admin/capability-catalogs/{id}/accept` | 接受目录版本 |
 | `GET /api/v1/admin/contributions` | 个人分支与组织 `main` 的差异 |
 | `POST /api/v1/admin/contributions/{id}/merge` | 选择性合并至 `main` |
 
@@ -234,7 +231,7 @@ Git 保存 OM 内容与版本；轨迹文件保存 Work 的执行过程；SQLite
 ### 身份
 
 * App 内嵌 Copilot：前端传递当前 App Access Token；后端调用 App 身份接口换取已验证 Email。
-* Web 工作台：登录方式为 Unknown（对应 PRD 中 D01），实现前需先明确契约。
+* Web 工作台：使用已关联用户的 Email 与独立密码登录。角色、状态、一次性首管理员升级与会话撤销见 [用户管理契约](user-administration.md)。
 * Airic 不把 App Access Token 当作独立 Airic 账号；Token 不写入数据库、轨迹文件、日志与 Git。
 
 ### 会话与令牌处理
@@ -258,18 +255,15 @@ Git 保存 OM 内容与版本；轨迹文件保存 Work 的执行过程；SQLite
 | --- | --- | --- |
 | 身份接口 | Airic → App | 用当前 Token 换取已验证 Email |
 | 页面上下文接口 | App → Airic | 页面说明、文本数据、`work_type`、`entity_id` |
-| Command API | Airic → App | 仅调用已接受目录且 WD 允许的操作 |
+| Command API | Airic → App | 调用当前用户 MCP 发布的工具，由 App 判定业务权限 |
 | 命令结果查询 | Airic → App | 按幂等键查询原命令结果，用于恢复未知状态 |
 | 前端嵌入 | App 前端 | Copilot 面板、上下文传递、成功后刷新页面数据 |
 
 Command API 调用规则：携带幂等键与预期版本；网络超时或响应丢失不得判定为失败；成功以 App 回执为准，回执内容写入轨迹文件。
 
-### 能力目录导入
+### MCP 工具发现
 
-1. 管理员上传或指定 App 发布的 Agent 专用 OpenAPI 文档。
-2. 服务端解析并与当前已接受目录比较，输出新增、修改、删除及受影响的 WD package。
-3. 接受前运行时继续使用旧目录；接受后仍需 `work.yml` 显式授权。
-4. 能力 schema 转换为 pi-sdk 工具定义时进行输入输出约束校验。
+每轮以当前 App 身份动态读取 MCP 工具并固定快照；不设置独立目录审批或 WD 工具白名单。OM 编辑仅校验工作方法结构和知识引用。协议、数据与验证闭包见 [MCP 工具发现契约](contracts/mcp-tool-discovery.md)。旧候选/审批表仅保留历史。
 
 ### Git 与 OM 版本
 

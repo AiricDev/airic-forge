@@ -1,3 +1,4 @@
+import { registerUserHttp } from "./user-http.js";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
@@ -20,9 +21,11 @@ const bearer = (value: unknown): string => {
 };
 
 export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
+  runtime.bindUserLifecycle();
   const app = Fastify({ logger: true, bodyLimit: 9 * 1024 * 1024, trustProxy: runtime.config.trustedProxy ?? false });
   void app.register(cors, { origin: runtime.config.allowedOrigin, credentials: true });
   void app.register(websocket);
+  registerUserHttp(app, runtime);
   registerReflectionHttp(app, runtime);
   registerOmHttp(app, runtime);
   registerGitHttp(app, runtime);
@@ -78,22 +81,8 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "PasswordSetupFailed" }); }
   });
 
-  app.post("/api/v1/catalog/import", async (request, reply) => {
-    try { return reply.code(201).send(await runtime.useCases.importCatalog(String(request.headers["x-forge-ticket"] ?? ""))); }
-    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "CatalogImportFailed" }); }
-  });
 
-  app.post<{ Params: { digest: string } }>("/api/v1/catalog/:digest/accept", async (request, reply) => {
-    try { return reply.send(await runtime.useCases.acceptCatalog(String(request.headers["x-forge-ticket"] ?? ""), request.params.digest)); }
-    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "CatalogAcceptanceFailed" }); }
-  });
 
-  app.get("/api/v1/catalog", async (request, reply) => {
-    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
-    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
-    try { return reply.send(await runtime.useCases.catalogOverview(actorId)); }
-    catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "Forbidden" }); }
-  });
 
   app.get("/api/v1/instance-settings", async (request, reply) => {
     const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
@@ -105,17 +94,13 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     }
   });
 
-  app.post<{ Params: { digest: string } }>("/api/v1/catalog/:digest/accept-from-workspace", async (request, reply) => {
-    const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
-    if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
-    try { return reply.send(await runtime.useCases.acceptCatalogFromWorkspace(actorId, request.params.digest)); }
-    catch (error) { return reply.code(error instanceof Error && error.message === "CatalogCandidateNotFound" ? 404 : 403).send({ error: error instanceof Error ? error.message : "CatalogAcceptanceFailed" }); }
-  });
 
   app.post<{ Body: { email: string; password: string } }>("/api/v1/auth/login", async (request, reply) => {
     const user = await runtime.useCases.login(request.body.email, request.body.password);
     if (!user) return reply.code(401).send({ error: "InvalidCredentials" });
-    const token = runtime.webSessions.issue(user.id);
+    let token: string;
+    try { token = await runtime.useCases.users.withActive(user.id, async () => runtime.webSessions.issue(user.id)); }
+    catch { return reply.code(401).send({ error: "InvalidCredentials" }); }
     reply.header("Set-Cookie", sessionCookie(token, request.protocol === "https"));
     const testIdentitySwitch = runtime.config.testIdentitySwitch && user.role === "admin"
       ? { originalUserId: user.id, users: await runtime.useCases.listUsers(user.id) } : undefined;
@@ -130,7 +115,7 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     if (!user) return reply.code(401).send({ error: "Unauthorized" });
     const originalUserId = runtime.webSessions.originalUserId(token);
     const originalUser = originalUserId ? await runtime.useCases.webUser(originalUserId) : undefined;
-    const testIdentitySwitch = runtime.config.testIdentitySwitch && originalUser?.role === "admin"
+    const testIdentitySwitch = runtime.config.testIdentitySwitch && originalUser?.role === "admin" && originalUser.status === "active"
       ? { originalUserId, users: await runtime.useCases.listUsers(originalUser.id) } : undefined;
     return reply.send({ user, ...(testIdentitySwitch ? { testIdentitySwitch } : {}) });
   });
@@ -141,9 +126,9 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     const originalUserId = runtime.webSessions.originalUserId(token);
     if (!originalUserId) return reply.code(401).send({ error: "Unauthorized" });
     const originalUser = await runtime.useCases.webUser(originalUserId);
-    if (originalUser?.role !== "admin") return reply.code(403).send({ error: "Forbidden" });
+    if (originalUser?.role !== "admin" || originalUser.status !== "active") return reply.code(403).send({ error: "Forbidden" });
     const user = await runtime.useCases.webUser(request.body?.userId);
-    if (!user) return reply.code(404).send({ error: "UserNotFound" });
+    if (!user || user.status !== "active") return reply.code(404).send({ error: "UserNotFound" });
     runtime.webSessions.switchUser(token, user.id);
     return reply.send({ user });
   });
@@ -402,6 +387,8 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
   app.after(() => app.get("/acp", { websocket: true }, (socket, request) => {
     if (request.headers.origin && request.headers.origin !== runtime.config.allowedOrigin) { socket.close(1008, "Origin not allowed"); return; }
     let ticket = "";
+    const stopWatching = runtime.sessions.onRemove(removed => { if (ticket === removed) setImmediate(() => socket.close(4003,"User unavailable")); });
+    socket.on("close", stopWatching);
     const send = (value: unknown) => { if (socket.readyState === 1) socket.send(JSON.stringify(value)); };
     socket.on("close", () => { if (ticket) void runtime.useCases.disconnectAcp(ticket); });
     socket.on("message", async (raw: unknown) => {

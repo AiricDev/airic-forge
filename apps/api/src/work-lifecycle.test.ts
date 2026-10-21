@@ -1,3 +1,4 @@
+import { testUser } from "./test-users.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -13,17 +14,16 @@ import { buildServer } from "./server.js";
 
 function fixture(agents: AgentRunnerPort, workContext?: WorkContextPorts) {
   const root = mkdtempSync(join(tmpdir(), "forge-work-lifecycle-"));
-  const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve("../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost", initialAdminEmails: new Set() });
+  const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve("../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost", });
   let email = "author@example.invalid";
   let actorId = "author";
   let submissions = 0;
   runtime.app.identity = async () => ({ appId: "certlab", organizationId: "synthetic-org", appUserId: actorId, email, displayName: "Author" });
   runtime.app.reportContext = async (_token, id) => ({ resource: { namespace: "certlab", resourceType: "report", resourceId: id, projectId: "project" } });
-  runtime.app.catalog = async () => testCatalog();
+  runtime.app.discoverTools = async () => testCatalog();
   runtime.app.query = async () => ({ assessment: { id: "assessment", report_id: "report", record_no: submissions } });
-  const useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, app: runtime.app, organizationId: "synthetic-org", catalogs: runtime.db, agents, workContext, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: new Set() });
-  const owner = runtime.db.ensureUser(email, false);
-  const catalog = testCatalog(); runtime.db.saveCandidate(catalog); runtime.db.accept("certlab", catalog.digest, owner.id);
+  const useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, app: runtime.app, organizationId: "synthetic-org", toolSnapshots: runtime.db, agents, workContext, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, });
+  const owner = testUser(runtime.db, email, false);
   return { root, runtime, useCases, submitted: () => submissions, changeActor: (id: string) => { actorId = id; }, changeEmail: (value: string) => { email = value; }, commit: () => ++submissions, close: () => { runtime.db.close(); rmSync(root, { recursive: true, force: true }); } };
 }
 
@@ -398,4 +398,47 @@ test("an agent failure after a successful tool remains a distinct failed step", 
     assert.equal(steps.at(-1)?.status,"failed");
     assert.equal(steps.at(-1)?.code,"SyntheticResultInvalid");
   } finally { f.close(); }
+});
+
+test("ordinary users discover tools each Turn, ignore WD scope, pin snapshots and never fall back on discovery failure", async () => {
+  let release!:()=>void, entered!:()=>void;
+  const barrier=new Promise<void>(yes=>{release=yes;}), ready=new Promise<void>(yes=>{entered=yes;});
+  const observed:string[][]=[];
+  const f=fixture({runWork:async({tools})=>{
+    observed.push(tools.map(tool=>tool.capability.id));
+    if(observed.length===1){entered();await barrier;}
+    return {text:"Discovered tools used"};
+  }});
+  let failed=false;
+  const snapshot=testCatalog("tools-first");
+  snapshot.tools.push({id:"report.dynamic-query",title:"Dynamic",description:"From MCP",kind:"query",inputSchema:{},outputSchema:{}});
+  f.runtime.app.discoverTools=async(token)=>{assert.equal(token,"ordinary-user-token");if(failed)throw Error("McpDiscoveryUnavailable");return snapshot;};
+  try {
+    const session=await f.useCases.bootstrap({token:"ordinary-user-token",reportId:"report"});
+    assert.equal(session.user.role,"user");
+    // An old WD's empty allowlist is inert; the active Git revision is never rewritten.
+    const original=f.runtime.om.workDefinition.bind(f.runtime.om);
+    f.runtime.om.workDefinition=(revision,id)=>({...original(revision,id),capabilities:{allowed:[]}});
+    const running=f.useCases.startTurn(session.ticket,"First discovery");await ready;
+    snapshot.digest="tools-next";snapshot.tools.push({id:"report.next-query",title:"Next",description:"Newly published",kind:"query",inputSchema:{},outputSchema:{}});
+    release();const first=await running;
+    assert(observed[0].includes("report.dynamic-query"));assert(!observed[0].includes("report.next-query"));
+    assert.equal(first.turn.catalogDigest,"tools-first");
+    const firstSaved=f.runtime.db.toolSnapshot("certlab","tools-first")!;
+    assert(firstSaved.tools.some(tool=>tool.id==="report.dynamic-query"));assert(!firstSaved.tools.some(tool=>tool.id==="report.next-query"));
+    const progress=(await f.useCases.sessionHistory(session.ticket)).progress;
+    if(progress.checkpoint && progress.waiting)await f.useCases.checkpointFeedback(session.ticket,{checkpointId:progress.checkpoint.id,kind:"approve",note:"Synthetic review"},"next-tools-request");
+    const next=await f.useCases.startTurn(session.ticket,"Discover updated tools");
+    assert.equal(next.turn.catalogDigest,"tools-next");assert(observed[1].includes("report.next-query"));
+    const nextProgress=(await f.useCases.sessionHistory(session.ticket)).progress;
+    if(nextProgress.checkpoint && nextProgress.waiting)await f.useCases.checkpointFeedback(session.ticket,{checkpointId:nextProgress.checkpoint.id,kind:"approve",note:"Synthetic review"},"fail-tools-request");
+    failed=true;await assert.rejects(f.useCases.startTurn(session.ticket,"Must not use previous tools"),/McpDiscoveryUnavailable/);
+    assert.equal(observed.length,2);assert.equal(f.runtime.db.turnsForWork(session.work.id).length,2);
+    assert(f.runtime.db.toolSnapshot("certlab","tools-first"));assert(f.runtime.db.toolSnapshot("certlab","tools-next"));
+    Object.assign(f.runtime,{useCases:f.useCases});
+    const app=buildServer(f.runtime);
+    try {
+      for(const [method,url] of [["GET","/api/v1/catalog"],["POST","/api/v1/catalog/import"],["POST","/api/v1/catalog/old/accept"],["POST","/api/v1/catalog/old/accept-from-workspace"]] as const)assert.equal((await app.inject({method,url})).statusCode,404);
+    } finally {await app.close();}
+  } finally {release();f.close();}
 });

@@ -3,9 +3,6 @@ export type LiveWorkDefinition = {
   id: string;
   title: string;
   description: string;
-  capabilities: {
-    allowed: string[];
-  };
   documents: Array<{
     id: string;
     path: string;
@@ -19,13 +16,15 @@ export type LiveWorkDefinition = {
   };
   completion: {
     mode?: string;
-    requiredCapabilities: string[];
   };
 };
 export type User = {
   id: string;
   email: string;
   role: "user" | "admin";
+  status: "active" | "draining" | "disabled";
+  version: number;
+  passwordConfigured: boolean;
   activeBranch: string;
 };
 export type TestIdentitySwitch = { originalUserId: string; users: User[] };
@@ -122,25 +121,6 @@ export type Baseline = {
   activity: Record<string, number | null>;
   feedback: Record<WorkFeedbackKind, number>;
   interpretation: string;
-};
-export type Capability = {
-  id: string;
-  kind: string;
-  title: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-  outputSchema: Record<string, unknown>;
-};
-export type Catalog = {
-  appId: string;
-  digest: string;
-  domainRelease: string;
-  capabilities: Capability[];
-  acceptedAt?: string;
-};
-export type CatalogOverview = {
-  accepted: Catalog | null;
-  candidates: Catalog[];
 };
 export type Contribution = {
   id: string;

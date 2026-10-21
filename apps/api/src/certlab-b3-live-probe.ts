@@ -19,7 +19,7 @@ let lostCreation = false;
 let suppressRecovery = true;
 let taskId = "";
 const app: AppPort = {
-  identity: (token) => client.identity(token), catalog: (token) => client.catalog(token),
+  identity: (token) => client.identity(token), discoverTools: (token) => client.discoverTools(token),
   reportContext: (token, id) => client.reportContext(token, id),
   query: (token, id, input) => client.query(token, id, input),
   prepareCommand: (token, id, input) => client.prepareCommand(token, id, input),
@@ -38,7 +38,7 @@ const app: AppPort = {
 const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"),
   seedProjectDir: resolve(scene.forgeRoot, "seed/certlab"), webDistDir: join(root, "web"),
   certLabUrl: scene.origin, organizationId: scene.organizationId, allowedOrigin: "http://localhost",
-  initialAdminEmails: new Set(["synthetic-engineer@example.invalid"]) });
+  });
 try {
   let turns = 0;
   const agents: AgentRunnerPort = { runWork: async ({ tools, checkpoint, context }) => {
@@ -90,13 +90,12 @@ try {
     return { text: "Goal remains incomplete" };
   } };
   const useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, app,
-    organizationId: scene.organizationId, catalogs: runtime.db, agents, sessions: runtime.sessions,
+    organizationId: scene.organizationId, toolSnapshots: runtime.db, agents, sessions: runtime.sessions,
     passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword },
-    trajectories: runtime.trajectories, system: systemPort, initialAdminEmails: runtime.config.initialAdminEmails });
+    trajectories: runtime.trajectories, system: systemPort,  });
   const session = await useCases.bootstrap({ token: scene.token, reportId: scene.reportId });
   const head = runtime.om.head(`users/${session.user.id}`);
-  const catalog = await useCases.importCatalog(session.ticket);
-  await useCases.acceptCatalog(session.ticket, catalog.digest);
+  const catalog = await runtime.app.discoverTools(scene.token);
   await useCases.startTurn(session.ticket, "Register required actual test");
   let history = await useCases.sessionHistory(session.ticket);
   assert.equal(history.progress.waiting, true);

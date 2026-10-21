@@ -1,8 +1,13 @@
-# AiricForge P0 single-host deployment
+# Historical AiricForge P0 single-host deployment
+
+This CertReporter Compose example is an archived P0 deployment record. It does not
+configure the current CertLab MCP integration and must not be used to deploy the
+current runtime. See [CertLab MCP integration](../../docs/certlab-integration.md)
+and the repository-root `docker-compose.yml` for the current configuration.
 
 This example runs one CertReporter and one independent AiricForge container. It uses local bind mounts for the three durable roots: `state/forge-project` (`/project`), `state/forge-data` (`/data`), and `state/certreporter-data` (CertReporter `/data`). Keep `.env` and backup archives outside Git and restrict their filesystem access. Back up the persistent `DJANGO_SECRET_KEY` separately; it is required to recover CertReporter sessions and signed data.
 
-1. Copy `.env.example` to `.env`. Select a **compatible, pinned** CertReporter image containing the Forge Report Drawer and `/airic/v1` endpoints. Its frontend server must proxy `/airic/v1` to Django for Forge-to-App calls. Set the persistent Django secret, initial Forge admin emails, and Forge model configuration. The example uses HTTP bound to localhost; put TLS and hostnames in front of both services for a remote deployment and adjust allowed origins and secure cookies accordingly.
+1. Copy `.env.example` to `.env`. Select a **compatible, pinned** CertReporter image containing the Forge Report Drawer and `/airic/v1` endpoints. Its frontend server must proxy `/airic/v1` to Django for Forge-to-App calls. Set the persistent Django secret, Forge model configuration (current account initialization is defined in [user administration](../../docs/user-administration.md)). The example uses HTTP bound to localhost; put TLS and hostnames in front of both services for a remote deployment and adjust allowed origins and secure cookies accordingly.
 2. Run `docker compose --env-file .env up -d --build` here. Check `docker compose ps`, `http://127.0.0.1:3000/api/v1/health/` and `http://127.0.0.1:4175/health`. Open a Report or editable Report Type in CertReporter, then bootstrap its Forge assistant. Both Drawers talk to Forge over `/forge` and ACP WebSocket.
 3. The CertReporter image contains no legacy Airic sidecar. Forge owns both `report-authoring` and `report-type-definition` Work. PDF, DOCX and TXT attachments are extracted to bounded text for the next Turn only; the App bearer token and extracted text remain in Forge process memory.
 

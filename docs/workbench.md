@@ -1,5 +1,7 @@
 # AiricForge 工作台
 
+账户角色、初始化、停用收尾及管理接口见 [用户管理契约](user-administration.md)。
+
 生产前端位于 `apps/workbench/src`，使用 React、Material UI 和 assistant-ui。外部 `prototype/` 仅作设计参考；删除该目录不会影响构建和工作台功能。历史 MUI 验收见 `acceptance/mui-migration-record.md`；当前恢复记录见 `acceptance/workbench-restoration-record.md`。
 
 ## 构建与启动
@@ -8,10 +10,30 @@
 
 `FORGE_WEB_DIST_DIR` 可显式指定产物目录的绝对路径。`/` 提供工作台，`/works` 和 `/works/:workId` 支持刷新及深链接，query 保留所有者、页码、类型、状态、Reflection 和引用事件定位。开发可执行 `pnpm --filter @airic-forge/workbench dev`，API 请求代理到 4175；Reflection 的写请求仍服从后端同源校验，完整浏览器验证使用 API 同源的构建页面。
 
+## 本地设置或重置用户密码
+
+由能访问实例数据目录的本机运维人员执行。先停止 Forge，并在仓库根构建：
+
+```sh
+pnpm build
+pnpm user:set-password --email user@example.com
+```
+
+命令从根 `.env` 读取 `FORGE_DATA_DIR`，也可显式加
+`--data-dir /absolute/forge/data`。默认隐藏输入密码并二次确认，至少 12 个字符；
+不接受密码命令参数或密码环境变量。自动化可将秘密管理器的输出直接通过管道交给
+`--password-stdin`，只接受一行 UTF-8（最多 4096 字节），不会回显。
+不要把实际密码写进 shell 命令、历史、脚本或日志。
+
+仅设置/重置已存在的 Forge 用户，不创建账号、不授予管理员、不修改 CertLab 密码，
+也不初始化或迁移应用数据库。
+用户须先通过 CertLab 连接 Forge 建立账号。完成后重启 Forge，再登录。
+密码变更本身不撤销内存中的既有登录/ACP 会话；停服与重启使这些会话失效。
+
 ## 页面与职责
 
-- `src/workbench/WorkspaceApp.tsx`：登录、账户菜单、MUI 导航和按需加载。管理员的成效基线位于整个导航最前；其余主导航提供工作台、个人 OM、Work 与轨迹、改进工作方式、本地 agent 与 Git，管理区提供组织贡献、用户、实例设置及 Lens 管理。不再设置组织治理汇总页。能力目录位于实例设置内，不占独立主导航入口；成效基线仍仅管理员可访问。
-- `pages/AdminOverviewPages.tsx` 的实例设置：管理员只读查看实际 OM Git 仓库、运行数据及个人 worktree 根目录，以及集成 App、组织、MCP 地址和传输类型；另一个分类管理能力目录及接受候选。Lens 管理独立于实例设置。配置接口 `/api/v1/instance-settings` 只返回明确允许展示的字段，不暴露密钥或完整运行配置。
+- `src/workbench/WorkspaceApp.tsx`：登录、账户菜单、MUI 导航和按需加载。管理员的成效基线位于整个导航最后；其余主导航提供工作台、个人 OM、Work 与轨迹、改进工作方式、本地 agent 与 Git，管理区提供组织贡献、用户、实例设置及 Lens 管理。不再设置组织治理汇总页。实例设置不再提供能力目录标签页；成效基线仍仅管理员可访问。
+- `pages/AdminOverviewPages.tsx` 的实例设置：管理员只读查看实际 OM Git 仓库、运行数据及个人 worktree 根目录，以及集成 App、组织、MCP 地址和传输类型。Lens 管理独立于实例设置。配置接口 `/api/v1/instance-settings` 只返回明确允许展示的字段，不暴露密钥或完整运行配置。
 - `pages/WorkListPage.tsx` / `pages/WorkDetailPage.tsx`：报告名称、筛选、分页、Work 对话和 Reflection 入口，以及显式结果评价。
 - `ReflectionChat.tsx` / `reflection-stream.ts`：连续 Reflection 对话、三种 Lens、SSE 快照、工具状态、停止、恢复和原请求 ID 核对。浏览器断开只移除观察者，运行由服务端管理；权限失效停止自动连接。状态通知在最新回复附近显示，不记录或渲染私有推理。
 - `Conversation.tsx` / `trajectory.ts`：原始 Work 轨迹的展示投影。历史流式片段按 Turn 合并；完成 Turn 使用其最终回答；引用原片段时仍能定位到原事件。存储历史不改写。

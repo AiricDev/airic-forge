@@ -225,8 +225,8 @@ export function WorkConversation({
       {turns.slice(-visible).map((turn) => (
         <Stack key={turn.id} spacing={2}>
           <Typography variant="subtitle2" sx={{ overflowWrap: "anywhere" }}>
-            Turn {turn.sequence} · {turn.status} · OM {turn.omRevision} ·
-            能力目录 {turn.catalogDigest} · 上下文 {turn.contextDigest}
+            Turn {turn.sequence} · {turn.status} · OM {turn.omRevision} · MCP
+            工具快照 {turn.catalogDigest} · 上下文 {turn.contextDigest}
           </Typography>
           {renderEvents(events.filter((e) => e.turnId === turn.id))}
         </Stack>
