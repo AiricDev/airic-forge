@@ -20,7 +20,6 @@ export interface ForgeConfig {
   modelId?: string;
   modelApiKey?: string;
   modelBaseUrl?: string;
-  contextInputTokens?: number;
   contextOutputTokens?: number;
 }
 
@@ -42,7 +41,6 @@ export function loadConfig(env = process.env): ForgeConfig {
     modelId: env.FORGE_MODEL_ID,
     modelApiKey: env.FORGE_MODEL_API_KEY,
     modelBaseUrl: env.FORGE_MODEL_BASE_URL,
-    contextInputTokens: positiveBudget(env.FORGE_CONTEXT_INPUT_TOKENS, 256_000),
     contextOutputTokens: positiveBudget(env.FORGE_CONTEXT_OUTPUT_TOKENS, 8_000),
   };
 }

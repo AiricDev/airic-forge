@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ForgeUseCases, type AgentRunnerPort } from "@airic-forge/domain";
 import { ForgeRuntime } from "./runtime.js";
-import { toPiTool } from "./pi-work-agent.js";
+import { toMcpTool } from "./work-mcp-bridge.js";
 import { hashPassword, verifyPassword } from "./auth.js";
 import { systemPort } from "./system-port.js";
 
@@ -35,8 +35,8 @@ const agents: AgentRunnerPort = { runWork: async ({ tools, context, documents, l
   assert.equal(pdf.status, "ready");
   assert.match(String(pdf.text), /Synthetic page 2/);
   assert.equal((pdf.source as { is_current: boolean }).is_current, turns === 0);
-  const pi = toPiTool({ capability: pdfTool.capability, invoke: async () => pdf }, true);
-  const piResult = await pi.execute("synthetic", {}, new AbortController().signal, undefined, {} as Parameters<typeof pi.execute>[4]);
+  const pi = toMcpTool({ capability: pdfTool.capability, invoke: async () => pdf }, true);
+  const piResult = await pi.invoke({});
   assert.equal(piResult.content[1].type, "image");
   pixelsDelivered++;
   if (turns++ === 0) {

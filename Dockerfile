@@ -21,6 +21,7 @@ COPY --from=build /app/apps/api/node_modules /app/apps/api/node_modules
 COPY --from=build /app/packages/domain/dist /app/packages/domain/dist
 COPY --from=build /app/packages/domain/package.json /app/packages/domain/package.json
 COPY --from=build /app/apps/api/dist /app/apps/api/dist
+COPY --from=build /app/apps/api/skills /app/apps/api/skills
 COPY --from=build /app/apps/api/package.json /app/apps/api/package.json
 COPY --from=build /app/apps/workbench/public /app/apps/workbench/public
 COPY --from=build /app/seed /app/seed

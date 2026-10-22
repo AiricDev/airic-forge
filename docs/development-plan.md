@@ -122,3 +122,11 @@
 已从本地早期提交恢复生产前端到 `apps/workbench`，外部原型不再承载生产源码。恢复工作台、Work/轨迹、Reflection、Proposal、个人/组织 OM 与管理页面；连续 Reflection 接入现有流式运行接口，并保留原作者治理边界、原请求核对、停止和断线恢复。历史分片合并采用展示投影，保留原始证据定位。
 
 本次不修改 OM active、业务数据、模型配置和领域权限。工程与浏览器结果记录在 `acceptance/workbench-restoration-record.md`，行为和测试映射见该记录及 `acceptance/workbench-restoration.feature`。
+
+2026-10-22：修复重复资料读取改变临时投影后使已有摘要失效的问题。保持256K预算及80%整理阈值，通过原始消息指纹与近期消息去重分离恢复摘要复用；完整工具边界、精确命令回执和来源身份约束不变。合成复现追加整理次数由12降至1；真实 Pi SDK 本地模拟链覆盖34次读取，无外部模型调用。契约与行为场景见 `contracts/context-projection.md` 和 `acceptance/context-projection.feature`。
+
+- 阅读循环后续修正：新增Work源关联阅读笔记、跨Turn恢复/分页检索及成果优先压缩；不包含OCR或Agent底座替换。以合成图片读取→压缩→取回早期发现→保存草稿验证实际SDK链路，详见`docs/contracts/context-projection.md`。
+
+2026-10-23：评估与Reflection切换至Pi原生会话、自动压缩、工作文件、Skills与延迟MCP；删除上面2026-10-22的临时投影与结构化笔记执行方案。其记录仅为历史，不是当前产品逻辑。
+
+原生执行验收完成：Domain 23通过，API 140通过/1跳过；授权真实PDF在临时报告中以22次读取（21页+1次局部）保存9.6.1草稿并交接，用时约3分9秒。详见`acceptance/pi-native-record.md`。

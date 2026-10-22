@@ -33,3 +33,19 @@
 | 交付与呈现 | delivery / server 与工作台 | 旧目录接口 404、WD 预览和 Turn 快照标签、浏览器回归 |
 
 边界检查：CertLab 的 MCP dispatch 每次认证原 Token、加载 actor，再调用原 query/command 用例；业务权限和专业边界不由 Forge 角色或 WD 授予。此行为变更已获用户明确授权，无待决定的产品规则；不新增工具平台、不修改 CertLab 专业权限或不可变历史。
+
+## PDF visual reading (2026-10-22)
+
+CertLab PDF reads supply page pixels by default unless `include_image=false`; other formats retain
+explicit opt-in images. A `region` selects a normalized visible-page rectangle with top-left origin.
+The App validates geometry and renders from the immutable PDF; text remains page-wide. The client
+checks `source.region` against the request and `source.text_scope=page` before forwarding pixels.
+
+`materialObservation` retains region/text scope without persisting text or pixels. Context duplicate
+replacement keys include region, embedded-image index and pixel hash: two regions with identical page
+text are distinct observations. True Pi image blocks and text-only-model limitations remain unchanged.
+The tool snapshot/digest changes are discovered automatically and pinned at the next Turn; no manual
+acceptance is required. This change never edits historical approval rows or invokes a provider on
+existing customer evidence.
+
+Verification: `certlab-contract.test.ts`, `context-budget.test.ts`, `material-tool-content.test.ts`.

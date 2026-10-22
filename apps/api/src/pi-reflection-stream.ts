@@ -29,9 +29,9 @@ export function connectReflectionStream(
       if (pending && !timer) timer = setTimeout(flush, 50);
     }
     if (event.type === "message_end") flush();
-    if ((event.type === "tool_execution_start" || event.type === "tool_execution_end") && ["read_work_trajectory", "read_candidate_file", "write_candidate_file"].includes(event.toolName)) {
+    if ((event.type === "tool_execution_start" || event.type === "tool_execution_end") && ["read_work_trajectory", "read_candidate_file", "write_candidate_file"].includes(event.toolName.replace(/^mcp__work__/, ""))) {
       flush();
-      input.onProgress?.({ type: "tool.status", tool: { id: event.toolCallId, name: event.toolName as ReflectionToolName, status: event.type === "tool_execution_start" ? "running" : event.isError ? "failed" : "completed" } });
+      input.onProgress?.({ type: "tool.status", tool: { id: event.toolCallId, name: event.toolName.replace(/^mcp__work__/, "") as ReflectionToolName, status: event.type === "tool_execution_start" ? "running" : event.isError ? "failed" : "completed" } });
     }
   });
   const abort = () => { aborting = session.abort().catch(() => {}); };

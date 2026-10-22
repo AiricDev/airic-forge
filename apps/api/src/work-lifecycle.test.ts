@@ -4,7 +4,7 @@ import test from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { ForgeUseCases, type AgentRunnerPort, type WorkContextPorts } from "@airic-forge/domain";
+import { ForgeUseCases, type AgentRunnerPort } from "@airic-forge/domain";
 import { ForgeDatabase } from "./database.js";
 import { ForgeRuntime } from "./runtime.js";
 import { testCatalog } from "./certlab-test-catalog.js";
@@ -12,7 +12,7 @@ import { hashPassword, verifyPassword } from "./auth.js";
 import { systemPort } from "./system-port.js";
 import { buildServer } from "./server.js";
 
-function fixture(agents: AgentRunnerPort, workContext?: WorkContextPorts) {
+function fixture(agents: AgentRunnerPort) {
   const root = mkdtempSync(join(tmpdir(), "forge-work-lifecycle-"));
   const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve("../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost", });
   let email = "author@example.invalid";
@@ -22,7 +22,7 @@ function fixture(agents: AgentRunnerPort, workContext?: WorkContextPorts) {
   runtime.app.reportContext = async (_token, id) => ({ resource: { namespace: "certlab", resourceType: "report", resourceId: id, projectId: "project" } });
   runtime.app.discoverTools = async () => testCatalog();
   runtime.app.query = async () => ({ assessment: { id: "assessment", report_id: "report", record_no: submissions } });
-  const useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, app: runtime.app, organizationId: "synthetic-org", toolSnapshots: runtime.db, agents, workContext, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, });
+  const useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, app: runtime.app, organizationId: "synthetic-org", toolSnapshots: runtime.db, agents, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, });
   const owner = testUser(runtime.db, email, false);
   return { root, runtime, useCases, submitted: () => submissions, changeActor: (id: string) => { actorId = id; }, changeEmail: (value: string) => { email = value; }, commit: () => ++submissions, close: () => { runtime.db.close(); rmSync(root, { recursive: true, force: true }); } };
 }
@@ -308,53 +308,9 @@ test("B3 command preparation persists the original scoped locator and never repl
   } finally { f.close(); }
 });
 
-test("100-Turn Work retains corrections/current facts and pauses without replay when summary fails", async () => {
-  const cache = new Map<string, import("@airic-forge/domain").ContextSummary>();
-  let calls = 0, runs = 0, fail = false, writes = 0, expectedGoal = "";
-  const context: WorkContextPorts = {
-    // This fixture intentionally exercises compaction independently of the 256k production default.
-    inputTokens: 32000,
-    summaries: {read: async key => cache.get(key), write: async (key, summary) => {cache.set(key, summary);}},
-    summarizer: {modelFingerprint: "synthetic-model", summarize: async ({messages}) => {
-      calls++; if (fail) throw new Error("ContextSummaryFailed");
-      return `讨论来源 ${messages[0].eventId} 至 ${messages.at(-1)!.eventId}，尚未专业确认。`;
-    }},
-  };
-  const f = fixture({runWork: async input => {
-    runs++;
-    assert.equal(input.context.workGoal, expectedGoal);
-    assert.equal(input.context.currentMarker, runs);
-    if (runs > 1) assert.ok(JSON.stringify(input.context.workFacts).includes("exact human correction"));
-    assert.ok(input.readHistory && (await input.readHistory(0, 1)).length === (runs > 1 ? 1 : 0));
-    if (runs === 1) {
-      const result = await input.tools.find(t => t.capability.id === "assessment.start")!.invoke({assessment_id:"assessment",expected_record_no:0});
-      assert.equal(result.status,"committed");
-    }
-    return {text:`Round ${runs}: ` + "讨论实际限制并保持待核对。".repeat(60)};
-  }}, context);
-  f.runtime.app.reportContext = async (_token, id) => ({resource:{namespace:"certlab",resourceType:"report",resourceId:id,projectId:"project"},currentMarker:runs+1});
-  f.runtime.app.submitCommand = async (_token, _id, body) => {writes++;return {status:"committed",receipt:{commandId:body.commandId,status:"committed"}};};
-  try {
-    const session = await f.useCases.bootstrap({token:"synthetic",reportId:"report"});
-    expectedGoal = session.work.goal!;
-    for(let index=0; index<100; index++) {
-      await f.useCases.startTurn(session.ticket, `继续核对 ${index}`);
-      const snapshot=await f.useCases.sessionHistory(session.ticket);
-      await f.useCases.checkpointFeedback(session.ticket,{checkpointId:snapshot.progress.checkpoint!.id,kind:index===0?"correct":"approve",note:index===0?"exact human correction":"checked"},`ack-${index}`);
-    }
-    const before=await f.useCases.sessionHistory(session.ticket);
-    assert.ok(calls>0 && cache.size>0); assert.equal(writes,1);
-    fail=true;cache.clear();
-    await assert.rejects(()=>f.useCases.startTurn(session.ticket,"继续原目标"),/ContextSummaryFailed/);
-    const after=await f.useCases.sessionHistory(session.ticket);
-    const activity = after.events.filter(event => event.turnId === after.turns.at(-1)?.id).map(event => event.payload.activity).filter(Boolean).at(-1) as {phase: string; status: string; code: string};
-    assert.equal(activity.phase, "context"); assert.equal(activity.status, "failed"); assert.equal(activity.code, "ContextSummaryFailed");
-
-    assert.equal(runs,100);assert.equal(writes,1);
-    assert.deepEqual(after.events.filter(e=>before.events.some(old=>old.id===e.id)),before.events);
-    assert.equal(after.turns.at(-1)!.status,"failed");
-    assert.ok(after.events.some(e=>e.payload.contextStatus==="failed"));assert.equal(cache.size,0);
-  } finally {f.close();}
+test("successive Turns keep exact corrections and execution scope without rebuilding conversation memory",async()=>{
+  let runs=0;const f=fixture({runWork:async input=>{runs++;assert.equal(input.scope.ownerUserId,(await f.runtime.db.work(input.scope.workId))!.ownerUserId);assert.ok(input.scope.omRevision&&input.scope.catalogDigest);assert.equal('conversation' in input,false);if(runs>1)assert.ok(JSON.stringify(input.context.workFacts).includes('exact human correction'));return {text:'Read-only step done'};}});
+  try{const boot=await f.useCases.bootstrap({token:'synthetic',reportId:'report'});for(let i=0;i<3;i++){await f.useCases.startTurn(boot.ticket,'Continue');const state=await f.useCases.sessionHistory(boot.ticket);await f.useCases.checkpointFeedback(boot.ticket,{checkpointId:state.progress.checkpoint!.id,kind:'correct',note:'exact human correction'},'ack-'+i);}assert.equal(runs,3);}finally{f.close();}
 });
 
 test("missing independent workspace is explicit JSON 404 while App bootstrap remains usable",async()=>{

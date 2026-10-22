@@ -349,3 +349,19 @@ test("concurrent MCP operations never share bearer credentials between users", a
     assert.deepEqual(seen, new Set(["Bearer user-one", "Bearer user-two"]));
   } finally { await app.close(); }
 });
+test("PDF defaults include pixels and bind magnified region identity; explicit text-only rejects pixels", async () => {
+  const region = {left: 0, top: 0, right: 0.5, bottom: 1};
+  const valid = {status: "ready", text: "Page context", warnings: [],
+    source: {revision_id: "revision", page: 201, sha256: "a".repeat(64), asset_id: "asset", project_id: "project",
+      format: "pdf", text_scope: "page", region},
+    image: {mimeType: "image/png", data: Buffer.from([137,80,78,71,13,10,26,10]).toString("base64")}};
+  let value: Record<string, unknown> = valid;
+  const app = await fixture((_req, res) => json(res, value));
+  const input = {report_id: "report", revision_id: "revision", page: 201, region};
+  try {
+    assert.deepEqual(await app.client.query("synthetic-test", "asset.read", input), valid);
+    await assert.rejects(() => app.client.query("synthetic-test", "asset.read", {...input, include_image: false}), /UnrequestedMaterialImage/);
+    value = {...valid, source: {...valid.source, region: {...region, right: 1}}};
+    await assert.rejects(() => app.client.query("synthetic-test", "asset.read", input), /InvalidMaterialRegion/);
+  } finally { await app.close(); }
+});

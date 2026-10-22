@@ -339,3 +339,7 @@ Proposed 的风险应对：对每个未定契约先在 `domain/ports` 写出最�
 入口负责账户与导航；页面拥有读取、筛选、编辑与提交状态。集中 HTTP 客户端和响应类型是呈现层机制，不拥有领域授权或版本治理。读取拒绝旧响应覆盖新选择；提交防重，失败保留输入。标准 Dialog 承担确认和未保存离开，确认成功后关闭；错误持续显示 Alert，成功显示 Snackbar。列表使用 Table 与服务端 Pagination，Work 路由和查询参数保持兼容，不新增后端 API 或其他页面地址。
 
 所有写入继续通过既有服务端用例。管理员可见性不扩大写入权；OM 私有草稿不影响 active HEAD；Reflection Proposal 不提供手工文件编辑。浏览器验收使用真实 API 与一次性存储、测试专用确定性模型 adapter，不能作为真实模型效果证据。实现导航与测试入口见 [前端说明](../prototype/README.md)。
+
+### Pi 原生执行（2026-10-23）
+
+评估与Reflection复用Pi持久化会话、默认压缩、文件工具、显式Skills与MCP/tool_search。固定工作身份与epoch替代按Turn重建；Forge保留当前事实、工具快照、业务回执及治理。旧投影、摘要缓存和强制阅读笔记接口已移除。[执行契约](contracts/context-projection.md)和[行为规格](acceptance/context-projection.feature)定义当前唯一运行路径。

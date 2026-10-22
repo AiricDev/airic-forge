@@ -35,7 +35,7 @@ for (const example of [
   console.warn=(value:unknown)=>{warnings.push(String(value));};
   try {
     const runner=new PiWorkAgentRunner({...loadConfig({}),dataDir:root,modelProvider:"deepseek",modelId:"deepseek-flash",modelApiKey:"synthetic-key-never-log",modelBaseUrl:`http://127.0.0.1:${address.port}/v1`});
-    const run=runner.runWork({sessionId:"synthetic-response",signal:AbortSignal.timeout(15000),userMessage:"Read only",context:{},documents:[],availableDocumentIds:[],loadDocument:async()=>"",tools:[]});
+    const run=runner.runWork({sessionId:"synthetic-response",scope:{organizationId:"o",ownerUserId:"u",workId:"w",turnId:"t",omRevision:"r",catalogDigest:"c"},signal:AbortSignal.timeout(15000),userMessage:"Read only",context:{},documents:[],availableDocumentIds:[],loadDocument:async()=>"",tools:[]});
     if(example.error){
       await assert.rejects(run,{message:example.error});
       assert.equal(warnings.length,1);
@@ -51,7 +51,7 @@ for (const example of [
       assert.deepEqual(await run,{text:example.text});
       assert.deepEqual(warnings,[]);
     }
-    assert.equal(requests,1,"no automatic replay after an incomplete response");
+    assert.ok(requests<=2,"only Pi native incomplete-response recovery is permitted");
   }finally{
     console.warn=originalWarn;
     await new Promise<void>(resolve=>{server.close(()=>resolve());server.closeAllConnections();});

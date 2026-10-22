@@ -1,7 +1,7 @@
 import { UserAdministration } from "./user-administration.js";
 import { isAllowedOmDocumentPath, isAllowedProposalPath, validateWorkDefinition } from "./operating-model.js";
 import { materialObservation } from "./materials.js";
-import { assembleWorkMemory, pinnedWorkFacts, conversationMessages, CONTEXT_POLICY_VERSION, type WorkContextPorts } from "./work-context.js";
+import { pinnedWorkFacts, conversationMessages, CONTEXT_POLICY_VERSION } from "./work-context.js";
 import type { AccountPort, AgentRunnerPort, AppSessionPort, AppPort, AppCommandLocator, ToolSnapshotPort, EvidenceExtractorPort, EvidenceSessionPort, MeasurementPort, OmDraftPort, OperatingModelPort, OrganizationContributionPort, PasswordCodecPort, PasswordSetupPort, ReflectionAgentPort, ReflectionRunStore, ReflectionLens, ReflectionRecord, SessionGrant, SystemPort, TrajectoryPort, WorkFeedbackKind, WorkListFilters, WorkPort, WorkAgentTool, WorkActivity } from "./ports.js";
 
 import { PersonalOmChanges } from "./om-changes.js";
@@ -21,7 +21,7 @@ export class ForgeUseCases {
   readonly reflectionRuns?: ReflectionRuns;
   readonly omChanges?: PersonalOmChanges;
   readonly users: UserAdministration;
-  constructor(private readonly ports: { accounts: AccountPort; works: WorkPort; om: OperatingModelPort; omChanges?: PersonalOmChanges; reportWorkDefinitionId?: string; omDrafts?: OmDraftPort; organization?: OrganizationContributionPort; measurements?: MeasurementPort; instanceSettings?: InstanceSettings; app: AppPort; organizationId?: string; toolSnapshots: ToolSnapshotPort; agents: AgentRunnerPort; reflectionAgent?: ReflectionAgentPort; reflectionRunStore?: ReflectionRunStore; sessions: AppSessionPort; evidenceExtractor?: EvidenceExtractorPort; evidenceSessions?: EvidenceSessionPort; passwordSetups: PasswordSetupPort; passwordCodec: PasswordCodecPort; trajectories: TrajectoryPort; system: SystemPort; workContext?: WorkContextPorts; }) {
+  constructor(private readonly ports: { accounts: AccountPort; works: WorkPort; om: OperatingModelPort; omChanges?: PersonalOmChanges; reportWorkDefinitionId?: string; omDrafts?: OmDraftPort; organization?: OrganizationContributionPort; measurements?: MeasurementPort; instanceSettings?: InstanceSettings; app: AppPort; organizationId?: string; toolSnapshots: ToolSnapshotPort; agents: AgentRunnerPort; reflectionAgent?: ReflectionAgentPort; reflectionRunStore?: ReflectionRunStore; sessions: AppSessionPort; evidenceExtractor?: EvidenceExtractorPort; evidenceSessions?: EvidenceSessionPort; passwordSetups: PasswordSetupPort; passwordCodec: PasswordCodecPort; trajectories: TrajectoryPort; system: SystemPort; }) {
     this.omChanges = ports.omChanges;
     this.users = new UserAdministration(ports.accounts);
     if (ports.reflectionRunStore) this.reflectionRuns = new ReflectionRuns(ports.reflectionRunStore, ports.system);
@@ -404,36 +404,19 @@ export class ForgeUseCases {
         ...await Promise.all(definition.knowledge.available.map(async (id) =>
           [id, this.ports.om.knowledgePath ? await this.ports.om.knowledgePath(revision, id) : `subject-knowledge/${id}.md`] as const)),
       ]);
-      let memory;
       const contextActivity = await startActivity("context", "组装当前回合上下文");
-      try {
-        const summarizer = this.ports.workContext?.summarizer;
-        memory = await assembleWorkMemory({
-          scope: { organizationId: this.ports.organizationId ?? "certlab", ownerId: userId, workId: session.workId, omRevision: revision, catalogDigest: catalog.digest },
-          events: priorEvents, excludedTurnId: turn.id,
-          mandatory: { context, documents, userMessage, evidence, tools: tools.map(t => t.capability.inputSchema) },
-          ports: this.ports.workContext && summarizer ? { ...this.ports.workContext, summarizer: {
-            modelFingerprint: summarizer.modelFingerprint,
-            summarize: async request => { await contextStatus("organizing"); return summarizer.summarize(request); },
-          } } : undefined,
-          digest: value => this.ports.system.digest(value), signal: controller.signal,
-        });
-        await assertRunning();
-        if (memory.memory) await contextStatus("ready");
-      } catch (error) { await contextStatus("failed"); throw error; }
       await finishActivity(contextActivity);
-      context.workMemory = memory.memory;
       await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId,
         turnId: turn.id, type: "context.assembled", at: this.ports.system.now(), payload: {
           contextDigest: turn.contextDigest,
-          envelopeDigest: this.ports.system.digest({ context, documents, conversation: memory.conversation, userMessage }),
-          policyVersion: CONTEXT_POLICY_VERSION, estimatedTokens: memory.estimatedTokens,
-          memory: memory.memory ? { firstEventId: memory.memory.firstEventId, lastEventId: memory.memory.lastEventId, sourceDigest: memory.memory.sourceDigest } : undefined,
+          envelopeDigest: this.ports.system.digest({ context, documents, userMessage }),
+          policyVersion: CONTEXT_POLICY_VERSION,
           documents: documents.map(({ content: _, ...provenance }) => provenance),
         } });
       modelActivity = await startActivity("model", "准备模型会话");
-      const result = await this.ports.agents.runWork({ sessionId: session.sessionId, signal: controller.signal, userMessage, conversation: memory.conversation, context,
-        inputTokens: this.ports.workContext?.inputTokens, outputTokens: this.ports.workContext?.outputTokens,
+      const result = await this.ports.agents.runWork({ sessionId: session.sessionId, signal: controller.signal, userMessage, context,
+        scope: { organizationId: this.ports.organizationId ?? "certlab", ownerUserId: userId, workId: session.workId, turnId: turn.id, omRevision: revision, catalogDigest: catalog.digest },
+        onRuntimeEvent: async event => { await this.ports.trajectories.append({id:this.ports.system.id("evt"),workId:session.workId,turnId:turn.id,type:"message",at:this.ports.system.now(),payload:{agentRuntime:event}}); },
         onModelStatus: waitingForModel,
         onContextStatus: status => { const write = contextStatus(status); trajectoryWrites.push(write); void write.catch(() => {}); },
         readHistory: (offset, limit) => monitor("读取工作历史", async () => {
@@ -705,6 +688,8 @@ export class ForgeUseCases {
       };
       if (!this.ports.reflectionAgent) throw new Error("ReflectionAgentNotConfigured");
       const result = await this.ports.reflectionAgent.analyze({
+        scope: {organizationId:this.ports.organizationId ?? "certlab",ownerUserId:actorUserId,workId:reflection.workId ?? reflectionId,turnId:reflectionId,omRevision:draft.baseRevision,catalogDigest:this.ports.system.digest([lens.id,lens.version,lens.prompt,!!reflection.workId,lens.id!=="api-suggestion"])},
+        onRuntimeEvent: reflection.workId ? async event => { await this.ports.trajectories.append({id:this.ports.system.id("evt"),workId:reflection.workId!,type:"message",at:this.ports.system.now(),payload:{reflectionId,agentRuntime:event}}); } : undefined,
         reflectionId, lens, question: message.trim(), messages: await this.ports.works.reflectionMessages(reflectionId),
         evidence: selected, ...(reflection.workId ? { readTrajectory } : {}),
         ...(lens.id !== "api-suggestion" ? { readDraftFile, writeDraftFile } : {}),

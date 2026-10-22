@@ -226,9 +226,16 @@ export interface WorkActivity {
   code?: string;
 }
 
+export interface AgentExecutionScope {
+  organizationId: string; ownerUserId: string; workId: string; turnId: string;
+  omRevision: string; catalogDigest: string;
+}
+export interface AgentRuntimeEvent { kind: string; sessionId: string; sessionFile?: string; toolName?: string; toolCallId?: string; status?: string; tokensBefore?: number; }
 export interface AgentRunnerPort {
   runWork(input: {
     sessionId: string;
+    scope: AgentExecutionScope;
+    onRuntimeEvent?: (event: AgentRuntimeEvent) => Promise<void>;
     signal?: AbortSignal;
     userMessage: string;
     context: Record<string, unknown>;
@@ -236,20 +243,17 @@ export interface AgentRunnerPort {
     availableDocumentIds: string[];
     loadDocument(id: string): Promise<string>;
     evidence?: Array<{ filename: string; digest: string; text: string }>;
-    conversation?: Array<{ role: "user" | "agent"; text: string }>;
     tools: WorkAgentTool[];
     checkpoint?: (input: WorkCheckpoint) => Promise<{ checkpointId: string }>;
     onText?: (text: string) => void;
     onContextStatus?: (status: "organizing" | "ready" | "failed") => void;
     onModelStatus?: () => void;
     readHistory?: (offset: number, limit: number) => Promise<Array<Record<string, unknown>>>;
-    inputTokens?: number;
-    outputTokens?: number;
   }): Promise<{ text: string }>;
 }
 
 export interface ReflectionAgentPort {
-  analyze(input: { reflectionId: string; lens: ReflectionLens; question: string; messages: ReflectionMessage[]; evidence: TrajectoryEvent[]; readTrajectory?: (offset: number, limit: number) => Promise<TrajectoryEvent[]>; readDraftFile?: (path: string) => Promise<string>; writeDraftFile?: (path: string, content: string, citedEventIds: string[], message: string) => Promise<void>; omRevision: string; documents: Array<{ path: string; content: string }>; privateDrafts?: Array<{ path: string; content: string; baseRevision: string }>; signal?: AbortSignal; onProgress?: (event: ReflectionProgress) => void }): Promise<ReflectionAgentResult>;
+  analyze(input: { scope: AgentExecutionScope; onRuntimeEvent?: (event: AgentRuntimeEvent) => Promise<void>; reflectionId: string; lens: ReflectionLens; question: string; messages: ReflectionMessage[]; evidence: TrajectoryEvent[]; readTrajectory?: (offset: number, limit: number) => Promise<TrajectoryEvent[]>; readDraftFile?: (path: string) => Promise<string>; writeDraftFile?: (path: string, content: string, citedEventIds: string[], message: string) => Promise<void>; omRevision: string; documents: Array<{ path: string; content: string }>; privateDrafts?: Array<{ path: string; content: string; baseRevision: string }>; signal?: AbortSignal; onProgress?: (event: ReflectionProgress) => void }): Promise<ReflectionAgentResult>;
 }
 
 export interface AppSessionPort { put(session: SessionGrant): MaybePromise<void>; get(ticket: string): MaybePromise<SessionGrant | undefined>; claim(ticket: string): MaybePromise<SessionGrant | undefined>; remove(ticket: string): MaybePromise<void>; }

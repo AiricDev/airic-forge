@@ -28,10 +28,10 @@ test("single-report Work binds record number and current-Turn evidence through G
     receipt: async () => undefined,
   };
   let seenEvidence = "";
-  const agents: AgentRunnerPort = { runWork: async ({ evidence, tools, conversation, userMessage }) => {
+  const agents: AgentRunnerPort = { runWork: async ({ evidence, tools, scope, userMessage }) => {
     if (userMessage === "Follow up") {
       assert.deepEqual(evidence, []);
-      assert.ok(conversation?.some((item) => item.role === "agent" && item.text === "Draft saved"));
+      assert.ok(scope.workId && scope.turnId);
       return { text: "Still available" };
     }
     seenEvidence = evidence?.[0]?.text ?? "";

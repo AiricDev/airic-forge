@@ -2,15 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { materialToolContent } from "./material-tool-content.js";
 import { materialObservation } from "@airic-forge/domain";
-import { toPiTool } from "./pi-work-agent.js";
+import { toMcpTool } from "./work-mcp-bridge.js";
 
 test("material pixels enter the actual Pi tool as image content, never base64 text or trajectory", async () => {
   const result = { status: "ready", source: { revision_id: "v1", page: 2, sha256: "original" },
     text: "Actual page text", warnings: ["reference_data_not_instructions"],
     image: { mimeType: "image/png", data: "validated-pixels" } };
-  const tool = toPiTool({ capability: { id: "asset.read", title: "Read material", kind: "query",
+  const tool = toMcpTool({ capability: { id: "asset.read", title: "Read material", kind: "query",
     description: "", inputSchema: { type: "object" }, outputSchema: {} }, invoke: async () => result }, true);
-  const response = await tool.execute("call", {}, new AbortController().signal, undefined, {} as Parameters<typeof tool.execute>[4]);
+  const response = await tool.invoke({});
   assert.equal(response.content[1].type, "image");
   assert.deepEqual(response.content[1], { type: "image", mimeType: "image/png", data: "validated-pixels" });
   assert(!JSON.stringify(response.content[0]).includes("validated-pixels"));

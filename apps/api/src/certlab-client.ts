@@ -103,8 +103,15 @@ export class CertLabClient implements AppPort {
         if (input.image_index !== undefined && source.image_index !== input.image_index) throw new Error("InvalidMaterialImageSource");
         if (value.images !== undefined && (!Array.isArray(value.images) || value.images.length > 8 || value.images.some((entry) => { const image = record(entry); return !Number.isSafeInteger(image.image_index) || Number(image.image_index) < 0 || typeof image.visual_summary !== "string" || Array.from(image.visual_summary).length > 300 || !/^[a-f0-9]{64}$/.test(String(image.view_sha256)); }))) throw new Error("InvalidMaterialImages");
       }
+      if (input.region !== undefined) {
+        const region = record(input.region), actual = record(source.region);
+        const coordinates = ["left", "top", "right", "bottom"];
+        if (source.format !== "pdf" || source.text_scope !== "page"
+          || coordinates.some(key => typeof region[key] !== "number" || !Number.isFinite(region[key]) || Number(region[key]) < 0 || Number(region[key]) > 1 || actual[key] !== region[key])
+          || Number(region.left) >= Number(region.right) || Number(region.top) >= Number(region.bottom)) throw new Error("InvalidMaterialRegion");
+      }
       if (value.image) {
-        if (input.include_image !== true) throw new Error("UnrequestedMaterialImage");
+        if (input.include_image !== true && !(input.include_image === undefined && source.format === "pdf")) throw new Error("UnrequestedMaterialImage");
         const image = record(value.image);
         if (!["ready", "image_required"].includes(String(value.status)) || image.mimeType !== "image/png" || typeof image.data !== "string"
           || image.data.length > 12 * 1024 * 1024 || !/^[A-Za-z0-9+/]+={0,2}$/.test(image.data)) throw new Error("InvalidMaterialImage");
