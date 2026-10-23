@@ -10,8 +10,14 @@ permissions:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      # OM fixtures create independent Git repositories, outside the checkout.
+      GIT_AUTHOR_NAME: AiricForge CI
+      GIT_AUTHOR_EMAIL: ci@example.invalid
+      GIT_COMMITTER_NAME: AiricForge CI
+      GIT_COMMITTER_EMAIL: ci@example.invalid
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
