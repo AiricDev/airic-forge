@@ -6,6 +6,7 @@
 - [App 集成与交付](docs/app-integration.md)
 - [当前技术设计](docs/tech-design.md)
 - [开发与部署](docs/deployment.md)
+- [GitHub 源码发布](docs/releases.md)
 - [开发计划](docs/development-plan.md)
 - [App 集成 Skill](skills/airic-app-integration/SKILL.md)
 

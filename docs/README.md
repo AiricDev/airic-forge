@@ -21,6 +21,7 @@
 - [当前技术设计](tech-design.md)
 - [开发计划](development-plan.md)
 - [当前开发与部署入口](deployment.md)
+- [GitHub 源码发布](releases.md)：版本、自动检查、源码归档及 Release 草稿。
 - [仓库清理与回归记录](acceptance/repository-cleanup-record.md)
 - [原生执行验收记录](acceptance/pi-native-record.md)
 
