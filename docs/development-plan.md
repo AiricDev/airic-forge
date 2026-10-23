@@ -1,132 +1,39 @@
-# AiricForge 分阶段开发计划
+# AiricForge 当前开发计划
 
-2026-10-21：按用户明确决策取消目录人工接受及 WD 工具白名单，改为当前身份 MCP 动态工具发现和不可变快照；[当前契约](contracts/mcp-tool-discovery.md) 取代此前目录审批约定。 [验收与上线记录](acceptance/mcp-tool-discovery-record.md)。
+状态：2026-10-23。只保留当前实现与下一步交付，不维护过时阶段清单。产品语义见 [PRD](airic-forge-prd.md)，具体需求见 [App 集成与交付](app-integration.md)，开发 Agent 使用 [集成 Skill](../skills/airic-app-integration/SKILL.md)。
 
-账户角色、初始化、停用收尾及管理接口见 [用户管理契约](user-administration.md)。
+## 已有基础
 
-2026-10-21：基本用户管理已完成并升级当前实例，包括首管理员、角色/停用管理、审计、并发保护和运行中任务收尾；[验收与备份记录](acceptance/user-administration-record.md)。
-
-> 状态：实施中；以 `airic-forge-prd.md`、`decisions/0001-p0-runtime-contract.md` 和已确认的 CertReporter P0 集成计划为基线。
-> 范围：单实例、单业务 App、多用户；先完成个人工作与学习闭环（P0），再完成组织协作与运行增强（P1）。  
-> 当前进度：阶段 0–5 的本机 P0 交付验收已完成；阶段 6 的组织 OM 治理、个人同步与测量基线已在隔离实例验收。正式生产部署和真实业务成效目标仍需目标环境数据。见 `acceptance/stage-0-record.md` 至 `acceptance/stage-6-record.md`。
-
-## 当前推进位置
-
-2026-10-21 维护记录：App 已使用 MCP Streamable HTTP，通过 tools/list 发现、tools/call 调用；清理工作台和当前契约中的 Manifest/OpenAPI 接入描述。每 Turn 记录动态工具快照 digest，保留命令回执恢复，不再要求目录接受或 WD 工具白名单。历史 CertReporter 部署文档仅作归档。验证覆盖 `certlab-contract.test.ts`、`instance-settings.test.ts`、领域用例与工作台浏览器测试；当前接入边界和切换步骤见 [CertLab MCP integration](certlab-integration.md)。
-
-2026-10-14 维护记录：Pi SDK 从 `0.99.2` 升级至精确锁定的 `1.2.0`；构建、类型检查、34 项自动测试与直接 SDK 冒烟验证通过。当时的 Codemode、MCP 和 Pi Durable 适配评估见 [升级记录](acceptance/pi-sdk-1x-upgrade.md)，当时新增能力尚未启用。当前 App MCP 接入见下述维护记录。
-
-严格按 **阶段 0 → 阶段 1 → 阶段 2 → 阶段 3 → 阶段 4 → 阶段 5** 交付。跨阶段发现的缺陷只在阻断当前阶段验收、安全边界或数据正确性时立即修复；其余记入所属阶段，不用零散修补代替阶段完成。
-
-| 阶段 | 当前状态 | 下一道完成门槛 |
+| 范围 | 当前行为 | 验证入口 |
 | --- | --- | --- |
-| 0. 契约与迁移基线 | 已完成，见 acceptance/stage-0-record.md | 进入阶段 1；阶段 0 文档不替代后续运行验收 |
-| 1. 可部署的身份与 OM 基础 | 已完成，见 acceptance/stage-1-record.md | 进入阶段 2；真实 CertReporter Drawer 接入与业务命令尚未验收 |
-| 2. App 内完成可追溯的 Work | 已完成，见 acceptance/stage-2-record.md | 进入阶段 3；附件迁移与旧侧车退出仍需在 P0 交付前核对 |
-| 3. 个人 OM 编辑、提议与采纳 | 已完成，见 acceptance/stage-3-record.md | 阶段 4 已复用审阅、条件采纳和 rebase |
-| 4. 从轨迹到可审核的 Reflection | 已完成，见 acceptance/stage-4-record.md | 进入阶段 5；部署备份还原和 P0 总验收仍待完成 |
-| 5. P0 交付与恢复验收 | 已完成本机验收，见 acceptance/stage-5-record.md | 进入 P1 排期；正式上线按目标环境另行配置域名/TLS、固定镜像和密钥 |
-| 6. P1 组织吸收与运行增强 | 已完成隔离实例的组织 OM、成员同步、反馈口径与容量样本验证，见 acceptance/stage-6-record.md | 在真实部署积累可比 Work 样本，制定数值目标并复测容量与恢复 |
+| CertLab 接入 | 当前用户 MCP、报告/组织绑定、原命令回执和未知结果恢复 | certlab-contract、work-execution、work-lifecycle、acp-socket 测试 |
+| 原生 Agent | Pi 持久化会话、压缩、文件工具、明确 Skills 与 MCP/tool_search；Work/Reflection 分开 | pi-native-session、pi-reflection-scope、pi-work-agent-response 测试 |
+| 个人 OM | Git 私有草稿、显式确认、并发合并、原生 Git 接入 | personal-om、om-git-state、personal-git-http 测试 |
+| 组织治理 | 固定来源、按文件三方选择、验证后合并、成员主动同步 | organization-governance、organization-git-patch、om-history 测试 |
+| 身份与收尾 | 首用户管理员、实际权限、停用中排空、审计与凭据撤销 | user-administration、access-control、reflection-stream 测试 |
+| 工作台 | MUI、连续对话、草稿审核、组织贡献、用户管理 | Workbench unit 和 Playwright |
 
-## 1. 要实现的行为
+已有真实 Pi/资料验收见 [原生执行记录](acceptance/pi-native-record.md)。它证明当时受验范围，不替代新交付方案的部署验收或专业接受。
 
-业务用户在 App 页面调用 Copilot 完成真实工作。AiricForge 在每轮执行中选定并固定该用户的 Operating Model（OM）版本，按 Work Definition（WD）装配最小必要知识，通过已接受且被 WD 允许的 App 能力操作业务，并保存可查证的轨迹。用户从轨迹发起 Reflection，将可复用经验形成 Subject Knowledge（SK）或 WD 提议，查看差异并亲自采纳；新版本从下一轮生效。API 能力缺口可以形成建议，但不会自动变成工具。组织随后可以有选择地吸收个人改进，成员自行同步。
+## 下一步实施顺序
 
-第一个 P0 交付结果是在 CertReporter 的真实 Report 页面重复演示完整个人闭环：**工作 → 轨迹 → Reflection → 提议 → 作者采纳 → 下一轮行为和版本归因**。
+固定边界：通用 PDF 阅读归基础 Agent；组织 OM 只管理业务逻辑。Agent 配置随代码发布，生效 OM 独立演化。Docker 用于发布，本机源码联调无需 Docker build。
 
-## 2. 现有架构语法与责任边界
-
-| 边界 | 负责的事实与行为 | 不拥有的事实与行为 |
+| 顺序 | 切片与所有者 | 完成门槛 |
 | --- | --- | --- |
-| 业务 App | 身份验证、Business State、业务授权、命令事务、回执与结果查询 | AiricForge 的 OM、Reflection 与个人提议 |
-| AiricForge 产品内核 | 用户和资源归属、Work/Session/Turn、能力目录接受、OM 版本选择、提议/采纳、规范化轨迹与审计关联 | 绕过 App 修改 Business State；把模型回复当作命令成功 |
-| OM 文档与 Git | SK、WD、组织 `main`、个人版本、不可变的已采纳内容及文档来源 | 当前业务记录、密钥、会话状态和未验证的轨迹结论 |
-| Context Compiler | 从本轮固定的 OM 修订解析 WD，加载 bootstrap SK，提供有限的 routing surface 和按需读取，并记录文档来源 | 无差别加载整个 OM；让 Agent 自行决定版本或授权 |
-| Agent harness | Work 与 Reflection 的对话循环、流式事件和受限工具执行 | OM 采纳决定、业务操作结果、产品级规范轨迹 |
-| Web 工作台 / 嵌入式 Copilot | 展示有权访问的资源，收集人类编辑、审阅和采纳决定；App 页面负责命令成功后的刷新 | 通过前端文本或页面状态直接授予业务权限 |
+| 1 | Forge config、Pi 资源适配器和 App 配置 | 原生包加载、显式只读配置、依赖诊断、实际资源身份、Work/Reflection 分离 |
+| 2 | App 联调入口、Forge watch/重载与会话关联 | 无需镜像构建观察源码/Skill 修改；版本可见；独立数据/进程管理；安全重启后续接 |
+| 3 | 通用阅读能力包、seed 与用户分支治理 | 跨领域图文 PDF 接续；OM 中通用操作细节迁出；不自动合并组织 main |
+| 4 | App MCP/嵌入入口与 Forge 用例 | 身份、对象、真实草稿回执、权限拒绝、断连取消和未知结果恢复 |
+| 5 | 初始化、App 构建与发布装配 | 新组织初始化幂等；新种子不覆盖 active；本地与镜像采用相同契约 |
+| 6 | 发布、持久化与运维入口 | 组合兼容、升级备份、回滚限制、跨目录会话/工作树修复和恢复演练 |
 
-技术设计中的 Node.js、pnpm、pi-sdk 和 ACP 是既定方向；Fastify、SQLite、Drizzle、JSONL 分段、具体包拆分等仍按 proposed 实现选型处理。实施时先固定领域契约，再验证机制是否满足它。真实工作台在 `apps/workbench/src/workbench/` 使用 Material UI 默认组件与设计语言；原型仅保留为历史信息架构参考，不再约束视觉与通用组件交互。`DemoContext`、`localStorage`、种子数据及模拟 Reflection 不进入生产数据路径。
+[16 个行为场景](acceptance/app-integration.feature)覆盖 I-01～I-12；实施时映射到实际测试和运行记录。配置参数、统一联调命令、种子导入和迁移接口仍待实现，不能写成现成 API。
 
-## 3. 契约与迁移基线（阶段 0）
+## 验证与变更闭包
 
-这一阶段只解决会改变数据含义、权限或运行结果的分歧；结果写回 PRD、OM 设计和技术方案，并形成契约样例及验收夹具。以下表格记录原有分歧与已确定的处理方式；尚未有验收证据的项继续标记为进行中。
+先验证拥有行为的 Domain/use case/adapter，再做真实 HTTP/MCP、Workbench 与浏览器联调。确定性模型和合成资料优先；真实客户资料外发须授权。每项记录修改→观察生效的步骤和耗时，不虚构性能目标。
 
-| 决策 | 当前冲突或空白 | 阶段 0 应产出的明确规则 |
-| --- | --- | --- |
-| OM 文档格式 | 文档曾使用 `definition.md` 与 `work.yml` 两种示例 | 已定 `work.yml` 多文件 package，SK 独立于 `subject-knowledge/`；仍需补齐迁移与引用夹具 |
-| 个人 active 版本 | 曾同时描述显式 active 与 HEAD active | 已定个人分支 HEAD 即 active，外部提交下一 Turn 生效；Proposal 只在 base 等于 active HEAD 时可采纳 |
-| Proposal 与工作区 | 曾限制每用户一个未完成 Proposal | 已定每个 Proposal 独立分支与 worktree，可并行；阶段 3 已验证重启恢复和冲突处理 |
-| Work / Session / Reflection | 基数和恢复键曾未定 | 同一用户、Work Type、Report 页面恢复长期 Work/Session；按原型交互，每 Work 打开或恢复一段 Reflection 对话，每 Reflection 至多一个 Proposal；API Suggestion 为可导出结果。既有多段 Reflection 记录保留历史可读 |
-| 身份与权限 | Web 登录及 App 身份关联曾未定 | 已定规范化 Email 自动关联、首次访问建无密码账户、独立密码与短期 Web 会话；资源权限矩阵仍需补齐 |
-| App / ACP 契约 | 页面事实、Token 与命令恢复曾未统一 | 已定 CertReporter 真实业务 App、`report.context` 权威投影、ACP WebSocket、内存 App token 与按 `commandId` 查回执；可执行夹具见 API 契约测试 |
-| Reflection lens | 原型只含两种 lens | 已定三种内置 lens，由管理员启停和版本化提示，不新增类型 |
-| 运行持久化 | 技术方案把轨迹明细置于 JSONL，把索引置于 SQLite；恢复和跨存储一致性仍待证实 | 定义追加、去重、索引/游标更新、截断恢复和备份一致性规则；保留可读的原始事件与规范化展示，不记录模型私有推理或 Token |
+新增能力同时更新配置、资源装配、身份关联、必要 UI 诊断和验收；业务权限保持在 App。OM 变化更新格式/引用/治理及样例；会话或存储变化更新备份恢复契约。不要只交付单层实现。
 
-**阶段 0 完成条件：**形成契约决策记录、首版 OM 样例、CertReporter 协议夹具、对象关系与权限矩阵、各阶段验收脚本草案。PRD 中失效的待决引用需要修订。只有这些契约和验收材料齐备，才能标记阶段 0 完成。
-
-## 4. 分阶段实施
-
-阶段按依赖排序。每阶段都交付可运行的纵向切片；除阶段 0 外，每阶段结束都在浏览器和真实服务中验证。P0 是阶段 1–5 的合并交付门槛，P1 是阶段 6。
-
-| 阶段 | 用户可观察的增量 | 主要责任边界与实现内容 | 完成证据 |
-| --- | --- | --- | --- |
-| **1. 可部署的身份与 OM 基础** | 空实例启动；两个 App 用户进入工作台，各自看到个人 OM，管理员可查看但不会改变所有者 | **部署/身份边界：**镜像、`/project` 与 `/data` 初始化、App 身份验证、Web/ACP 会话、所有者/管理员鉴权。**OM 边界：**组织 `main`、个人分支及工作区、已采纳修订读取、WD/SK 解析和结构/引用校验。**界面边界：**把原型中的登录、个人 OM 和管理员用户页接入真实 API | 空目录与已有目录启动；同一身份重复进入不重复建号；两普通用户互不可见；管理员读取他人资源不更换其模型所有者；重启后身份和 OM 仍可读。覆盖 P0-01～05、11 的基础部分 |
-| **2. App 内完成可追溯的 Work** | 在 CertReporter Report 页面打开 Copilot，启动/恢复 Work，看到流式进度；允许的命令得到 App 回执并刷新页面；AiricForge 工作台可查看同一 Work 的 Turn、Action 和上下文来源 | **App 接入边界：**CertReporter 权威投影、App MCP 工具目录候选/接受、能力标识与 WD 白名单、身份 Token 透传、命令幂等与结果查询。**运行边界：**pi-sdk Work Agent 的受限工具集、ACP、每 Turn 固定 OM 和能力目录版本、Context Compiler 与来源清单。**轨迹边界：**规范事件、回执、未知结果及恢复。**界面边界：**CertReporter Drawer 与 Work 详情 | 演示被允许的命令、App 拒绝、越权目标、Token 撤销、页面切换、响应丢失后按同一幂等键查结果；每 Turn 能定位 OM 修订、WD/SK 文档与命令回执；断线与重启后可继续读取。覆盖 P0-06～10、18～19 的运行部分 |
-| **3. 个人 OM 编辑、提议与采纳** | 普通用户在 Web 中编辑 WD/SK 并保存私有草稿；Reflection 基于 Work 证据形成 Proposal 后查看差异、来源和检查结果，确认采纳；下一轮使用新版本 | **文档治理边界：**草稿不产生 Git 提交或 Proposal；Reflection Proposal 使用独立 worktree、基准与证据、结构/能力/路径/依赖校验、预期 active HEAD 的条件提交；个人 active 分支的外部 Git 提交从下一 Turn 生效。**界面边界：**草稿编辑、差异、冲突和历史视图。**运行边界：**每轮重新解析 active，执行中快照保持不变 | 未采纳草稿不进入运行时；外部 active 提交不被覆盖；并发 Proposal 采纳只有一个成功且另一请求可 rebase；新增 WD 无需重启；旧 Turn 仍能读到原内容。覆盖 P0-12～13、18，并补全 P0-11 |
-| **4. 从轨迹到可审核的 Reflection** | 用户在 Work 打开或恢复唯一的连续 Reflection 会话；Agent 按需读取该 Work 的轨迹，用户用三种 slash lens 形成有证据的 SK/WD 改动或 API 建议；证据不足时保存讨论而不强行产生 Proposal | **学习边界：**Reflection Agent 只读被授权的轨迹证据，只能修改候选 OM 文件，不能调用 App Command API；结果记录 lens 版本、来源事件和归因理由。**治理边界：**每个 Proposal 独立 worktree、并发防混写，复用阶段 3 的审阅与采纳。**建议边界：**API Suggestion 可导出，但不进入工具目录。**界面边界：**Reflection 工作区、提议和建议详情 | 三 lens 都有可演示路径；无证据和仅 API 建议路径不产生空提交；两个并行 Proposal 不混写；从 App 工作到下一轮版本变化的浏览器闭环通过。覆盖 P0-15～17、21 |
-| **5. P0 交付与恢复验收** | AiricForge 镜像可与 CertReporter 同机部署；故障后用户可找到既有工作与未完成提议 | **部署/数据边界：**迁移、故障恢复、备份还原、凭据隔离、日志与健康检查、最小接入说明。**验收边界：**按 PRD 场景执行真实浏览器、API、Git 和 App 回执验证，记录证据与缺口 | 新环境按说明部署；备份与恢复 Forge `/project`、Forge `/data` 及 CertReporter 自身数据后身份、版本、轨迹、Reflection 和 Proposal 一致；P0-01～13、15～21 逐项有结果与证据；安全/未知命令场景实测通过。P0-14 在 PRD 中缺号，不虚构需求 |
-| **6. P1 组织吸收与运行增强** | 管理员比较个人与组织版本，选择性吸收有依据的变更；成员自行同步并处理冲突；可衡量真实改善 | **组织治理边界：**来源与依赖检查、选定内容合并、历史修订保留、组织内容与私人轨迹隔离。**个人同步边界：**rebase/冲突工作流，显式采纳后才改变 active；旧 Turn 引用仍可读取。**产品测量边界：**采纳时长、SK/WD 复用、必要人工决策与可避免纠正分开统计。**运行边界：**明确样本规模后做容量与恢复测试 | P1-01～08 在真实服务通过；组织吸收不暴露私人 Session；成员未同步前版本不变；rebase 不破坏历史归因；形成有样本口径的基线，再制定数值目标 |
-
-**可选后续，不纳入 P0/P1 承诺：**多 App/多租户、跨包 OM 组合、自动 Reflection、自动采纳、完整 Git 托管、历史案例回放式自动采纳门槛、通用组织策略引擎。只有真实使用数据说明需要时再排期。
-
-## 5. 关键依赖与修改闭包
-
-每个纵向切片同时更新拥有该行为的契约、存储、API、界面和验收，避免只完成单层代码。
-
-| 行为变化 | 必须一同修改和验证的边界 |
-| --- | --- |
-| 新增或改变 WD/SK 格式 | 文档解析与校验、Git 版本读取、Context Compiler、编辑器/差异视图、样例 OM、迁移说明、相关 P0 场景 |
-| 改变 active 选择或采纳 | 个人分支/引用、并发条件更新、Turn 快照与轨迹来源、Proposal 界面、重启/冲突测试 |
-| 接受或移除 App 能力 | MCP 工具发现和目录差异、能力目录历史、WD 白名单、工具注册、现存 Work 兼容规则、命令恢复测试 |
-| 改变身份或资源关系 | App 身份验证、Web/ACP 鉴权、所有资源查询/写入、管理员视图、越权回归场景 |
-| 新增 Reflection 输出 | Lens 输入与版本、证据权限、结果持久化、提议或 API 建议状态、编辑/审核页面、无提议场景 |
-
-每一步的验收优先证明**行为契约**：实际版本、实际回执、实际 Git 提交和可恢复的轨迹。接口、类型和单元测试用于提前发现错误，但不能替代端到端证据。原型页面应逐页接入真实 API；不把 `localStorage` 演示状态带入生产数据路径。
-
-## 6. 实施节奏与范围控制
-
-1. 以阶段 0 的决策记录建立实现基线。首个场景固定为 CertReporter 的 `report-authoring`，准备两个权限不同的用户与一名管理员。
-2. 阶段 1–4 按端到端切片推进；每阶段都保留可演示版本和未通过的验收清单。阶段 2 的可靠命令与轨迹是阶段 4 学习质量的前提；阶段 3 的真实采纳是阶段 4 形成闭环的前提。
-3. 阶段 5 只在 P0 场景实测通过后宣布首版交付。P1 组织协作独立排期，不以尚未定义的组织约束阻塞 P0。
-4. 首次真实部署先建立用量、耗时、错误率与人工纠正基线。按相似 Work 比较改进前后，并记录样本、业务必要审批和外部条件；不要把 Proposal 数量当作 Agent 能力提升。
-
-## 7. 计划关闭检查
-
-- 产品闭环覆盖：App 工作、可归因轨迹、人工 Reflection、可审阅提议、作者采纳、下一轮生效、API 建议。
-- 权限闭环覆盖：App 业务授权与 AiricForge 资源所有权分开；普通用户隔离；管理员访问不改变模型归属。
-- 版本闭环覆盖：未采纳不生效；Turn 内固定；外部提交、并发采纳、冲突及历史读取有明确规则。
-- 故障闭环覆盖：未知命令查询、连接恢复、进程重启、工作区恢复、双目录备份和还原。
-- 交付证据覆盖：CertReporter、Forge 镜像、接入文档、浏览器记录、Git 状态、轨迹与 App 回执。
-
-本计划不以 Airic Framework 旧代码或原型逻辑作为实现完成的证据。迁移旧实现前，逐项核对其责任边界和契约；能复用的模块作为实现候选，不能让历史结构反向决定 AiricForge 的产品规则。
-
-## Material UI 工作台迁移（2026-10-14）
-
-本次按基础框架与身份 → Work 列表、详情和 Reflection → OM、Proposal 与管理页面三个切片实施。全部真实页面采用 MUI 默认浅色主题、Material Icons 与标准控件；按页面拆分请求与状态，移除生产入口对旧设计系统和 Tailwind 的依赖。原来的业务 API、Work 地址、权限、草稿与版本治理保持兼容，实际 App Copilot 不属于迁移范围。
-
-验证和逐页截图见 [迁移验收记录](acceptance/mui-migration-record.md)。本机交付完成状态以该记录的最终检查结果为准；这不代表正式部署已发布，也不重新宣称真实模型验收。
-
-
-## 2026-10-19：恢复完整 MUI 工作台
-
-已从本地早期提交恢复生产前端到 `apps/workbench`，外部原型不再承载生产源码。恢复工作台、Work/轨迹、Reflection、Proposal、个人/组织 OM 与管理页面；连续 Reflection 接入现有流式运行接口，并保留原作者治理边界、原请求核对、停止和断线恢复。历史分片合并采用展示投影，保留原始证据定位。
-
-本次不修改 OM active、业务数据、模型配置和领域权限。工程与浏览器结果记录在 `acceptance/workbench-restoration-record.md`，行为和测试映射见该记录及 `acceptance/workbench-restoration.feature`。
-
-2026-10-22：修复重复资料读取改变临时投影后使已有摘要失效的问题。保持256K预算及80%整理阈值，通过原始消息指纹与近期消息去重分离恢复摘要复用；完整工具边界、精确命令回执和来源身份约束不变。合成复现追加整理次数由12降至1；真实 Pi SDK 本地模拟链覆盖34次读取，无外部模型调用。契约与行为场景见 `contracts/context-projection.md` 和 `acceptance/context-projection.feature`。
-
-- 阅读循环后续修正：新增Work源关联阅读笔记、跨Turn恢复/分页检索及成果优先压缩；不包含OCR或Agent底座替换。以合成图片读取→压缩→取回早期发现→保存草稿验证实际SDK链路，详见`docs/contracts/context-projection.md`。
-
-2026-10-23：评估与Reflection切换至Pi原生会话、自动压缩、工作文件、Skills与延迟MCP；删除上面2026-10-22的临时投影与结构化笔记执行方案。其记录仅为历史，不是当前产品逻辑。
-
-原生执行验收完成：Domain 23通过，API 140通过/1跳过；授权真实PDF在临时报告中以22次读取（21页+1次局部）保存9.6.1草稿并交接，用时约3分9秒。详见`acceptance/pi-native-record.md`。
+仓库清理删除了过时部署、种子、迁移链和未使用入口，保留有效测试及不可变运行历史；范围和本次验证见 [清理记录](acceptance/repository-cleanup-record.md)。

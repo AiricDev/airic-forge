@@ -1,60 +1,58 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, rmSync, mkdirSync, symlinkSync, writeFileSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { GitOperatingModel } from "./git-om.js";
+import { mkdirSync, symlinkSync, writeFileSync, readFileSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { omFixture } from "./om-test-fixture.js";
 
-const seed = resolve(process.cwd(), "../../seed/certlab");
 const knowledge = (id: string) => `---\nid: ${id}\ntitle: Source scope\nsummary: Preserve original revision and limitations.\ntopics: [evidence]\nreview_state: candidate\n---\n\nSynthetic candidate, not professional verification.\n`;
 
-test("nested candidate registration uses stable IDs, reviews tracked precedents and shares only selected paths", () => {
-  const root = mkdtempSync(join(tmpdir(), "forge-nested-learning-"));
+test("nested learning uses stable IDs and shares only explicitly selected paths", async () => {
+  const f = omFixture();
   try {
-    const om = new GitOperatingModel(join(root, "project"), join(root, "data"), seed);
-    om.initialize();
-    const user = om.ensureUserBranch("author");
-    const base = om.head(user.branch);
-    const candidate = om.createProposal("author", "nested", base);
+    const { om } = f.runtime;
+    const base = om.head(`users/${f.owner.id}`);
     const path = "subject-knowledge/standards/alpha/2026/clauses/1/interpretation.md";
     const precedent = "precedents/alpha/2026/source-scope.md";
     const navigation = "subject-knowledge/standards/alpha/README.md";
-    om.writeProposalFile(candidate.worktree, path, knowledge("alpha-2026-clause-1"));
-    om.writeProposalFile(candidate.worktree, precedent, knowledge("precedent-alpha-source-scope"));
-    om.writeProposalFile(candidate.worktree, navigation, "# Navigation\n\nCandidate paths are not approved rules.\n");
-    om.makeKnowledgeAvailable(candidate.worktree, "report-authoring", [path, precedent, navigation]);
-    om.commitProposal(candidate.worktree, "Review nested learning");
-    const revision = om.head(candidate.branch);
+    const edits = f.runtime.omChanges.routeKnowledge(base, [
+      { path, content: knowledge("alpha-2026-clause-1") },
+      { path: precedent, content: knowledge("precedent-alpha-source-scope") },
+      { path: navigation, content: "# Navigation\n\nCandidate paths are not approved rules.\n" },
+    ], "report-authoring");
+    const draft = await f.runtime.omChanges.save(f.owner.id, "manual", { baseRevision: base, edits, summary: "Preserve source scope" });
+    assert.equal(om.head(`users/${f.owner.id}`), base);
+    const { revision } = await f.runtime.omChanges.commit(f.owner.id, "manual", draft.digest, "nested-learning-commit");
     assert.deepEqual(om.knowledgeIssues(revision), []);
-    assert(om.workDefinition(revision, "report-authoring").knowledge.available.includes("alpha-2026-clause-1"));
-    assert(!om.workDefinition(revision, "report-authoring").knowledge.available.includes("interpretation"));
-    assert(!om.workDefinition(revision, "report-authoring").knowledge.available.includes("README"));
+    const ids = om.workDefinition(revision, "report-authoring").knowledge.available;
+    assert(ids.includes("alpha-2026-clause-1"));
+    assert(!ids.includes("interpretation") && !ids.includes("README"));
     assert.equal(om.knowledgePath(revision, "alpha-2026-clause-1"), path);
-    assert.match(om.proposalDiff(candidate.worktree, base), /precedents\/alpha\/2026\/source-scope.md/);
-    assert.equal(om.head(user.branch), base);
-    const adopted = om.adoptProposal(user.branch, user.worktree, candidate.branch, base, {});
-    assert(om.divergence(adopted, base).changedPaths.includes(precedent));
-    const contribution = om.prepareContribution("share", adopted, base, base, [path, precedent, "work-definitions/report-authoring/work.yml"], "Share selected candidate only");
-    const main = om.acceptContribution(contribution.branch, base);
-    assert.equal(om.knowledgePath(main, "precedent-alpha-source-scope"), precedent);
-    assert.equal(om.head(user.branch), adopted);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+    const contribution = await f.runtime.useCases.createOrganizationContribution(f.admin.id, f.owner.id, "Share source scope", "");
+    const selection = await f.runtime.useCases.reviewOrganizationContribution(f.admin.id, contribution.id, [path, precedent, "work-definitions/report-authoring/work.yml"]);
+    const accepted = await f.runtime.useCases.acceptOrganizationContribution(f.admin.id, contribution.id, selection.reviewedRevision!);
+    assert.equal(om.knowledgePath(accepted.revision, "precedent-alpha-source-scope"), precedent);
+    assert(!om.listFiles(accepted.revision).includes(navigation));
+    assert.equal(om.head(`users/${f.owner.id}`), revision);
+  } finally { await f.close(); }
 });
 
-test("candidate files and their parent directories cannot redirect reads or writes through symlinks", () => {
-  const root = mkdtempSync(join(tmpdir(), "forge-proposal-links-"));
+test("draft symlinks cannot redirect candidate reads or writes", async () => {
+  const f = omFixture();
   try {
-    const om = new GitOperatingModel(join(root, "project"), join(root, "data"), seed);
-    om.initialize();
-    const candidate = om.createProposal("author", "links", om.head("main"));
-    const outside = join(root, "outside");
+    await f.save(f.owner.id, "manual", "subject-knowledge/example.md", knowledge("example"));
+    const directory = f.runtime.drafts.directory(f.owner.id, "manual");
+    const outside = join(f.root, "outside");
     mkdirSync(outside);
     writeFileSync(join(outside, "private.md"), "Unchanged private source");
-    symlinkSync(outside, join(candidate.worktree, "subject-knowledge/standards"));
-    assert.throws(() => om.writeProposalFile(candidate.worktree, "subject-knowledge/standards/private.md", "Changed"), /ProposalPathNotAllowed/);
-    assert.throws(() => om.proposalFile(candidate.worktree, "subject-knowledge/standards/private.md"), /ProposalPathNotAllowed/);
-    symlinkSync(join(outside, "private.md"), join(candidate.worktree, "subject-knowledge/linked.md"));
-    assert.throws(() => om.makeKnowledgeAvailable(candidate.worktree, "report-authoring", ["subject-knowledge/linked.md"]), /ProposalPathNotAllowed/);
+    const tracked = "subject-knowledge/example.md";
+    unlinkSync(join(directory, tracked));
+    symlinkSync(join(outside, "private.md"), join(directory, tracked));
+    await assert.rejects(() => f.save(f.owner.id, "manual", tracked, "Changed"), /OmDraftSymlinkNotAllowed/);
+    assert.throws(() => f.runtime.drafts.workspace(f.owner.id, "manual"), /OmDraftSymlinkNotAllowed/);
+    unlinkSync(join(directory, tracked));
+    writeFileSync(join(directory, tracked), knowledge("example"));
+    symlinkSync(outside, join(directory, "subject-knowledge/standards"));
+    await assert.rejects(() => f.save(f.owner.id, "manual", "subject-knowledge/standards/private.md", "Changed"), /OmPathNotAllowed/);
     assert.equal(readFileSync(join(outside, "private.md"), "utf8"), "Unchanged private source");
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { await f.close(); }
 });

@@ -1,5 +1,5 @@
 import { UserAdministration } from "./user-administration.js";
-import { isAllowedOmDocumentPath, isAllowedProposalPath, validateWorkDefinition } from "./operating-model.js";
+import { isAllowedOmDocumentPath, validateWorkDefinition } from "./operating-model.js";
 import { materialObservation } from "./materials.js";
 import { pinnedWorkFacts, conversationMessages, CONTEXT_POLICY_VERSION } from "./work-context.js";
 import type { AccountPort, AgentRunnerPort, AppSessionPort, AppPort, AppCommandLocator, ToolSnapshotPort, EvidenceExtractorPort, EvidenceSessionPort, MeasurementPort, OmDraftPort, OperatingModelPort, OrganizationContributionPort, PasswordCodecPort, PasswordSetupPort, ReflectionAgentPort, ReflectionRunStore, ReflectionLens, ReflectionRecord, SessionGrant, SystemPort, TrajectoryPort, WorkFeedbackKind, WorkListFilters, WorkPort, WorkAgentTool, WorkActivity } from "./ports.js";
@@ -31,7 +31,7 @@ export class ForgeUseCases {
     return workType === "report-authoring" ? this.ports.reportWorkDefinitionId ?? workType : workType;
   }
 
-  async bootstrap(input: { token: string; reportId?: string; entityId?: string; workType?: "report-authoring" | "report-type-definition"; selection?: Record<string, unknown>; workId?: string }) {
+  async bootstrap(input: { token: string; reportId?: string; entityId?: string; workType?: "report-authoring"; selection?: Record<string, unknown>; workId?: string }) {
     const workType = input.workType ?? "report-authoring";
     const entityId = input.entityId ?? input.reportId;
     if (!entityId || workType !== "report-authoring") throw new Error("UnsupportedAppContext");
@@ -740,7 +740,7 @@ export class ForgeUseCases {
   }
 
   async organizationOmFile(actorUserId: string, path: string, revision?: string) {
-    if (!isAllowedProposalPath(path)) throw new Error("InvalidOmPath");
+    if (!isAllowedOmDocumentPath(path)) throw new Error("InvalidOmPath");
     const snapshot = await this.organizationOm(actorUserId, revision);
     if (!snapshot.files.includes(path)) throw new Error("OmFileNotFound");
     return { path, revision: snapshot.revision, content: await this.ports.om.document(snapshot.revision, path) };
@@ -828,7 +828,7 @@ export class ForgeUseCases {
     if (!selectedPaths.length || new Set(selectedPaths).size !== selectedPaths.length || selectedPaths.some((path) => !isAllowedOmDocumentPath(path) || !comparison.changedPaths.includes(path))) throw new Error("InvalidContributionSelection");
     const trailer = (value: string) => value.replace(/\s+/g, " ").trim();
     const message = ["Save selected organization OM contribution", "", `AiricForge-Contribution: ${record.id}`, `AiricForge-Author: ${record.authorUserId}`, `AiricForge-Source-Revision: ${record.sourceRevision}`, `AiricForge-Reason: ${trailer(record.reason)}`, `AiricForge-Base: ${mainRevision}`, `AiricForge-Selected-Paths: ${JSON.stringify(selectedPaths)}`].join("\n");
-    const candidate = await this.ports.om.prepareContribution(id, record.sourceRevision, comparison.baseRevision, mainRevision, selectedPaths, message, record.reviewedRevision);
+    const candidate = await this.ports.om.prepareContribution(id, record.sourceRevision, comparison.baseRevision, mainRevision, selectedPaths, message, record.reviewedRevision!);
     await this.validateOmCandidate(candidate.revision);
     await organization.saveSelection(id, record.reviewedRevision!, candidate.revision);
     return (await organization.contribution(id))!;
@@ -872,7 +872,7 @@ export class ForgeUseCases {
   }
   async listWorks(actorUserId: string, filters: WorkListFilters, page = 1) {
     if (!Number.isSafeInteger(page) || page < 1 || page > 100_000) throw new Error("InvalidWorkPage");
-    if (filters.workType && !["report-authoring", "report-type-definition"].includes(filters.workType)) throw new Error("InvalidWorkFilter");
+    if (filters.workType && !["report-authoring"].includes(filters.workType)) throw new Error("InvalidWorkFilter");
     if (filters.status && !["active", "completed"].includes(filters.status)) throw new Error("InvalidWorkFilter");
     if (filters.ownerUserId) await this.authorizedOmOwner(actorUserId, filters.ownerUserId);
     else await this.requireAdmin(actorUserId);
@@ -920,17 +920,17 @@ export class ForgeUseCases {
   async savePersonalOmDraft(actorUserId: string, ownerUserId: string, path: string, content: string, baseRevision: string) {
     await this.users.requireActive(actorUserId);
     if (actorUserId !== ownerUserId) throw new Error("Forbidden");
-    if (!isAllowedProposalPath(path) || typeof content !== "string" || content.length > 100_000 || !content.trim()) throw new Error("InvalidOmDraft");
+    if (!isAllowedOmDocumentPath(path) || typeof content !== "string" || content.length > 100_000 || !content.trim()) throw new Error("InvalidOmDraft");
     const snapshot = await this.personalOm(actorUserId, ownerUserId);
     if (snapshot.activeRevision !== baseRevision) throw new Error("OmDraftBaseChanged");
     if (!snapshot.files.includes(path)) throw new Error("OmFileNotFound");
     if (!this.ports.omDrafts) throw new Error("OmDraftsUnavailable");
     const draft = { ownerUserId, path, content, baseRevision, updatedAt: this.ports.system.now() };
-    if (this.omChanges) {
+    if (!this.omChanges) throw new Error("OmDraftsUnavailable");
+    {
       const workspace = await this.omChanges.read(actorUserId, "manual");
       await this.omChanges.save(actorUserId, "manual", { baseRevision, summary: workspace.summary || "Update personal OM", edits: [...workspace.edits.filter((edit) => edit.path !== path), { path, content }] });
     }
-    else await this.ports.omDrafts.saveDraft(draft);
     return draft;
   }
 
@@ -938,13 +938,13 @@ export class ForgeUseCases {
     await this.users.requireActive(actorUserId);
     if (actorUserId !== ownerUserId) throw new Error("Forbidden");
     await this.personalOm(actorUserId, ownerUserId);
-    if (!isAllowedProposalPath(path)) throw new Error("InvalidOmPath");
+    if (!isAllowedOmDocumentPath(path)) throw new Error("InvalidOmPath");
     if (!this.ports.omDrafts) throw new Error("OmDraftsUnavailable");
-    if (this.omChanges) {
+    if (!this.omChanges) throw new Error("OmDraftsUnavailable");
+    {
       const workspace = await this.omChanges.read(actorUserId, "manual");
       if (workspace.edits.length) await this.omChanges.save(actorUserId, "manual", { baseRevision: workspace.baseRevision, summary: workspace.summary, edits: workspace.edits.filter((edit) => edit.path !== path) });
     }
-    else await this.ports.omDrafts.discardDraft(ownerUserId, path);
   }
 
   private async omManifest(snapshot: { revision: string; files: string[] }, path: string) {

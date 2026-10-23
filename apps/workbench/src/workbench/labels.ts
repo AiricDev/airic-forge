@@ -17,12 +17,8 @@ export const activityLabel: Record<string, string> = {
   turns: "Turn 总数",
   reflections: "Reflection 总数",
   personalOmCommits: "个人 OM 提交",
-  legacyPersonalProposals: "历史个人 Proposal",
-  legacyAdoptedPersonalProposals: "历史已采纳个人 Proposal",
   organizationContributions: "组织贡献",
   acceptedOrganizationContributions: "已吸收组织贡献",
-  legacySynchronizedProposals: "历史已采纳组织同步",
-  legacyMedianPersonalProposalHours: "历史 Proposal 采纳中位耗时",
   medianOrganizationReviewHours: "组织贡献吸收中位耗时",
 };
 export function baselineValue(key: string, value: number | null): string {

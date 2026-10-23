@@ -24,7 +24,7 @@ async function fixture(agent: ReflectionAgentPort) {
   const other = testUser(runtime.db, "stream-other@example.invalid", false);
   const admin = testUser(runtime.db, "stream-admin@example.invalid", true);
   runtime.om.ensureUserBranch(owner.id);
-  const work = runtime.db.createWork(owner.id, "certreporter", "report-authoring", "report");
+  const work = runtime.db.createWork(owner.id, "certlab", "report-authoring", "report");
   runtime.trajectories.append({ id: "source-event", workId: work.id, type: "message", at: "now", payload: { text: "Evidence" } });
   const { reflection } = await runtime.useCases.openWorkReflection(owner.id, work.id);
   const app = buildServer(runtime);
@@ -145,7 +145,7 @@ test("saved snapshots survive database restart and interrupted runs are not re-e
   let db = new ForgeDatabase(root);
   try {
     const user = testUser(db, "restart@example.invalid", false);
-    const work = db.createWork(user.id, "certreporter", "report-authoring", "report");
+    const work = db.createWork(user.id, "certlab", "report-authoring", "report");
     const reflection = db.openReflection({ workId: work.id, ownerUserId: user.id, lensId: "conversation", lensVersion: 0, lensPrompt: "", question: "", evidenceEventIds: [], omRevision: "revision" }, "Intro");
     const run = db.createReflectionRun({ id: "run", reflectionId: reflection.id, ownerUserId: user.id, requestId: "request-1", message: "Discuss", status: "running", sequence: 1, text: "Partial", tools: [], createdAt: "now", updatedAt: "now" });
     assert.throws(() => db.createReflectionRun({ ...run, id: "duplicate" }));

@@ -9,7 +9,7 @@ runtime
 **/coverage
 **/*.tsbuildinfo
 **/__pycache__
-deploy/p0/state
 
+# Local deployment state and secrets are not build inputs.
+deploy/
 apps/workbench/public
-prototype

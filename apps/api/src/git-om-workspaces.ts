@@ -10,7 +10,7 @@ export class GitOmWorkspaces implements OmWorkspacePort {
   constructor(private readonly om: PersonalGitOperatingModel) {}
 
   directory(owner: string, scope: string) {
-    if (!/^[a-zA-Z0-9_-]+$/.test(owner) || !/^(manual|sync|reflection:[a-zA-Z0-9_-]+|archive:[a-zA-Z0-9_-]+)$/.test(scope)) throw new Error("InvalidOmScope");
+    if (!/^[a-zA-Z0-9_-]+$/.test(owner) || !/^(manual|sync|reflection:[a-zA-Z0-9_-]+)$/.test(scope)) throw new Error("InvalidOmScope");
     const directory = resolve(realpathSync(this.om.dataDir), "worktrees", "drafts", owner, scope);
     let current = directory;
     while (current !== dirname(current)) {
@@ -90,13 +90,5 @@ export class GitOmWorkspaces implements OmWorkspacePort {
     if (!draft) return [];
     const updatedAt = statSync(this.contextPath(this.directory(owner, "manual"))).mtime.toISOString();
     return draft.edits.filter((edit) => edit.content !== null).map((edit) => ({ ownerUserId: owner, path: edit.path, content: edit.content!, baseRevision: draft.baseRevision, updatedAt }));
-  }
-  saveDraft(draft: OmDraft): void {
-    const current = this.workspace(draft.ownerUserId, "manual");
-    this.saveWorkspace({ ownerUserId: draft.ownerUserId, scope: "manual", baseRevision: draft.baseRevision, summary: current?.summary || "Update personal OM", conflicts: [], edits: [...(current?.edits ?? []).filter((edit) => edit.path !== draft.path), { path: draft.path, content: draft.content }] });
-  }
-  discardDraft(owner: string, path: string): void {
-    const current = this.workspace(owner, "manual");
-    if (current) this.saveWorkspace({ ...current, edits: current.edits.filter((edit) => edit.path !== path) });
   }
 }

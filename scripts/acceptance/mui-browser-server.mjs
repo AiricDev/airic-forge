@@ -8,18 +8,12 @@ import { ForgeRuntime } from '../../apps/api/dist/runtime.js';
 import { buildServer } from '../../apps/api/dist/server.js';
 import { hashPassword, verifyPassword } from '../../apps/api/dist/auth.js';
 import { systemPort } from '../../apps/api/dist/system-port.js';
-import { createTestOmCommit } from '../../apps/api/dist/test-proposal-fixture.js';
+import { createTestOmCommit } from '../../apps/api/dist/om-commit-fixture.js';
 import { testCatalog } from '../../apps/api/dist/certlab-test-catalog.js';
 const root = mkdtempSync(join(tmpdir(), 'airic-mui-e2e-'));
 const port = Number(process.env.FORGE_E2E_PORT || 4189);
 const seed = join(root, 'seed');
 cpSync(resolve('seed/certlab'), seed, { recursive: true });
-// Retain the legacy read-only Work-type filter fixture, not a live App capability.
-const legacyType = join(seed, 'work-definitions/report-type-definition');
-mkdirSync(legacyType, { recursive: true });
-cpSync(join(seed, 'work-definitions/report-authoring'), legacyType, { recursive: true });
-const manifestPath = join(legacyType, 'work.yml');
-writeFileSync(manifestPath, readFileSync(manifestPath, 'utf8').replace(/^id: report-authoring$/m, 'id: report-type-definition'));
 const runtime = new ForgeRuntime({ port, bindHost: '127.0.0.1', projectDir: join(root, 'project'), dataDir: join(root, 'data'), seedProjectDir: seed, webDistDir: resolve('apps/workbench/public'), certLabUrl: 'http://127.0.0.1:1', organizationId: 'synthetic-mui-institution', allowedOrigin: `http://127.0.0.1:${port}`, testIdentitySwitch: true });
 function pause(ms, signal) {
   return new Promise((resolve, reject) => {
@@ -61,6 +55,12 @@ const reflectionAgent = { analyze: async (input) => {
     await input.writeDraftFile?.(`subject-knowledge/${id}.md`, `---\nid: ${id}\ntitle: Evidence location\nsummary: Keep source locations.\ntopics: [evidence]\n---\n\nKeep source locations for every extracted fact.\n`, ids, '记录每条事实的证据位置');
     return { outcome: 'changes', analysis: '应保留证据位置。', attribution: '这个 Work 中出现了证据定位问题。', changeSummary: '记录每条事实的证据位置', citedEventIds: ids, edits: [] };
   }
+  if (input.lens.id === 'delegation-gap') {
+    const path = 'work-definitions/report-authoring/recovery.md';
+    const original = runtime.om.document(input.scope.omRevision, path);
+    await input.writeDraftFile?.(path, original + '\n\nPreserve the source of unresolved observations.\n', ids, '澄清未决观察的交接方法');
+    return { outcome: 'changes', analysis: '准备未决观察的交接方法。', attribution: '该 Work 需要明确交接来源。', changeSummary: '澄清未决观察的交接方法', citedEventIds: ids, edits: [] };
+  }
   if (input.lens.id === 'api-suggestion') return { outcome: 'api-suggestion', analysis: '需要证据位置能力。', attribution: '能力缺口', citedEventIds: ids, suggestionMarkdown: '# API Suggestion\n\nAdd report.evidence-location.' };
   return { outcome: 'analysis', analysis: '可以继续讨论这个 Work。', attribution: '', citedEventIds: ids };
 } };
@@ -87,8 +87,8 @@ await createTestOmCommit(runtime, owner.id, [{ path: policy, content: runtime.om
 const contribution = await runtime.useCases.createOrganizationContribution(admin.id, owner.id, '分享证据定位方法', 'Work reference');
 // Leave this contribution open for the full governance flow in the browser.
 for (let index = 0; index < 45; index++) {
-  const work = runtime.db.createWork(owner.id, 'certlab', index % 2 ? 'report-type-definition' : 'report-authoring', `mui-report-${index}`);
-  if (index !== 44) runtime.db.setWorkEntityTitle(work.id, index === 0 ? '设备安全报告' : index % 2 ? `设备检验报告类型 ${index}` : `设备检验报告 ${index}`);
+  const work = runtime.db.createWork(owner.id, 'certlab', 'report-authoring', `mui-report-${index}`);
+  if (index !== 44) runtime.db.setWorkEntityTitle(work.id, index === 0 ? '设备安全报告' : `设备检验报告 ${index}`);
   const revision = runtime.om.head(`users/${owner.id}`);
   const count = index === 0 ? 15 : 1;
   for (let turnIndex = 0; turnIndex < count; turnIndex++) {
@@ -100,7 +100,7 @@ for (let index = 0; index < 45; index++) {
   }
   if (index < 4) {
     await runtime.useCases.openWorkReflection(owner.id, work.id);
-    await runtime.useCases.startReflectionConversation(owner.id, work.id, index === 2 ? '/api-suggestion 分析能力缺口' : index === 0 || index === 3 ? '/domain-knowledge 记录证据定位方法' : '讨论证据位置');
+    await runtime.useCases.startReflectionConversation(owner.id, work.id, index === 2 ? '/api-suggestion 分析能力缺口' : index === 3 ? '/delegation-gap 改进交接方法' : index === 0 ? '/domain-knowledge 记录证据定位方法' : '讨论证据位置');
   }
 }
 runtime.db.createWork(member.id, 'certlab', 'report-authoring', 'mui-member-private');

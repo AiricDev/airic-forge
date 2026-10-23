@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ForgeDatabase } from "./database.js";
+import { GitOmWorkspaces } from "./git-om-workspaces.js";
 import { omFixture } from "./om-test-fixture.js";
 const path = "work-definitions/report-authoring/policy.md";
 test("manual drafts commit directly, preserve history, survive restart and retry idempotently", async () => {
@@ -22,8 +22,8 @@ test("manual drafts commit directly, preserve history, survive restart and retry
     assert.equal((await f.runtime.useCases.personalOm(f.owner.id, f.owner.id)).activeRevision, committed.revision);
     await assert.rejects(() => f.runtime.omChanges.own(f.admin.id, f.owner.id), /Forbidden/);
     await assert.rejects(() => f.runtime.useCases.personalOm(f.other.id, f.owner.id), /Forbidden/);
-    const reopened = new ForgeDatabase(f.config.dataDir);
-    try { assert.equal(reopened.workspace(f.owner.id, "manual"), undefined); } finally { reopened.close(); }
+    const reopened = new GitOmWorkspaces(f.runtime.om);
+    assert.equal(reopened.workspace(f.owner.id, "manual"), undefined);
   } finally { await f.close(); }
 });
 test("stale drafts are preserved, can merge or resolve conflicts, and invalid content never advances HEAD", async () => {
@@ -32,9 +32,11 @@ test("stale drafts are preserved, can merge or resolve conflicts, and invalid co
     const base = f.runtime.om.head(`users/${f.owner.id}`);
     const original = f.runtime.om.document(base, path);
     const first = await f.save(f.owner.id, "manual", path, original + "\nFirst rule.\n");
-    await f.save(f.owner.id, "archive:peer", path, original + "\nSecond rule.\n");
+    const peer = await f.runtime.useCases.openPersonalReflection(f.owner.id, "Alternative method");
+    const peerScope = `reflection:${peer.reflection.id}`;
+    await f.save(f.owner.id, peerScope, path, original + "\nSecond rule.\n");
     const active = await f.runtime.omChanges.commit(f.owner.id, "manual", first.digest, "first-rule-request");
-    const stale = await f.runtime.omChanges.read(f.owner.id, "archive:peer");
+    const stale = await f.runtime.omChanges.read(f.owner.id, peerScope);
     await assert.rejects(() => f.runtime.omChanges.commit(f.owner.id, stale.scope, stale.digest, "stale-rule-request"), /ActiveRevisionChanged/);
     const merged = await f.runtime.omChanges.rebase(f.owner.id, stale.scope);
     assert.deepEqual(merged.conflicts, [path]);
@@ -46,6 +48,6 @@ test("stale drafts are preserved, can merge or resolve conflicts, and invalid co
     await assert.rejects(() => f.runtime.omChanges.commit(f.owner.id, "manual", bad.digest, "invalid-rule-request"), /InvalidOperatingModel/);
     assert.equal(f.runtime.om.head(`users/${f.owner.id}`), result.revision);
     assert.equal(f.runtime.drafts.workspace(f.owner.id, "manual")?.edits.length, 1);
-    await assert.rejects(() => f.save(f.owner.id, "archive:bad", "../private.md", "not allowed"), /InvalidOmDraft/);
+    await assert.rejects(() => f.save(f.owner.id, "manual", "../private.md", "not allowed"), /InvalidOmDraft/);
   } finally { await f.close(); }
 });

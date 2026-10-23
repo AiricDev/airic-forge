@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isAllowedProposalPath, validateWorkDefinition, type WorkDefinition } from "./operating-model.js";
+import { isAllowedOmDocumentPath, validateWorkDefinition, type WorkDefinition } from "./operating-model.js";
 
 const definition: WorkDefinition = {
   schemaVersion: 1,
@@ -22,6 +22,6 @@ test("work definition still rejects unresolved knowledge", () => {
 });
 
 test("governed nested knowledge and precedents never allow traversal or arbitrary source files", () => {
-  for (const path of ["subject-knowledge/standards/semi-s2/0724/clauses/12-2-3/interpretation.md", "precedents/semi-s2/0724/circuit.md", "subject-knowledge/standards/README.md"]) assert.equal(isAllowedProposalPath(path), true);
-  for (const path of ["design/source-inventory.json", "subject-knowledge/../secret.md", "/subject-knowledge/test.md", "precedents/x/.git/config", "precedents//test.md", "work-definitions/x/nested/policy.md"]) assert.equal(isAllowedProposalPath(path), false);
+  for (const path of ["subject-knowledge/standards/semi-s2/0724/clauses/12-2-3/interpretation.md", "precedents/semi-s2/0724/circuit.md", "subject-knowledge/standards/README.md"]) assert.equal(isAllowedOmDocumentPath(path), true);
+  for (const path of ["design/source-inventory.json", "subject-knowledge/../secret.md", "/subject-knowledge/test.md", "precedents/x/.git/config", "precedents//test.md", "work-definitions/x/nested/policy.md"]) assert.equal(isAllowedOmDocumentPath(path), false);
 });

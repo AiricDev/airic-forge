@@ -154,7 +154,7 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
     const rawPage = request.query.page ?? "1";
     if (!/^[1-9]\d{0,5}$/.test(rawPage) || Number(rawPage) > 100_000) return reply.code(400).send({ error: "InvalidWorkPage" });
-    try { return reply.send(await runtime.useCases.listWorks(actorId, { ...(request.query.ownerId ? { ownerUserId: request.query.ownerId } : {}), ...(request.query.workType ? { workType: request.query.workType as "report-authoring" | "report-type-definition" } : {}), ...(request.query.status ? { status: request.query.status as "active" | "completed" } : {}) }, Number(rawPage))); }
+    try { return reply.send(await runtime.useCases.listWorks(actorId, { ...(request.query.ownerId ? { ownerUserId: request.query.ownerId } : {}), ...(request.query.workType ? { workType: request.query.workType as "report-authoring" } : {}), ...(request.query.status ? { status: request.query.status as "active" | "completed" } : {}) }, Number(rawPage))); }
     catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 400).send({ error: error instanceof Error ? error.message : "WorkListFailed" }); }
   });
 

@@ -7,7 +7,7 @@ export type ActionStatus = "pending" | "succeeded" | "rejected" | "unknown";
 export interface WorkKey {
   ownerUserId: string;
   appId: "certlab";
-  workType: "report-authoring" | "report-type-definition";
+  workType: "report-authoring";
   entityId: string;
 }
 

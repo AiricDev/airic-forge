@@ -21,7 +21,7 @@ export interface SessionGrant {
   sessionId: string;
   appToken: string;
   reportId: string;
-  workType?: "report-authoring" | "report-type-definition";
+  workType?: "report-authoring";
   entityId?: string;
   selection?: Record<string, unknown>;
 }
@@ -56,7 +56,7 @@ export interface ReflectionRunStore {
   interruptReflectionRuns(now: string): void;
 }
 export interface WorkListFilters { ownerUserId?: string; workType?: Work["workType"]; status?: Work["status"]; }
-export interface OrganizationContribution { id: string; authorUserId: string; sourceRevision: string; baseMainRevision: string; reason: string; evidence: string; status: "open" | "accepted"; selectedPaths: string[]; candidateBranch?: string; candidateWorktree?: string; reviewedRevision?: string; selectionRevision?: string; acceptedRevision?: string; acceptedAt?: string; createdAt: string; }
+export interface OrganizationContribution { id: string; authorUserId: string; sourceRevision: string; baseMainRevision: string; reason: string; evidence: string; status: "open" | "accepted"; selectedPaths: string[]; candidateBranch?: string; reviewedRevision?: string; selectionRevision?: string; acceptedRevision?: string; acceptedAt?: string; createdAt: string; }
 export interface OrganizationContributionPort {
   createContribution(record: OrganizationContribution): MaybePromise<void>;
   contribution(id: string): MaybePromise<OrganizationContribution | undefined>;
@@ -69,7 +69,7 @@ export interface WorkFeedback { id: string; workId: string; ownerUserId: string;
 export interface MeasurementPort {
   recordFeedback(feedback: WorkFeedback): MaybePromise<void>;
   feedbackForWork(workId: string): MaybePromise<WorkFeedback[]>;
-  activityCounts(): MaybePromise<{ works: number; completedWorks: number; turns: number; reflections: number; legacyPersonalProposals: number; legacyAdoptedPersonalProposals: number; legacySynchronizedProposals: number; legacyMedianPersonalProposalHours: number | null }>;
+  activityCounts(): MaybePromise<{ works: number; completedWorks: number; turns: number; reflections: number }>;
   feedbackCounts(): MaybePromise<Record<WorkFeedbackKind, number>>;
 }
 export interface TurnRecord { id: string; workId: string; sequence: number; status: string; omRevision: string; catalogDigest: string; contextDigest: string; startedAt: string; }
@@ -77,8 +77,6 @@ export interface TrajectoryEvent { id: string; workId: string; turnId?: string; 
 export interface OmDraft { ownerUserId: string; path: string; baseRevision: string; content: string; updatedAt: string; }
 export interface OmDraftPort {
   draftsForUser(ownerUserId: string): MaybePromise<OmDraft[]>;
-  saveDraft(draft: OmDraft): MaybePromise<void>;
-  discardDraft(ownerUserId: string, path: string): MaybePromise<void>;
 }
 
 export interface AccountPort extends UserAdministrationPort {
@@ -140,24 +138,11 @@ export interface OperatingModelPort {
   knownKnowledge(revision: string): MaybePromise<Set<string>>;
   knowledgePath?(revision: string, id: string): MaybePromise<string>;
   knowledgeIssues(revision: string): MaybePromise<ValidationIssue[]>;
-  createProposal(userId: string, proposalId: string, baseRevision: string): MaybePromise<{ branch: string; worktree: string }>;
-  writeProposalFile(worktree: string, path: string, content: string): MaybePromise<void>;
-  makeKnowledgeAvailable(worktree: string, workDefinitionId: string, knowledgePaths: string[]): MaybePromise<void>;
-  proposalChanges(worktree: string): MaybePromise<string[]>;
-  proposalChangedPaths(worktree: string, baseRevision: string): MaybePromise<string[]>;
-  proposalConflicts(worktree: string): MaybePromise<string[]>;
-  proposalFile(worktree: string, path: string): MaybePromise<string>;
-  proposalDiff(worktree: string, baseRevision: string): MaybePromise<string>;
-  commitProposal(worktree: string, title: string): MaybePromise<void>;
-  rebaseProposal(worktree: string, oldBase: string, newBase: string): MaybePromise<void>;
-  adoptProposal(userBranch: string, userWorktree: string, proposalBranch: string, baseRevision: string, trailers: Record<string, string>): MaybePromise<string>;
   /** Personal changes still different from the target, excluding target-only updates; retain the merge base for review. */
   divergence(sourceRevision: string, targetRevision: string): MaybePromise<{ baseRevision: string; changedPaths: string[]; diff: string }>;
   pinContributionSource(contributionId: string, sourceRevision: string): MaybePromise<void>;
-  prepareContribution(contributionId: string, sourceRevision: string, baseRevision: string, mainRevision: string, selectedPaths: string[], message: string, expectedCandidateRevision?: string): MaybePromise<{ branch: string; worktree: string; revision: string }>;
+  prepareContribution(contributionId: string, sourceRevision: string, baseRevision: string, mainRevision: string, selectedPaths: string[], message: string, expectedCandidateRevision: string): MaybePromise<{ revision: string }>;
   acceptContribution(candidateBranch: string, expectedMainRevision: string, expectedCandidateRevision?: string, reviewer?: string): MaybePromise<string>;
-  synchronizeProposal(worktree: string, personalRevision: string, mainRevision: string): MaybePromise<void>;
-  adoptSynchronizedProposal(userBranch: string, userWorktree: string, proposalBranch: string, baseRevision: string, expectedMainRevision: string, trailers: Record<string, string>): MaybePromise<string>;
 }
 
 export interface PasswordCodecPort { hash(password: string): string; verify(password: string, hash: string): boolean; }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { omFixture } from "./om-test-fixture.js";
-import { createTestOmCommit } from "./test-proposal-fixture.js";
+import { createTestOmCommit } from "./om-commit-fixture.js";
 import { git } from "./personal-git-om.js";
 
 const policy = "work-definitions/report-authoring/policy.md";

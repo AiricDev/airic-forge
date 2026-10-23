@@ -21,11 +21,11 @@ export class GitContributions implements OrganizationContributionPort {
     const revision = git(this.om.projectDir, ["commit-tree", tree, "-p", record.baseMainRevision], message);
     git(this.om.projectDir, ["update-ref", `refs/heads/${branch}`, revision, "0".repeat(40)]);
   }
-  contribution(id: string, historicalRevision?: string): OrganizationContribution | undefined {
+  contribution(id: string): OrganizationContribution | undefined {
     const branch = this.branch(id);
     const refs = git(this.om.projectDir, ["for-each-ref", "--format=%(refname:short)", `refs/heads/${branch}`]).split("\n");
-    if (!historicalRevision && !refs.includes(branch)) return undefined;
-    const revision = historicalRevision ?? this.om.head(branch);
+    if (!refs.includes(branch)) return undefined;
+    const revision = this.om.head(branch);
     const commits = git(this.om.projectDir, ["log", "--first-parent", "--fixed-strings", `--grep=AiricForge-Contribution: ${id}`, "--format=%H", revision]).split("\n").filter(Boolean);
     const metadata = commits.map((commit) => ({ commit, message: git(this.om.projectDir, ["show", "-s", "--format=%B", commit]) }))
       .filter(({ message }) => trailer(message, "Contribution") === id && trailer(message, "Source-Revision") && trailer(message, "Author"));
@@ -35,7 +35,7 @@ export class GitContributions implements OrganizationContributionPort {
     const accepted = this.om.includesRevision("main", revision);
     const selectedPaths = git(this.om.projectDir, ["diff", "--no-renames", "--name-only", baseMainRevision, revision]).split("\n").filter(Boolean);
     const tipMessage = git(this.om.projectDir, ["show", "-s", "--format=%B", revision]);
-    const selectionRevision = trailer(tipMessage, "Selected-Paths") || (metadata.length === 1 && first.commit === revision && /^Accept selected organization OM contribution\n/.test(tipMessage)) ? revision : undefined;
+    const selectionRevision = trailer(tipMessage, "Selected-Paths") ? revision : undefined;
     let acceptedRevision: string | undefined;
     if (accepted) {
       acceptedRevision = git(this.om.projectDir, ["rev-list", "--first-parent", "--reverse", `${baseMainRevision}..main`]).split("\n").find((commit) => commit && this.om.includesRevision(commit, revision)) ?? revision;

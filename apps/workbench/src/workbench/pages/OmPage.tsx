@@ -225,7 +225,6 @@ export function OmPage({
                   "work-definitions",
                   "subject-knowledge",
                   "work-definitions/report-authoring",
-                  "work-definitions/report-type-definition",
                 ]}
                 selectedItems={path}
                 onSelectedItemsChange={(_, value) => {

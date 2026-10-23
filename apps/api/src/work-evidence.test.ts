@@ -48,7 +48,6 @@ test("single-report Work binds record number and current-Turn evidence through G
   try {
     const evidenceSessions = new InMemoryEvidenceSessionStore();
     const useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, app, toolSnapshots: runtime.db, agents, sessions: new InMemoryAppSessionStore(), evidenceExtractor: new LocalEvidenceExtractor(), evidenceSessions, passwordSetups: new InMemoryPasswordSetupStore(), passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort,  });
-    await assert.rejects(() => useCases.bootstrap({ token: "app-token", workType: "report-type-definition", entityId: "type-1" }), /UnsupportedAppContext/);
     const session = await useCases.bootstrap({ token: "app-token", reportId: "report-1" });
     assert.equal(session.work.workType, "report-authoring");
     const candidate = catalog;
@@ -69,6 +68,7 @@ test("single-report Work binds record number and current-Turn evidence through G
 
 test("evidence extraction rejects unsupported and unreadable files", async () => {
   const extractor = new LocalEvidenceExtractor();
+  await assert.rejects(() => extractor.extract("manual.docx", "application/octet-stream", new Uint8Array([1])), /UnsupportedEvidenceType/);
   await assert.rejects(() => extractor.extract("wrong.png", "application/octet-stream", new Uint8Array([1])), /UnsupportedEvidenceType/);
   await assert.rejects(() => extractor.extract("empty.txt", "text/plain", new TextEncoder().encode("  \n")), /EvidenceHasNoReadableText/);
 });

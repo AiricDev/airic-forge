@@ -16,8 +16,6 @@ import { PiReflectionAgentRunner } from "./pi-reflection-agent.js";
 import { InMemoryEvidenceSessionStore, LocalEvidenceExtractor } from "./evidence.js";
 import { GitOmWorkspaces } from "./git-om-workspaces.js";
 import { GitContributions } from "./git-contributions.js";
-import { migrateOmStateToGit } from "./om-git-migration.js";
-import { migrateOmDrafts } from "./om-migration.js";
 
 /** Composition root only. Application policy lives in ForgeUseCases. */
 export class ForgeRuntime {
@@ -45,10 +43,6 @@ export class ForgeRuntime {
     this.app = new CertLabClient(config.certLabUrl, config.organizationId);
     this.instanceSettings = { operatingModel: { repositoryPath: config.projectDir, dataPath: config.dataDir, personalWorktreesPath: join(config.dataDir, "worktrees", "users") }, integration: this.app.describeIntegration() };
     this.om.initialize();
-    if (migrateOmDrafts(this.db, this.om).length || migrateOmStateToGit(this.db, this.om).report.length) {
-      this.db.close();
-      throw new Error("OmGitMigrationRequired: stop the service, back up project and data, then run scripts/migrate-personal-om.mjs --apply");
-    }
     this.drafts = new GitOmWorkspaces(this.om);
     this.organization = new GitContributions(this.om);
     this.omChanges = new PersonalOmChanges({ accounts: this.db, om: this.om, drafts: this.drafts, system: systemPort });

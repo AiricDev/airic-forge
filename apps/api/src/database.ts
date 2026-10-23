@@ -2,10 +2,10 @@ import { isDeepStrictEqual } from "node:util";
 import { mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { AppToolSnapshot, ForgeUser, OmDraft, OrganizationContribution, ReflectionLens, ReflectionMessage, ReflectionOutcome, ReflectionRecord, ReflectionRun, TurnRecord, UserRole, Work, WorkFeedback, WorkFeedbackKind, WorkListFilters } from "@airic-forge/domain";
+import type { AppToolSnapshot, ForgeUser, ReflectionLens, ReflectionMessage, ReflectionOutcome, ReflectionRecord, ReflectionRun, TurnRecord, UserRole, Work, WorkFeedback, WorkFeedbackKind, WorkListFilters } from "@airic-forge/domain";
 import { changedUser, validateUserChange, type UserChange, type UserDetail, type UserAdminEvent } from "@airic-forge/domain";
 import { id, normalizeEmail } from "./ids.js";
-import type { OmWorkspace, GitToken } from "@airic-forge/domain";
+import type { GitToken } from "@airic-forge/domain";
 
 export class ForgeDatabase {
   readonly #db: DatabaseSync;
@@ -16,43 +16,15 @@ export class ForgeDatabase {
       if (!statSync(path).isFile()) throw new Error("ExistingForgeDatabaseRequired");
     } else mkdirSync(dataDir, { recursive: true });
     this.#db = new DatabaseSync(path);
-    // Local maintenance must not initialize schema, migrate catalogs, or change journal mode.
+    // Local maintenance must not initialize schema or change journal mode.
     if (options.existingOnly) return;
     this.#db.exec("PRAGMA busy_timeout = 5000");
     this.#db.exec("PRAGMA journal_mode = WAL");
-    this.#migrate();
-    this.#migrateUsers();
+    this.#initializeSchema();
   }
 
   close(): void { this.#db.close(); }
 
-  legacyOmProposals(): Array<Record<string, unknown>> { return this.#db.prepare("SELECT * FROM proposals ORDER BY created_at, id").all() as Array<Record<string, unknown>>; }
-  omMigrationDone(source: string): boolean { return Boolean(this.#db.prepare("SELECT 1 FROM om_legacy_migrations WHERE source=?").get(source)); }
-  recordOmMigration(source: string): void { this.#db.prepare("INSERT OR IGNORE INTO om_legacy_migrations (source) VALUES (?)").run(source); }
-  saveMigratedWorkspace(source: string, workspace: OmWorkspace): void {
-    this.#db.exec("BEGIN IMMEDIATE");
-    try {
-      this.saveWorkspace(workspace);
-      this.#db.prepare("INSERT INTO om_legacy_migrations (source) VALUES (?)").run(source);
-      this.#db.exec("COMMIT");
-    } catch (error) { this.#db.exec("ROLLBACK"); throw error; }
-  }
-
-  workspace(ownerUserId: string, scope: string): OmWorkspace | undefined {
-    const row = this.#db.prepare("SELECT snapshot_json FROM om_workspaces WHERE owner_user_id=? AND scope=?").get(ownerUserId, scope) as { snapshot_json: string } | undefined;
-    return row ? JSON.parse(row.snapshot_json) as OmWorkspace : undefined;
-  }
-  workspaces(ownerUserId: string): OmWorkspace[] {
-    return (this.#db.prepare("SELECT snapshot_json FROM om_workspaces WHERE owner_user_id=? ORDER BY scope").all(ownerUserId) as Array<{ snapshot_json: string }>).map((row) => JSON.parse(row.snapshot_json) as OmWorkspace);
-  }
-  saveWorkspace(workspace: OmWorkspace): void {
-    this.#db.prepare("INSERT INTO om_workspaces VALUES (?, ?, ?) ON CONFLICT(owner_user_id, scope) DO UPDATE SET snapshot_json=excluded.snapshot_json").run(workspace.ownerUserId, workspace.scope, JSON.stringify(workspace));
-  }
-  discardWorkspace(ownerUserId: string, scope: string): void {
-    const saved = this.workspace(ownerUserId, scope);
-    if (scope === "manual" && saved) for (const edit of saved.edits) this.#db.prepare("DELETE FROM om_drafts WHERE owner_user_id=? AND path=? AND content=?").run(ownerUserId, edit.path, edit.content);
-    this.#db.prepare("DELETE FROM om_workspaces WHERE owner_user_id=? AND scope=?").run(ownerUserId, scope);
-  }
   gitTokens(ownerUserId: string): GitToken[] {
     return (this.#db.prepare("SELECT * FROM git_tokens WHERE owner_user_id=? ORDER BY rowid DESC").all(ownerUserId) as Record<string, unknown>[]).map((row) => this.#gitToken(row));
   }
@@ -67,7 +39,7 @@ export class ForgeDatabase {
   revokeGitToken(ownerUserId: string, tokenId: string, at: string): void { this.#db.prepare("UPDATE git_tokens SET revoked_at=? WHERE owner_user_id=? AND id=?").run(at, ownerUserId, tokenId); }
   #gitToken(row: Record<string, unknown>): GitToken { return { id: String(row.id), ownerUserId: String(row.owner_user_id), name: String(row.name), expiresAt: String(row.expires_at), ...(row.revoked_at ? { revokedAt: String(row.revoked_at) } : {}) }; }
 
-  #migrate(): void {
+  #initializeSchema(): void {
     this.#db.exec(`
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
@@ -75,8 +47,17 @@ export class ForgeDatabase {
         role TEXT NOT NULL,
         password_hash TEXT,
         active_branch TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','draining','disabled')),
+        version INTEGER NOT NULL DEFAULT 0 CHECK(version >= 0)
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS user_admin_events (
+        id TEXT PRIMARY KEY, actor_user_id TEXT, target_user_id TEXT NOT NULL REFERENCES users(id),
+        request_id TEXT NOT NULL, reason TEXT NOT NULL, before_json TEXT NOT NULL, after_json TEXT NOT NULL,
+        at TEXT NOT NULL, input_json TEXT NOT NULL, response_json TEXT NOT NULL, UNIQUE(actor_user_id,request_id)
+      ) STRICT;
+      CREATE TRIGGER IF NOT EXISTS immutable_user_admin_update BEFORE UPDATE ON user_admin_events BEGIN SELECT RAISE(ABORT,'UserAdminHistoryImmutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_user_admin_delete BEFORE DELETE ON user_admin_events BEGIN SELECT RAISE(ABORT,'UserAdminHistoryImmutable'); END;
       CREATE TABLE IF NOT EXISTS app_identities (
         app_id TEXT NOT NULL,
         app_user_id TEXT NOT NULL,
@@ -84,20 +65,6 @@ export class ForgeDatabase {
         email TEXT NOT NULL,
         observed_at TEXT NOT NULL,
         PRIMARY KEY (app_id, app_user_id)
-      ) STRICT;
-      CREATE TABLE IF NOT EXISTS om_drafts (
-        owner_user_id TEXT NOT NULL REFERENCES users(id),
-        path TEXT NOT NULL,
-        base_revision TEXT NOT NULL,
-        content TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (owner_user_id, path)
-      ) STRICT;
-      CREATE TABLE IF NOT EXISTS om_workspaces (
-        owner_user_id TEXT NOT NULL REFERENCES users(id),
-        scope TEXT NOT NULL,
-        snapshot_json TEXT NOT NULL,
-        PRIMARY KEY (owner_user_id, scope)
       ) STRICT;
       CREATE TABLE IF NOT EXISTS git_tokens (
         id TEXT PRIMARY KEY,
@@ -107,13 +74,16 @@ export class ForgeDatabase {
         expires_at TEXT NOT NULL,
         revoked_at TEXT
       ) STRICT;
-      CREATE TABLE IF NOT EXISTS om_legacy_migrations (source TEXT PRIMARY KEY) STRICT;
       CREATE TABLE IF NOT EXISTS works (
         id TEXT PRIMARY KEY,
         owner_user_id TEXT NOT NULL REFERENCES users(id),
         app_id TEXT NOT NULL,
         work_type TEXT NOT NULL,
         entity_id TEXT NOT NULL,
+        entity_title TEXT,
+        goal TEXT,
+        app_user_id TEXT,
+        selection_json TEXT,
         status TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -151,6 +121,14 @@ export class ForgeDatabase {
         work_id TEXT REFERENCES works(id),
         owner_user_id TEXT NOT NULL REFERENCES users(id),
         lens_id TEXT NOT NULL,
+        lens_version INTEGER NOT NULL DEFAULT 1,
+        lens_prompt TEXT NOT NULL DEFAULT '',
+        evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+        om_revision TEXT NOT NULL DEFAULT '',
+        outcome TEXT,
+        analysis TEXT,
+        attribution TEXT,
+        suggestion_markdown TEXT,
         question TEXT NOT NULL,
         status TEXT NOT NULL,
         created_at TEXT NOT NULL,
@@ -167,6 +145,7 @@ export class ForgeDatabase {
         reflection_id TEXT NOT NULL REFERENCES reflections(id),
         role TEXT NOT NULL,
         content TEXT NOT NULL,
+        context_json TEXT,
         at TEXT NOT NULL
       ) STRICT;
       CREATE INDEX IF NOT EXISTS reflection_messages_order ON reflection_messages(reflection_id, at);
@@ -181,39 +160,6 @@ export class ForgeDatabase {
       ) STRICT;
       CREATE UNIQUE INDEX IF NOT EXISTS reflection_run_active
         ON reflection_runs(reflection_id) WHERE status IN ('running', 'cancelling');
-      CREATE TABLE IF NOT EXISTS proposals (
-        id TEXT PRIMARY KEY,
-        work_id TEXT REFERENCES works(id),
-        reflection_id TEXT,
-        owner_user_id TEXT NOT NULL REFERENCES users(id),
-        base_revision TEXT NOT NULL,
-        branch_ref TEXT NOT NULL,
-        worktree_path TEXT NOT NULL,
-        status TEXT NOT NULL,
-        source TEXT NOT NULL,
-        reason TEXT NOT NULL,
-        evidence TEXT NOT NULL,
-        reviewed_revision TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      ) STRICT;
-      CREATE INDEX IF NOT EXISTS proposals_work_order ON proposals(work_id, created_at DESC, id DESC);
-      CREATE TABLE IF NOT EXISTS organization_contributions (
-        id TEXT PRIMARY KEY,
-        author_user_id TEXT NOT NULL REFERENCES users(id),
-        source_revision TEXT NOT NULL,
-        base_main_revision TEXT NOT NULL,
-        reason TEXT NOT NULL,
-        evidence TEXT NOT NULL,
-        status TEXT NOT NULL,
-        selected_paths_json TEXT NOT NULL,
-        candidate_branch TEXT,
-        candidate_worktree TEXT,
-        reviewed_revision TEXT,
-        accepted_revision TEXT,
-        accepted_at TEXT,
-        created_at TEXT NOT NULL
-      ) STRICT;
       CREATE TABLE IF NOT EXISTS work_feedback (
         id TEXT PRIMARY KEY,
         work_id TEXT NOT NULL REFERENCES works(id),
@@ -230,87 +176,12 @@ export class ForgeDatabase {
       CREATE TRIGGER IF NOT EXISTS immutable_mcp_tool_snapshot_update BEFORE UPDATE ON mcp_tool_snapshots BEGIN SELECT RAISE(ABORT,'ToolSnapshotImmutable'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_mcp_tool_snapshot_delete BEFORE DELETE ON mcp_tool_snapshots BEGIN SELECT RAISE(ABORT,'ToolSnapshotImmutable'); END;
     `);
-    const proposalColumns = this.#db.prepare("PRAGMA table_info(proposals)").all() as Array<{ name: string }>;
-    if (!proposalColumns.some((column) => column.name === "source")) {
-      this.#db.exec(`
-        BEGIN;
-        CREATE TABLE proposals_v2 (
-          id TEXT PRIMARY KEY,
-          work_id TEXT REFERENCES works(id),
-          reflection_id TEXT,
-          owner_user_id TEXT NOT NULL REFERENCES users(id),
-          base_revision TEXT NOT NULL,
-          branch_ref TEXT NOT NULL,
-          worktree_path TEXT NOT NULL,
-          status TEXT NOT NULL,
-          source TEXT NOT NULL,
-          reason TEXT NOT NULL,
-          evidence TEXT NOT NULL,
-          reviewed_revision TEXT,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        ) STRICT;
-        INSERT INTO proposals_v2 SELECT id, work_id, reflection_id, owner_user_id, base_revision, branch_ref, worktree_path, status, 'reflection', '', '', NULL, created_at, updated_at FROM proposals;
-        DROP TABLE proposals;
-        ALTER TABLE proposals_v2 RENAME TO proposals;
-        COMMIT;
-      `);
-    }
-    const upgradedColumns = this.#db.prepare("PRAGMA table_info(proposals)").all() as Array<{ name: string }>;
-    const workColumns = this.#db.prepare("PRAGMA table_info(works)").all() as Array<{ name: string }>;
-    if (!workColumns.some((column) => column.name === "entity_title")) this.#db.exec("ALTER TABLE works ADD COLUMN entity_title TEXT");
-    for (const column of ["goal", "app_user_id", "selection_json"]) if (!workColumns.some((item) => item.name === column)) this.#db.exec(`ALTER TABLE works ADD COLUMN ${column} TEXT`);
-    if (!upgradedColumns.some((column) => column.name === "reviewed_revision")) this.#db.exec("ALTER TABLE proposals ADD COLUMN reviewed_revision TEXT");
-    if (!upgradedColumns.some((column) => column.name === "upstream_revision")) this.#db.exec("ALTER TABLE proposals ADD COLUMN upstream_revision TEXT");
-    const reflectionColumns = new Set((this.#db.prepare("PRAGMA table_info(reflections)").all() as Array<{ name: string }>).map((column) => column.name));
-    for (const [name, ddl] of Object.entries({ lens_version: "INTEGER NOT NULL DEFAULT 1", lens_prompt: "TEXT NOT NULL DEFAULT ''", evidence_ids_json: "TEXT NOT NULL DEFAULT '[]'", om_revision: "TEXT NOT NULL DEFAULT ''", outcome: "TEXT", analysis: "TEXT", attribution: "TEXT", suggestion_markdown: "TEXT" })) {
-      if (!reflectionColumns.has(name)) this.#db.exec(`ALTER TABLE reflections ADD COLUMN ${name} ${ddl}`);
-    }
-    const reflectionMessageColumns = new Set((this.#db.prepare("PRAGMA table_info(reflection_messages)").all() as Array<{ name: string }>).map((column) => column.name));
-    if (!reflectionMessageColumns.has("context_json")) this.#db.exec("ALTER TABLE reflection_messages ADD COLUMN context_json TEXT");
-    const columns = this.#db.prepare("PRAGMA table_info(reflections)").all() as Array<{ name: string; type: string; notnull: number; pk: number; dflt_value: string | null }>;
-    if (columns.find((column) => column.name === "work_id")?.notnull) {
-      const schema = this.#db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='reflections'").get() as { sql: string };
-      const replacement = schema.sql.replace(/^(CREATE\s+TABLE\s+)(?:"reflections"|reflections)/i, "$1reflections_nullable").replace(/(\bwork_id\s+TEXT)\s+NOT\s+NULL/i, "$1");
-      const dependents = this.#db.prepare("SELECT sql FROM sqlite_master WHERE tbl_name='reflections' AND type IN ('index', 'trigger') AND sql IS NOT NULL").all() as Array<{ sql: string }>;
-      const foreignKeys = (this.#db.prepare("PRAGMA foreign_keys").get() as { foreign_keys: number }).foreign_keys;
-      this.#db.exec("PRAGMA foreign_keys = OFF");
-      try {
-        this.#db.exec("BEGIN IMMEDIATE");
-        try {
-          this.#db.exec(`${replacement}; INSERT INTO reflections_nullable SELECT * FROM reflections;
-            DROP TABLE reflections; ALTER TABLE reflections_nullable RENAME TO reflections;`);
-          for (const dependent of dependents) this.#db.exec(dependent.sql);
-          if (this.#db.prepare("PRAGMA foreign_key_check").all().length) throw new Error("ReflectionMigrationForeignKeyViolation");
-          this.#db.exec("COMMIT");
-        } catch (error) { this.#db.exec("ROLLBACK"); throw error; }
-      } finally { this.#db.exec(`PRAGMA foreign_keys = ${foreignKeys ? "ON" : "OFF"}`); }
-    }
     const defaults = [
       ["domain-knowledge", "Summarize reusable domain knowledge grounded in the selected Work events. If evidence supports a durable fact, propose one Subject Knowledge markdown file with YAML front matter (id, title, summary, topics). The front matter id must equal the markdown filename stem, and the knowledge will be listed in the Work Definition's knowledge.available. Otherwise return analysis only."],
       ["delegation-gap", "Identify a repeatable delegation or method gap grounded in the selected Work events. If evidence supports a narrow behavioral improvement, propose an edit to a Work Definition markdown document. Otherwise return analysis only."],
       ["api-suggestion", "Identify a missing App capability grounded in the selected Work events. Produce a human-readable API suggestion only when evidence supports a concrete gap. Never propose OM edits or imply that the capability already exists."],
     ] as const;
     for (const [lensId, prompt] of defaults) this.#db.prepare("INSERT OR IGNORE INTO reflection_lenses (id, version, enabled, prompt) VALUES (?, 1, 1, ?)").run(lensId, prompt);
-  }
-
-  legacyOmDrafts(ownerUserId: string): OmDraft[] {
-    return (this.#db.prepare("SELECT * FROM om_drafts WHERE owner_user_id=? ORDER BY updated_at DESC, path").all(ownerUserId) as Array<Record<string, unknown>>)
-      .map((row) => ({ ownerUserId: String(row.owner_user_id), path: String(row.path), baseRevision: String(row.base_revision), content: String(row.content), updatedAt: String(row.updated_at) }));
-  }
-
-  draftsForUser(ownerUserId: string): OmDraft[] {
-    const draft = this.workspace(ownerUserId, "manual");
-    return draft ? draft.edits.filter((edit) => edit.content !== null).map((edit) => ({ ownerUserId, path: edit.path, content: edit.content!, baseRevision: draft.baseRevision, updatedAt: "" })) : [];
-  }
-  saveDraft(draft: OmDraft): void {
-    const current = this.workspace(draft.ownerUserId, "manual");
-    if (current?.baseRevision && current.baseRevision !== draft.baseRevision) throw new Error("OmDraftBaseChanged");
-    this.saveWorkspace({ ownerUserId: draft.ownerUserId, scope: "manual", baseRevision: draft.baseRevision, summary: current?.summary || "Update personal OM", conflicts: [], edits: [...(current?.edits ?? []).filter((edit) => edit.path !== draft.path), { path: draft.path, content: draft.content }] });
-  }
-  discardDraft(ownerUserId: string, path: string): void {
-    const current = this.workspace(ownerUserId, "manual");
-    if (current) this.saveWorkspace({ ...current, edits: current.edits.filter((edit) => edit.path !== path) });
   }
 
   ensureUser(email: string): ForgeUser {
@@ -325,35 +196,6 @@ export class ForgeDatabase {
       this.#db.prepare("INSERT INTO users (id, email, role, active_branch, created_at, status, version) VALUES (?, ?, ?, ?, ?, ?, ?)").run(user.id, user.email, user.role, user.activeBranch, user.createdAt, user.status, user.version);
       if (first) this.#appendUserEvent(null, user.id, "initial-administrator", "First verified App user", { ...user, role: "user" }, user, "bootstrap");
       this.#db.exec("COMMIT"); return user;
-    } catch (error) { this.#db.exec("ROLLBACK"); throw error; }
-  }
-
-  #migrateUsers(): void {
-    this.#db.exec("BEGIN IMMEDIATE");
-    try {
-      const columns = new Set((this.#db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>).map(row => row.name));
-      if (!columns.has("status")) this.#db.exec("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','draining','disabled'))");
-      if (!columns.has("version")) this.#db.exec("ALTER TABLE users ADD COLUMN version INTEGER NOT NULL DEFAULT 0 CHECK(version >= 0)");
-      this.#db.exec(`CREATE TABLE IF NOT EXISTS account_migrations (name TEXT PRIMARY KEY) STRICT;
-        CREATE TABLE IF NOT EXISTS user_admin_events (
-          id TEXT PRIMARY KEY, actor_user_id TEXT, target_user_id TEXT NOT NULL REFERENCES users(id),
-          request_id TEXT NOT NULL, reason TEXT NOT NULL, before_json TEXT NOT NULL, after_json TEXT NOT NULL,
-          at TEXT NOT NULL, input_json TEXT NOT NULL, response_json TEXT NOT NULL, UNIQUE(actor_user_id,request_id)
-        ) STRICT;
-        CREATE TRIGGER IF NOT EXISTS immutable_user_admin_update BEFORE UPDATE ON user_admin_events BEGIN SELECT RAISE(ABORT,'UserAdminHistoryImmutable'); END;
-        CREATE TRIGGER IF NOT EXISTS immutable_user_admin_delete BEFORE DELETE ON user_admin_events BEGIN SELECT RAISE(ABORT,'UserAdminHistoryImmutable'); END;`);
-      if (!this.#db.prepare("SELECT 1 FROM account_migrations WHERE name='first-administrator-v1'").get()) {
-        if (!this.#db.prepare("SELECT 1 FROM users WHERE role='admin' LIMIT 1").get()) {
-          const row = this.#db.prepare("SELECT * FROM users ORDER BY created_at,rowid LIMIT 1").get() as Record<string, unknown> | undefined;
-          if (row) {
-            const before = this.#user(row), after = { ...before, role: "admin" as const, version: before.version + 1 };
-            this.#db.prepare("UPDATE users SET role='admin',version=version+1 WHERE id=?").run(before.id);
-            this.#appendUserEvent(null, before.id, "initial-administrator-upgrade", "Initialize the first existing user as administrator", before, after, "migration");
-          }
-        }
-        this.#db.prepare("INSERT INTO account_migrations VALUES ('first-administrator-v1')").run();
-      }
-      this.#db.exec("COMMIT");
     } catch (error) { this.#db.exec("ROLLBACK"); throw error; }
   }
 
@@ -617,21 +459,6 @@ export class ForgeDatabase {
   #reflection(row: Record<string, unknown>): ReflectionRecord { return { id: String(row.id), ...(row.work_id == null ? {} : { workId: String(row.work_id) }), ownerUserId: String(row.owner_user_id), lensId: String(row.lens_id), lensVersion: Number(row.lens_version), lensPrompt: String(row.lens_prompt), question: String(row.question), evidenceEventIds: JSON.parse(String(row.evidence_ids_json)) as string[], omRevision: String(row.om_revision), status: String(row.status), ...(row.outcome ? { outcome: row.outcome as ReflectionOutcome } : {}), ...(row.analysis ? { analysis: String(row.analysis) } : {}), ...(row.attribution ? { attribution: String(row.attribution) } : {}), ...(row.suggestion_markdown ? { suggestionMarkdown: String(row.suggestion_markdown) } : {}) }; }
   #work(row: Record<string, unknown>): Work { return { id: String(row.id), ownerUserId: String(row.owner_user_id), appId: String(row.app_id) as Work["appId"], workType: String(row.work_type) as Work["workType"], entityId: String(row.entity_id), ...(typeof row.entity_title === "string" ? { entityTitle: row.entity_title } : {}), ...(typeof row.goal === "string" ? { goal: row.goal } : {}), ...(typeof row.app_user_id === "string" ? { appUserId: row.app_user_id } : {}), ...(typeof row.selection_json === "string" ? { selection: JSON.parse(row.selection_json) as Record<string, unknown> } : {}), status: row.status === "completed" ? "completed" : "active", createdAt: String(row.created_at), updatedAt: String(row.updated_at) }; }
 
-  createContribution(record: OrganizationContribution): void {
-    this.#db.prepare("INSERT INTO organization_contributions (id, author_user_id, source_revision, base_main_revision, reason, evidence, status, selected_paths_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(record.id, record.authorUserId, record.sourceRevision, record.baseMainRevision, record.reason, record.evidence, record.status, JSON.stringify(record.selectedPaths), record.createdAt);
-  }
-  contribution(id: string): OrganizationContribution | undefined {
-    const row = this.#db.prepare("SELECT * FROM organization_contributions WHERE id=?").get(id) as Record<string, unknown> | undefined;
-    return row ? this.#contribution(row) : undefined;
-  }
-  contributions(): OrganizationContribution[] {
-    return (this.#db.prepare("SELECT * FROM organization_contributions ORDER BY created_at DESC").all() as Record<string, unknown>[]).map((row) => this.#contribution(row));
-  }
-  #contribution(row: Record<string, unknown>): OrganizationContribution {
-    return { id: String(row.id), authorUserId: String(row.author_user_id), sourceRevision: String(row.source_revision), baseMainRevision: String(row.base_main_revision), reason: String(row.reason), evidence: String(row.evidence), status: row.status as OrganizationContribution["status"], selectedPaths: JSON.parse(String(row.selected_paths_json)) as string[], ...(row.candidate_branch ? { candidateBranch: String(row.candidate_branch) } : {}), ...(row.candidate_worktree ? { candidateWorktree: String(row.candidate_worktree) } : {}), ...(row.reviewed_revision ? { reviewedRevision: String(row.reviewed_revision) } : {}), ...(row.accepted_revision ? { acceptedRevision: String(row.accepted_revision) } : {}), createdAt: String(row.created_at) };
-  }
-
   recordFeedback(feedback: WorkFeedback): void {
     const owner = this.userForWork(feedback.workId);
     if (owner !== feedback.ownerUserId) throw new Error("FeedbackOwnerMismatch");
@@ -642,17 +469,8 @@ export class ForgeDatabase {
   }
   activityCounts() {
     const count = (sql: string): number => Number((this.#db.prepare(sql).get() as { n: number }).n);
-    const medianHours = (sql: string): number | null => {
-      const values = (this.#db.prepare(sql).all() as Array<{ start_at: string; end_at: string }>).map((row) => (Date.parse(row.end_at) - Date.parse(row.start_at)) / 3_600_000).filter((value) => Number.isFinite(value) && value >= 0).sort((a, b) => a - b);
-      if (!values.length) return null;
-      const mid = Math.floor(values.length / 2);
-      return values.length % 2 ? values[mid] : (values[mid - 1] + values[mid]) / 2;
-    };
     return {
       works: count("SELECT COUNT(*) AS n FROM works"), completedWorks: count("SELECT COUNT(*) AS n FROM works WHERE status='completed'"), turns: count("SELECT COUNT(*) AS n FROM turns"), reflections: count("SELECT COUNT(*) AS n FROM reflections"),
-      legacyPersonalProposals: count("SELECT COUNT(*) AS n FROM proposals WHERE source!='organization-sync'"), legacyAdoptedPersonalProposals: count("SELECT COUNT(*) AS n FROM proposals WHERE source!='organization-sync' AND status='adopted'"),
-      legacySynchronizedProposals: count("SELECT COUNT(*) AS n FROM proposals WHERE source='organization-sync' AND status='adopted'"),
-      legacyMedianPersonalProposalHours: medianHours("SELECT created_at AS start_at, updated_at AS end_at FROM proposals WHERE source!='organization-sync' AND status='adopted'"),
     };
   }
   feedbackCounts(): Record<WorkFeedbackKind, number> {

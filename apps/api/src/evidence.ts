@@ -11,7 +11,6 @@ const maxFileBytes = 8 * 1024 * 1024;
 const maxTextChars = 100_000;
 const mediaTypes: Record<string, string[]> = {
   ".pdf": ["application/pdf", "application/octet-stream"],
-  ".docx": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream"],
   ".txt": ["text/plain", "application/octet-stream"],
 };
 
@@ -30,9 +29,7 @@ export class LocalEvidenceExtractor implements EvidenceExtractorPort {
       const path = join(directory, `input${extension}`);
       try {
         await writeFile(path, content);
-        const command = extension === ".pdf" ? "pdftotext" : "pandoc";
-        const args = extension === ".pdf" ? [path, "-"] : [path, "-t", "plain"];
-        value = (await execute(command, args, { timeout: 20_000, maxBuffer: 2 * 1024 * 1024 })).stdout;
+        value = (await execute("pdftotext", [path, "-"], { timeout: 20_000, maxBuffer: 2 * 1024 * 1024 })).stdout;
       } catch { throw new Error("EvidenceExtractionFailed"); }
       finally { await rm(directory, { recursive: true, force: true }); }
     }

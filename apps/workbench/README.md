@@ -1,6 +1,6 @@
 # AiricForge Material UI workspace
 
-This is the production UI, independent of the external prototype. See [workspace routing and contracts](../../docs/workbench.md).
+This is the production UI. See [workspace routing and contracts](../../docs/workbench.md).
 
 - `pnpm --filter @airic-forge/workbench check`
 - `pnpm --filter @airic-forge/workbench build`

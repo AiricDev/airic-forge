@@ -10,7 +10,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "preview": "vite preview",
-    "format:check": "prettier --check src/workbench src/utils src/index.tsx src/StageOneApp.tsx e2e *.config.ts tsconfig.json package.json"
+    "format:check": "prettier --check src/workbench src/utils src/index.tsx e2e *.config.ts tsconfig.json package.json"
   },
   "dependencies": {
     "react": "18.3.1",

@@ -59,7 +59,7 @@ export class PersonalOmChanges {
   }
   async read(actor: string, scope: string) {
     await this.own(actor, actor);
-    if (!/^(manual|sync|reflection:[a-zA-Z0-9_-]+|archive:[a-zA-Z0-9_-]+)$/.test(scope)) throw new Error("InvalidOmScope");
+    if (!/^(manual|sync|reflection:[a-zA-Z0-9_-]+)$/.test(scope)) throw new Error("InvalidOmScope");
     const draft = this.ports.drafts.workspace(actor, scope);
     const activeRevision = await this.ports.om.head(`users/${actor}`);
     const workspace = draft ?? { ownerUserId: actor, scope, baseRevision: activeRevision, edits: [], summary: "", conflicts: [] };

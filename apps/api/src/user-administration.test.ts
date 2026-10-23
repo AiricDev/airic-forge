@@ -39,24 +39,26 @@ test("first account is administrator exactly once, concurrent creations serializ
   } finally {rmSync(root,{recursive:true,force:true});}
 });
 
-test("existing users initialize earliest once, preserve branches/passwords, keep existing administrators",()=>{
-  for (const existingAdmin of [false,true]) {
-    const root=mkdtempSync(join(tmpdir(),"forge-user-upgrade-"));
-    const old=new DatabaseSync(join(root,"forge.sqlite"));
-    old.exec("CREATE TABLE users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,role TEXT NOT NULL,password_hash TEXT,active_branch TEXT NOT NULL,created_at TEXT NOT NULL) STRICT");
-    old.prepare("INSERT INTO users VALUES (?,?,?,?,?,?)").run("first","first@example.invalid","user","synthetic-hash","users/first","2026-01-01");
-    old.prepare("INSERT INTO users VALUES (?,?,?,?,?,?)").run("second","second@example.invalid",existingAdmin?"admin":"user",null,"users/second","2026-01-02");old.close();
+test("reopening the current database preserves users and never grants administrator privileges", () => {
+  const root = mkdtempSync(join(tmpdir(), "forge-user-reopen-"));
+  try {
+    const db = new ForgeDatabase(root);
+    const first = db.ensureUser("first@example.invalid");
+    db.ensureUser("second@example.invalid");
+    db.setInitialPassword(first.id, "synthetic-hash");
+    const history = db.userDetail(first.id, 1).history;
+    db.close();
+    const raw = new DatabaseSync(join(root, "forge.sqlite"));
+    raw.exec("UPDATE users SET role='user'");
+    raw.close();
+    const reopened = new ForgeDatabase(root);
     try {
-      const db=new ForgeDatabase(root);
-      assert.equal(db.userById("first")!.role,existingAdmin?"user":"admin");
-      assert.equal(db.userById("first")!.activeBranch,"users/first");
-      assert.equal(db.passwordHash("first@example.invalid"),"synthetic-hash");
-      assert.equal(db.userDetail("first",1).total,existingAdmin?0:1);db.close();
-      const raw=new DatabaseSync(join(root,"forge.sqlite"));raw.exec("UPDATE users SET role='user'");raw.close();
-      const restarted=new ForgeDatabase(root);
-      assert(restarted.listUsers().every(user=>user.role==="user")); restarted.close();
-    } finally {rmSync(root,{recursive:true,force:true});}
-  }
+      assert(reopened.listUsers().every(user => user.role === "user"));
+      assert.equal(reopened.userById(first.id)?.activeBranch, first.activeBranch);
+      assert.equal(reopened.passwordHash(first.email), "synthetic-hash");
+      assert.deepEqual(reopened.userDetail(first.id, 1).history, history);
+    } finally { reopened.close(); }
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("account writes authorize, protect last admin, compare version, replay, and audit atomically",async()=>{

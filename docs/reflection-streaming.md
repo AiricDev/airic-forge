@@ -23,8 +23,8 @@ duplicate ID with different text, or another run while the Reflection is busy,
 returns 409. Invalid messages and disabled/unknown Lens commands are rejected
 before a user message or run is saved.
 
-The older `/messages` endpoint remains available and waits for the same
-execution pipeline to finish before returning `ReflectionDetail`.
+The synchronous `/messages` operation uses the same execution pipeline and returns
+`ReflectionDetail` after completion.
 
 SSE frames use `event: reflection`. JSON data contains `version: 1`, `runId`,
 `sequence`, `type`, and the **full current `run` snapshot**. Types include
@@ -45,9 +45,9 @@ reply using the saved Agent message ID.
 - Explicit cancellation changes `running` to `cancelling`. The execution lock
   stays held until Pi and in-flight tools settle, then the run is `cancelled`.
 - Candidate writes already completed are retained. Cancellation never adopts
-  or rolls back a Proposal and never automatically retries a question.
+  or rolls back a draft and never automatically retries a question.
 - Once final result persistence begins, completion wins over a late stop.
-- Generation and all mutations of its linked Proposal share one exclusion
+- Generation and all mutations of its linked draft share one exclusion
   boundary, including App/ticket entry points. Reading the candidate remains
   possible; review, rebase, adoption, abandonment and manual writes wait until
   the run has settled.

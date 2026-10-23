@@ -4,7 +4,7 @@
 
 ## 初始化与持久化
 
-新实例的首用户在 SQLite `BEGIN IMMEDIATE` 事务内判断并创建为管理员，其后用户默认普通用户。启动时一次性结构升级增加 `users.status`（`active/draining/disabled`）、递增 `version` 和不可修改、不可删除的 `user_admin_events`。`account_migrations.first-administrator-v1` 保证初始化只执行一次：已有管理员时保持角色，否则按 `created_at,rowid` 选最早用户授予管理员并记录系统审计。后续启动不会补授权限。移除 `FORGE_INITIAL_ADMIN_EMAILS`，部署无需邮箱白名单。
+新实例的首用户在 SQLite `BEGIN IMMEDIATE` 事务内判断并创建为管理员，其后用户默认普通用户。当前 schema 直接包含 users.status（active/draining/disabled）、递增 version 和不可修改、不可删除的 user_admin_events。重启不扫描最早用户补授权限；不存在历史账号自动提升或旧格式转换。部署无需管理员邮箱白名单。
 
 只有正常管理员可调整角色或停用/恢复，必须填写原因。不能降级或停用最后一个正常管理员，包括自身操作。数据库在同一短写事务内重读操作者、目标和正常管理员数量，检查版本、提交角色/状态及审计。审计保存操作者、目标、原因、前后角色/状态/版本及时间，不保存密码、hash、App Token 或会话凭据。
 
@@ -42,11 +42,11 @@
 
 “用户与资源”提供邮箱搜索、角色/状态筛选、密码是否已设置、角色和状态管理、身份关联及分页审计。变更必须填写原因；版本冲突保留输入，显式放弃并重读后才能以新版本提交。请求结果不确定时按原请求标识核对/重试。自身降级后立即移除管理入口，服务端对每次管理请求重新授权。不提供邮箱修改、删除、网页重置密码；本地密码维护见 [工作台说明](workbench.md)。
 
-升级前停止 Forge（不停止或修改 CertLab），备份完整 Forge 数据根目录与 OM 仓库。保存 SQLite 完整性、用户/身份/资源计数及 Git refs；在数据库副本验证一次性升级，再启动新版。核对用户 ID、分支、身份和资源不变，最早账号提升为管理员，健康检查及网页深链接可用。回退需同时恢复备份的数据与对应代码；不要只回退表结构。
+升级前停止接收任务并备份完整 Forge 数据与 OM。当前结构可保留身份、分支和资源继续启动；未升级的旧产品结构不在兼容范围内。切换、存储及恢复要求见 [恢复契约](contracts/persistence-and-recovery.md)。
 
 ## 验证入口
 
-- `apps/api/src/user-administration.test.ts`：首用户并发、旧实例一次初始化、权限、最后管理员并发保护、版本/重放、审计事务和不可变性、会话撤销/恢复、重启。
-- `apps/api/src/stage-two-flow.test.ts`：真实 Turn 在停用中的成功、失败、主动取消，以及新 bootstrap/Turn/检验点拒绝。
+- `apps/api/src/user-administration.test.ts`：首用户并发、重启不提权、权限、最后管理员并发保护、版本/重放、审计事务和不可变性、会话撤销/恢复、重启。
+- `apps/api/src/work-execution.test.ts`：真实 Turn 在停用中的成功、失败、主动取消，以及新 bootstrap/Turn/检验点拒绝。
 - `apps/api/src/reflection-stream.test.ts`：真实 Reflection 在停用中的成功、失败、取消与会话收尾。
 - `apps/workbench/e2e/users.spec.ts`：初始管理员入口、角色/停用/恢复、冲突保留输入、详情历史、自身降级及直接请求拒绝；测试仅使用一次性 SQLite/Git 数据。

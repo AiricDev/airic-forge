@@ -4,11 +4,10 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { omFixture } from "./om-test-fixture.js";
-import { createTestOmCommit } from "./test-proposal-fixture.js";
+import { createTestOmCommit } from "./om-commit-fixture.js";
 import { git } from "./personal-git-om.js";
 import { GitOmWorkspaces } from "./git-om-workspaces.js";
 import { GitContributions } from "./git-contributions.js";
-import { migrateOmStateToGit } from "./om-git-migration.js";
 import { buildServer } from "./server.js";
 import { parse, stringify } from "yaml";
 
@@ -37,7 +36,6 @@ test("drafts are uncommitted detached worktrees, recover from disk and confirm w
     assert.match(message, new RegExp(`AiricForge-Author: ${f.owner.id}`));
     assert.match(message, new RegExp(`AiricForge-Source-Revision: ${base}`));
     assert.equal(existsSync(directory), false);
-    assert.equal(f.runtime.db.workspace(f.owner.id, scope), undefined);
     assert.equal((await f.runtime.useCases.reflectionDetail(f.owner.id, reflection.id)).draft?.edits.length, 0);
   } finally { await f.close(); }
 });
@@ -81,7 +79,7 @@ test("contribution creation, selection and acceptance use Git alone and append c
     assert.equal(new GitContributions(f.runtime.om).contribution(record.id)?.status, "accepted");
     const raw = new DatabaseSync(join(f.config.dataDir, "forge.sqlite"), { readOnly: true });
     try {
-      for (const table of ["om_workspaces", "om_drafts", "organization_contributions"]) assert.equal(raw.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()?.n, 0);
+      for (const table of ["om_workspaces", "om_drafts", "organization_contributions"]) assert.equal(raw.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table), undefined);
     } finally { raw.close(); }
   } finally { await f.close(); }
 });
@@ -118,51 +116,6 @@ test("invalid selection never moves the contribution branch", async () => {
     await f.runtime.useCases.abandonOrganizationContribution(f.admin.id, record.id, record.reviewedRevision!);
     assert.equal(f.runtime.organization.contribution(record.id), undefined);
     assert.equal(f.runtime.om.head("main"), base);
-  } finally { await f.close(); }
-});
-
-test("legacy draft migration is byte-exact, idempotent, preserves rows and never resurrects discarded work", async () => {
-  const f = omFixture();
-  try {
-    const base = f.runtime.om.head(`users/${f.owner.id}`);
-    const workspace = { ownerUserId: f.owner.id, scope: "manual", baseRevision: base, summary: "Pending legacy edit", conflicts: [], edits: [{ path, content: "  legacy bytes\r\n\r\n" }] };
-    f.runtime.db.saveWorkspace(workspace);
-    const refs = git(f.runtime.om.projectDir, ["show-ref"]);
-    assert.equal(migrateOmStateToGit(f.runtime.db, f.runtime.om).report[0]?.status, "ready");
-    assert.equal(f.runtime.drafts.workspace(f.owner.id, "manual"), undefined);
-    migrateOmStateToGit(f.runtime.db, f.runtime.om, false);
-    assert.equal(readFileSync(join(f.runtime.drafts.directory(f.owner.id, "manual"), path), "utf8"), workspace.edits[0].content);
-    assert.deepEqual(f.runtime.db.workspace(f.owner.id, "manual"), workspace);
-    assert.equal(git(f.runtime.om.projectDir, ["show-ref"]), refs);
-    await f.runtime.omChanges.discard(f.owner.id, "manual");
-    assert.deepEqual(migrateOmStateToGit(f.runtime.db, f.runtime.om, false).report, []);
-    assert.equal(f.runtime.drafts.workspace(f.owner.id, "manual"), undefined);
-  } finally { await f.close(); }
-});
-
-test("migration restores a missing accepted branch only from its verified historical Git commit", async () => {
-  const f = omFixture();
-  try {
-    const base = f.runtime.om.head("main");
-    const author = await createTestOmCommit(f.runtime, f.owner.id, [{ path, content: f.runtime.om.document(base, path) + "\nLegacy accepted rule.\n" }], "Legacy source");
-    const id = "legacy-accepted";
-    const candidate = f.runtime.om.prepareContribution(id, author.revision, base, base, [path],
-      `Accept selected organization OM contribution\n\nAiricForge-Contribution: ${id}\nAiricForge-Author: ${f.owner.id}\nAiricForge-Source-Revision: ${author.revision}\nAiricForge-Reason: Legacy reason\nAiricForge-Base: ${base}`);
-    const main = f.runtime.om.acceptContribution(candidate.branch, base);
-    f.runtime.db.createContribution({ id, authorUserId: f.owner.id, sourceRevision: author.revision, baseMainRevision: base, reason: "Legacy reason", evidence: "", status: "accepted", selectedPaths: [path], createdAt: "2026-10-01" });
-    const raw = new DatabaseSync(join(f.config.dataDir, "forge.sqlite"));
-    try { raw.prepare("UPDATE organization_contributions SET accepted_revision=? WHERE id=?").run(candidate.revision, id); } finally { raw.close(); }
-    git(f.runtime.om.projectDir, ["update-ref", "-d", `refs/heads/${candidate.branch}`, candidate.revision]);
-    const refs = git(f.runtime.om.projectDir, ["show-ref"]);
-    const preview = migrateOmStateToGit(f.runtime.db, f.runtime.om);
-    assert.equal(preview.report[0]?.operation, "restore-accepted-branch");
-    assert.equal(git(f.runtime.om.projectDir, ["show-ref"]), refs);
-    migrateOmStateToGit(f.runtime.db, f.runtime.om, false);
-    const restored = f.runtime.organization.contribution(id)!;
-    assert.equal(restored.status, "accepted");
-    assert.equal(restored.reviewedRevision, candidate.revision);
-    assert.equal(f.runtime.om.head("main"), main);
-    assert.deepEqual(migrateOmStateToGit(f.runtime.db, f.runtime.om, false).report, []);
   } finally { await f.close(); }
 });
 

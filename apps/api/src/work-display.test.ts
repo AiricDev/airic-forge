@@ -4,7 +4,6 @@ import test from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { DatabaseSync } from "node:sqlite";
 import { ForgeRuntime } from "./runtime.js";
 import { ForgeDatabase } from "./database.js";
 
@@ -36,16 +35,13 @@ test("Work remembers authorized entity titles, refreshes renamed objects and kee
   } finally { runtime.db.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test("older Work databases gain optional names without losing records and names persist across restart", () => {
-  const root = mkdtempSync(join(tmpdir(), "forge-work-title-migration-"));
+test("Work names and identity persist across restart", () => {
+  const root = mkdtempSync(join(tmpdir(), "forge-work-title-reopen-"));
   let db = new ForgeDatabase(root);
   try {
-    const owner = testUser(db, "migration@example.invalid", false);
-    const work = db.createWork(owner.id, "certreporter", "report-authoring", "original-id");
+    const owner = testUser(db, "reopen@example.invalid", false);
+    const work = db.createWork(owner.id, "certlab", "report-authoring", "original-id");
     db.close();
-    const legacy = new DatabaseSync(join(root, "forge.sqlite"));
-    legacy.exec("ALTER TABLE works DROP COLUMN entity_title");
-    legacy.close();
     db = new ForgeDatabase(root);
     assert.equal(db.work(work.id)?.entityId, "original-id");
     assert.equal(db.work(work.id)?.entityTitle, undefined);

@@ -10,7 +10,7 @@ import { testCatalog } from "./certlab-test-catalog.js";
 import { ForgeRuntime } from "./runtime.js";
 import type { ForgeConfig } from "./config.js";
 import { buildServer } from "./server.js";
-import { createTestOmCommit } from "./test-proposal-fixture.js";
+import { createTestOmCommit } from "./om-commit-fixture.js";
 import { git } from "./personal-git-om.js";
 
 test("organization comparison and contribution detail return complete diffs above one MiB", async () => {
@@ -152,18 +152,16 @@ test("a reviewed organization candidate cannot overwrite a newer main HEAD", asy
   const runtime = new ForgeRuntime(config);
   try {
     const author = testUser(runtime.db, "author@example.com", false);
+    const admin = testUser(runtime.db, "reviewer@example.invalid", true);
     const user = runtime.om.ensureUserBranch(author.id);
-    const first = runtime.om.createProposal(author.id, "a", runtime.om.head(user.branch));
     const path = "work-definitions/report-authoring/policy.md";
-    runtime.om.writeProposalFile(first.worktree, path, runtime.om.document(runtime.om.head(user.branch), path) + "\nAuthor rule.\n");
-    runtime.om.commitProposal(first.worktree, "Author rule");
-    runtime.om.adoptProposal(user.branch, user.worktree, first.branch, runtime.om.head("main"), {});
-    const main = runtime.om.head("main");
-    const source = runtime.om.head(user.branch);
-    const candidate = runtime.om.prepareContribution("stale", source, runtime.om.divergence(source, main).baseRevision, main, [path], "Selected policy");
-    const second = runtime.om.prepareContribution("advance", source, runtime.om.divergence(source, main).baseRevision, main, [path], "Advance main");
-    runtime.om.acceptContribution(second.branch, main);
-    assert.throws(() => runtime.om.acceptContribution(candidate.branch, main), /OrganizationReviewStale/);
+    await createTestOmCommit(runtime, author.id, [{ path, content: runtime.om.document(runtime.om.head(user.branch), path) + "\nAuthor rule.\n" }], "Author rule");
+    const candidate = await runtime.useCases.createOrganizationContribution(admin.id, author.id, "Selected policy", "");
+    const selected = await runtime.useCases.reviewOrganizationContribution(admin.id, candidate.id, [path]);
+    const advance = await runtime.useCases.createOrganizationContribution(admin.id, author.id, "Advance main", "");
+    const advanced = await runtime.useCases.reviewOrganizationContribution(admin.id, advance.id, [path]);
+    await runtime.useCases.acceptOrganizationContribution(admin.id, advance.id, advanced.reviewedRevision!);
+    await assert.rejects(() => runtime.useCases.acceptOrganizationContribution(admin.id, candidate.id, selected.reviewedRevision!), /OrganizationReviewStale/);
   } finally { runtime.db.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -174,8 +172,9 @@ test("organization sync preserves conflicts in a draft until resolved and direct
     const base = f.runtime.om.head("main");
     const original = f.runtime.om.document(base, path);
     const author = await createTestOmCommit(f.runtime, f.owner.id, [{ path, content: original + "\nOrganization wording.\n" }], "Organization wording");
-    const candidate = f.runtime.om.prepareContribution("conflict-main", author.revision, base, base, [path], "Organization wording");
-    const main = f.runtime.om.acceptContribution(candidate.branch, base);
+    const record = await f.runtime.useCases.createOrganizationContribution(f.admin.id, f.owner.id, "Organization wording", "");
+    const selected = await f.runtime.useCases.reviewOrganizationContribution(f.admin.id, record.id, [path]);
+    const { revision: main } = await f.runtime.useCases.acceptOrganizationContribution(f.admin.id, record.id, selected.reviewedRevision!);
     const personal = await createTestOmCommit(f.runtime, f.other.id, [{ path, content: original + "\nMember wording.\n" }], "Member wording");
     const sync = await f.runtime.omChanges.sync(f.other.id);
     assert.deepEqual(sync.conflicts, [path]);

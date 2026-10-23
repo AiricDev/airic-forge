@@ -62,12 +62,11 @@ test("Work list is paginated and detail keeps the original ownership boundary", 
     assert.equal((await app.inject({ method: "GET", url: `/works/${workId}` })).statusCode, 200);
     assert.equal((await app.inject({ method: "GET", url: `/api/v1/works/${workId}`, headers: cookie(owner.id) })).statusCode, 200);
     runtime.db.completeWork(owned[0]!.id);
-    runtime.db.createWork(owner.id, "certlab", "report-type-definition", "report-type-1");
     const filteredWorks = await app.inject({ method: "GET", url: `/api/v1/works?page=1&ownerId=${owner.id}&workType=report-authoring&status=completed`, headers: cookie(admin.id) });
     assert.equal(filteredWorks.statusCode, 200);
     assert.equal(filteredWorks.json().total, 1);
     assert.equal(filteredWorks.json().works[0].id, owned[0]!.id);
-    assert.equal((await app.inject({ method: "GET", url: "/api/v1/works?page=1&workType=report-type-definition", headers: cookie(admin.id) })).json().total, 1);
+    assert.equal((await app.inject({ method: "GET", url: "/api/v1/works?page=1&workType=unsupported", headers: cookie(admin.id) })).statusCode, 400);
     assert.equal((await app.inject({ method: "GET", url: "/api/v1/works?page=1", headers: cookie(owner.id) })).statusCode, 403);
     assert.equal((await app.inject({ method: "GET", url: `/api/v1/works?page=1&ownerId=${stranger.id}`, headers: cookie(owner.id) })).statusCode, 403);
     assert.equal((await app.inject({ method: "GET", url: "/api/v1/works?page=1&status=invalid", headers: cookie(admin.id) })).statusCode, 400);

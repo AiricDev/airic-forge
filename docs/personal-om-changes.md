@@ -1,10 +1,10 @@
 # 个人 OM：草稿直接提交与原生 Git
 
-本文取代旧设计中个人 Proposal 和数据库驱动的组织贡献流程。Git 是 OM 内容、已确认变更理由、来源以及贡献状态的唯一事实来源。
+Git 是 OM 内容、已确认变更理由、来源以及贡献状态的唯一事实来源。
 
 ## OM 版本与维护
 
-运行时只使用 `FORGE_PROJECT_DIR` 指定的 OM 仓库，不再读取 `FORGE_SEED_PROJECT_DIR`。
+运行时只使用 `FORGE_PROJECT_DIR` 指定的 OM 仓库。
 已有仓库保留其内容和历史；缺失 OM 时创建带初始空提交的 `main`，不自动导入
 示例 WD 或知识。已有但尚无提交的仓库也会完成初始提交，只纳入 OM 的三个文档目录。
 空 OM 可启动服务，但没有 WD 时不能执行对应 Work，须先由使用者维护 OM。
@@ -13,7 +13,6 @@
 - OM 的版本就是 Git commit，历史版本以「短 commit hash + 提交信息首行」标识；读取和定位版本使用完整 commit hash，不依赖额外的 release 分支。
 - 后续 OM 更新、部署和升级不再创建 `releases/*` 备份分支。维护操作需要记录变更前后版本时，记录 commit hash 和提交首行即可，正常提交保留前驱历史。
 - `main`、`users/<userId>` 分别承载组织和个人生效版本；`contributions/<contributionId>` 承载选定的组织贡献。
-- 现有 `releases/*` 分支保持不动，本次不自动清理。后续删除前须确认其提交仍被其他保留的引用覆盖。
 - 这不替代升级前对 OM 仓库、数据库和运行数据的备份，也不授权强推、重写历史或绕过组织贡献审阅。
 
 ## 工作台
@@ -22,7 +21,7 @@
 
 贡献只有待处理和已采纳状态，由分支尾提交是否被 main 包含推导，没有数据库中的“已审阅”状态。直接用 Git CLI 合并后，后台和成效基线会显示已采纳；追加新提交后重新显示待处理，必须重新选择和校验。管理员可显式放弃待处理贡献，删除对应分支，不影响 main 或个人分支。保留贡献分支才能继续展示记录，删除已采纳分支会使其不再出现在贡献列表。
 
-每次确认提交都以首行记录摘要，以 `AiricForge-Reason`、`AiricForge-Author`、`AiricForge-Source-Revision` 等 trailer 记录理由、作者及来源。贡献选择提交还记录 `AiricForge-Contribution` 和 `AiricForge-Selected-Paths`，合并提交记录审阅人。HTTP 中 `review` 和 `reviewedRevision` 名称暂作兼容，分别表示保存选择和当前贡献分支版本，不再表示独立审阅状态。
+每次确认提交都以首行记录摘要，以 `AiricForge-Reason`、`AiricForge-Author`、`AiricForge-Source-Revision` 等 trailer 记录理由、作者及来源。贡献选择提交还记录 `AiricForge-Contribution` 和 `AiricForge-Selected-Paths`，合并提交记录审阅人。HTTP 中 `review` 表示保存选择，`reviewedRevision` 表示当前贡献分支版本。
 
 - **改进工作方式**：可直接开始独立 Reflection，也可从某个 Work 进入。独立讨论不制造 Work 或报告记录。
 - 普通问答不自动改 OM。用户明确要求准备改动即可生成私有草稿，不要求先选 Lens 或提供轨迹引用。引用 Work 事件时仍验证来源；可选 Lens 仍限制对应类型的改动。API Suggestion 不修改 OM 或授予工具权限。
@@ -61,24 +60,8 @@
 
 Git 上传最多 16 MiB，每个 OM 文件最多 100,000 UTF-8 字节；还有历史、树大小和传输时长限制。使用维护中的 Git 版本。个人写入锁是单 API 进程内的锁，不支持多个 API 进程同时写同一个工作目录。
 
-## 升级旧数据
+## 存储与恢复
 
-先构建新版本。**应用迁移前停止 API，并备份 OM 仓库和整个 data 目录。** 不要对运行中的实例直接执行迁移。
+Git 是草稿和贡献的唯一内容来源，SQLite 不创建或读取旧 OM 草稿/Proposal/贡献表。当前数据库可重启继续使用，旧产品格式的转换代码已删除。已有运行数据、旧表、Git 历史和引用不会因此自动清理。
 
-只读预览：
-
-```sh
-node scripts/migrate-personal-om.mjs --project /absolute/om/project --data /absolute/forge/data
-```
-
-确认报告后应用：
-
-```sh
-node scripts/migrate-personal-om.mjs --project /absolute/om/project --data /absolute/forge/data --apply
-```
-
-旧手动草稿、工作区和可恢复的未完成个人 Proposal 转为对应的手动、Reflection 或归档 worktree，不自动提交。逐文件核对恢复内容，冲突拒绝覆盖，迁移收据防止重跑时复活已处理的数据。旧贡献从 Git 提交推导；若历史已采纳贡献分支缺失，预览明确报告 `restore-accepted-branch`，应用时只恢复指向已核对且已包含在 main 中的历史提交的分支，不创建提交或重写历史。`needs-manual-recovery` 表示需要人工处理，命令会返回非零状态；保留备份与报告，不要丢弃旧数据。
-
-`om_workspaces`、`om_drafts`、`organization_contributions` 暂留一个版本作为迁移来源和回滚资料，业务读写不再使用这些表。仅启动迁移预检会读取旧数据；检测未完成迁移时会拒绝启动，避免静默隐藏草稿。数据库继续保存用户、令牌、Work、Reflection 对话和运行状态等用户数据。旧表的物理删除留到回滚窗口结束后。
-
-历史提交、来源及旧统计保留。旧个人 Proposal API 已移除；历史设计与验收记录中的 Proposal 流程不再描述当前 OM 行为。当前行为规范见 `acceptance/om-git.feature`。
+备份与跨目录恢复边界见 [恢复契约](contracts/persistence-and-recovery.md)，下一步发布演练见 [集成需求](app-integration.md)。当前行为规格为 [OM Git 场景](acceptance/om-git.feature)。

@@ -77,7 +77,6 @@ export function WorkListPage({
           >
             <MenuItem value="">全部类型</MenuItem>
             <MenuItem value="report-authoring">报告编制</MenuItem>
-            <MenuItem value="report-type-definition">Report Type 定义</MenuItem>
           </TextField>
           <TextField
             select

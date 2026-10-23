@@ -64,7 +64,7 @@ test("real API pagination, filters, detail refresh and return location", async (
   await page.getByRole("combobox", { name: "筛选 Work 类型" }).click();
   await page.getByRole("option", { name: "报告编制" }).click();
   await expect(page).toHaveURL(/page=1.*workType=report-authoring/);
-  await expect(page.getByText("共 23 条 · 第 1 / 2 页")).toBeVisible();
+  await expect(page.getByText("共 45 条 · 第 1 / 3 页")).toBeVisible();
   await screenshot(page, "work-list");
 });
 

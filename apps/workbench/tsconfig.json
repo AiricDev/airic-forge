@@ -19,7 +19,6 @@
   },
   "include": [
     "src/index.tsx",
-    "src/StageOneApp.tsx",
     "src/workbench/**/*.ts",
     "src/workbench/**/*.tsx",
     "e2e/**/*.ts",

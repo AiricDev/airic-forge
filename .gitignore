@@ -8,12 +8,10 @@ dist/
 runtime/
 coverage/
 __pycache__/
-deploy/p0/state/
 test-results/
 playwright-report/
 *.tsbuildinfo
 
-prototype/
-
-# The external prototype is reference-only; production lives in apps/workbench.
+# Production frontend build output.
 apps/workbench/public/
+deploy/p0/

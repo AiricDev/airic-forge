@@ -249,10 +249,10 @@ test("material snippets use Unicode code point budgets", async () => {
   } finally {await app.close();}
 });
 
-test("Office whole-file reads retain logical page one and reject a mismatched page", async () => {
+test("Spreadsheet whole-file reads retain logical page one and reject a mismatched page", async () => {
   const value = { status: "ready", text: "Whole document", warnings: [], source: {
     revision_id: "revision", asset_id: "asset", project_id: "project", sha256: "a".repeat(64),
-    format: "docx", location_kind: "document", page: 1,
+    format: "xlsx", location_kind: "document", page: 1,
   } };
   const app = await fixture((_req, res) => json(res, value));
   try {

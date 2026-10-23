@@ -8,7 +8,8 @@ services:
       FORGE_PROJECT_DIR: /project
       FORGE_DATA_DIR: /data
       FORGE_WEB_DIST_DIR: /app/apps/workbench/public
-      FORGE_CERTREPORTER_URL: ${FORGE_CERTREPORTER_URL:-http://host.docker.internal:8000}
+      FORGE_CERTLAB_URL: ${FORGE_CERTLAB_URL:-http://host.docker.internal:8000}
+      FORGE_ORGANIZATION_ID: ${FORGE_ORGANIZATION_ID:?Set FORGE_ORGANIZATION_ID}
       FORGE_ALLOWED_ORIGIN: ${FORGE_ALLOWED_ORIGIN:-http://localhost:5173}
       FORGE_PUBLIC_URL: ${FORGE_PUBLIC_URL:-http://127.0.0.1:4175}
       FORGE_MODEL_PROVIDER: ${FORGE_MODEL_PROVIDER:-}

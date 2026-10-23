@@ -2,7 +2,7 @@
 
 账户角色、初始化、停用收尾及管理接口见 [用户管理契约](user-administration.md)。
 
-生产前端位于 `apps/workbench/src`，使用 React、Material UI 和 assistant-ui。外部 `prototype/` 仅作设计参考；删除该目录不会影响构建和工作台功能。历史 MUI 验收见 `acceptance/mui-migration-record.md`；当前恢复记录见 `acceptance/workbench-restoration-record.md`。
+生产前端位于 `apps/workbench/src`，直接由 index.tsx 装配 WorkspaceApp，使用 React、Material UI 和 assistant-ui。
 
 ## 构建与启动
 
@@ -44,9 +44,9 @@ pnpm user:set-password --email user@example.com
 
 管理员可查看他人的 Work、Reflection 和 OM。发起/继续 Reflection、停止运行和提交个人 OM 仍由原作者执行；界面明确显示只读原因。组织贡献治理保持不变。
 
-普通问答不自动改 OM；用户明确要求即可准备草稿，Lens 可选。API Suggestion 可导出，但不会自动增加工具。Markdown 禁止原始 HTML、内嵌图片和不安全链接。Git 接入、部署和旧数据迁移见 [个人 OM](personal-om-changes.md)。
+普通问答不自动改 OM；用户明确要求即可准备草稿，Lens 可选。API Suggestion 可导出，但不会自动增加工具。Markdown 禁止原始 HTML、内嵌图片和不安全链接。Git 接入与草稿操作见 [个人 OM](personal-om-changes.md)。
 
-能力列表和输入输出定义来自配置 App 实例 `/mcp` 的标准 `tools/list`。Forge 规范化分页结果形成审核快照；管理员接受后目录才生效，WD 仍需显式允许能力。MCP 地址不附加访问令牌，直接访问需要 App 身份认证。旧 manifest/Agent OpenAPI 不再使用，切换步骤见 `certlab-integration.md`。
+能力列表和输入输出定义来自配置 App 实例 `/mcp` 的标准 `tools/list`。Forge 每 Turn 规范化分页结果并固定不可变工具快照，不设管理员接受或 WD 工具白名单，实际业务权限由 App 判定。MCP 地址不附加访问令牌，直接访问需要 App 身份认证。旧 manifest/Agent OpenAPI 不再使用；当前接入见 [CertLab](certlab-integration.md)，后续交付需求见 [App 集成与交付](app-integration.md)。
 
 ## 验证
 

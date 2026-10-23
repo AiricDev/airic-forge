@@ -1,5 +1,0 @@
-If a command is rejected for `RevisionConflict`, re-read `report.context`, inspect the narrowed structured state required for a new decision, and submit a new intent with the new expected revision. Never replay an old update blindly, even when the field appears unchanged in the conversation.
-
-If validation rejects a command, treat the error as a boundary signal. Explain the rejected field or value to the author, re-read only enough report state to understand the valid options, and ask for a correction when the missing decision is human-owned. Do not weaken, reformat, or omit information merely to make the command succeed.
-
-If the outcome of a command is unknown, do not send another mutation. Query the App receipt using the original `commandId`; a recovered committed or rejected receipt determines the result without replaying the command. If the receipt cannot be found, re-read `report.context` to see whether the intended change is visible. If the state still cannot be reconciled, tell the author that the save outcome needs operational follow-up and preserve the uncertainty in the conversation.
