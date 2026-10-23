@@ -3,13 +3,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { ForgeUseCases, type ReflectionAgentPort } from "@airic-forge/domain";
-import { ForgeRuntime } from "./runtime.js";
+import { TestRuntime as ForgeRuntime } from "./test-runtime.js";
 import { systemPort } from "./system-port.js";
 import { hashPassword, verifyPassword } from "./auth.js";
 
 export function omFixture(agent?: ReflectionAgentPort) {
   const root = mkdtempSync(join(tmpdir(), "forge-personal-om-"));
-  const config = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve("../../seed/certlab"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", webDistDir: join(root, "web") };
+  const config = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve("../../tests/fixtures/operating-model"), appId:"sample-app", appUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", webDistDir: join(root, "web") };
   const runtime = new ForgeRuntime(config);
   const owner = testUser(runtime.db, "om-owner@example.invalid", false);
   const other = testUser(runtime.db, "om-other@example.invalid", false);

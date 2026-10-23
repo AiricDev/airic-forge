@@ -1,3 +1,4 @@
+import { unavailableApp } from "./unavailable-app.js";
 import { backupDeployment, restoreDeployment, verifyDeployment } from "./deployment-state.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, rmSync, rmdirSync, mkdtempSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -7,13 +8,13 @@ import { loadConfig, type ForgeConfig } from "./config.js";
 import { checkAgentResources } from "./agent-resources.js";
 import { ForgeRuntime } from "./runtime.js";
 import { assertServiceStopped } from "./service-lock.js";
-import { bindCertLabRoots } from "./instance-binding.js";
+import { bindInstanceRoots } from "./instance-binding.js";
 import { git } from "./personal-git-om.js";
 
 /** Explicit seed import for a new instance. Existing OM is never replaced by a release seed. */
 export async function initializeInstance(config: ForgeConfig, seed: string) {
   assertServiceStopped(config.dataDir);
-  bindCertLabRoots(config.projectDir, config.dataDir, config.organizationId);
+  bindInstanceRoots(config.projectDir, config.dataDir, config.organizationId, config.appId ?? "");
   const marker = join(config.dataDir, "initialization.json");
   if (existsSync(join(config.projectDir, ".git"))) {
     const previous = existsSync(marker) ? JSON.parse(readFileSync(marker, "utf8")) : undefined;
@@ -28,7 +29,7 @@ export async function initializeInstance(config: ForgeConfig, seed: string) {
   const stage = mkdtempSync(join(dirname(config.projectDir), ".forge-init-"));
   let runtime: ForgeRuntime | undefined;
   try {
-    runtime = new ForgeRuntime({ ...config, projectDir: join(stage, "project"), dataDir: join(stage, "data"), seedProjectDir: seed });
+    runtime = new ForgeRuntime({ ...config, projectDir: join(stage, "project"), dataDir: join(stage, "data"), seedProjectDir: seed }, unavailableApp());
     await runtime.omChanges.validate(runtime.om.head("main"));
     const tree = git(runtime.om.projectDir, ["rev-parse", "HEAD^{tree}"]);
     const seedDigest = createHash("sha256").update(tree).digest("hex");
@@ -36,7 +37,7 @@ export async function initializeInstance(config: ForgeConfig, seed: string) {
     writeFileSync(marker, JSON.stringify({ state: "pending", seedDigest }), { mode: 0o600 });
     if (existsSync(config.projectDir)) rmdirSync(config.projectDir);
     renameSync(runtime.om.projectDir, config.projectDir);
-    const initialized = new ForgeRuntime(config);
+    const initialized = new ForgeRuntime(config, unavailableApp());
     initialized.db.close();
     writeFileSync(marker, JSON.stringify({ state: "complete", seedDigest }), { mode: 0o600 });
     return { initialized: true, revision: git(config.projectDir, ["rev-parse", "HEAD"]), seedDigest };

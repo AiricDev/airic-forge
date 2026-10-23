@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { buildServer } from "./server.js";
 import { omFixture } from "./om-test-fixture.js";
 const exec = promisify(execFile);
-const path = "work-definitions/report-authoring/policy.md";
+const path = "work-definitions/document-task/policy.md";
 
 test("native Git clone/push/pull preserves commits and enforces identity, refs and object isolation", async () => {
   const f = omFixture();
@@ -41,8 +41,8 @@ test("native Git clone/push/pull preserves commits and enforces identity, refs a
     const webCommit = await f.runtime.omChanges.commit(f.owner.id, "manual", web.digest, "web-improvement");
     await git(["pull", "--ff-only"], local);
     assert.equal(await git(["rev-parse", "HEAD"], local), webCommit.revision);
-    writeFileSync(join(local, "private-report.txt"), "Not an OM document");
-    await git(["add", "private-report.txt"], local); await git(["commit", "-m", "Invalid upload"], local);
+    writeFileSync(join(local, "private-workspace.txt"), "Not an OM document");
+    await git(["add", "private-workspace.txt"], local); await git(["commit", "-m", "Invalid upload"], local);
     await assert.rejects(git(["push", "origin", "main"], local));
     assert.equal(f.runtime.om.head(`users/${f.owner.id}`), webCommit.revision);
     const adminToken = await f.runtime.gitAccess.issue(f.admin.id, "Admin laptop");

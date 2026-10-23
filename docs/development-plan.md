@@ -37,3 +37,18 @@
 新增能力同时更新配置、资源装配、身份关联、必要 UI 诊断和验收；业务权限保持在 App。OM 变化更新格式/引用/治理及样例；会话或存储变化更新备份恢复契约。不要只交付单层实现。
 
 仓库清理删除了过时部署、种子、迁移链和未使用入口，保留有效测试及不可变运行历史；范围和本次验证见 [清理记录](acceptance/repository-cleanup-record.md)。
+
+
+## 2026-10-23 App Asset与通用笔记质量迭代
+
+默认Work Skill由PDF解析改为working-notes；App MCP承担资料定位、原文/图像读取和忙碌语义，Forge保留任务/标准/证据来源与接续进度。新增显式只读quality-live-probe，复用实际Pi适配器、当前模型、固定用户OM和临时App服务，不替代生产Work/业务提交验收。CertLab对应28题v2实测为26项完全满足、99.45分，仍有两处引用问题，不能据此宣布正式评估通过。无OM主分支变更。
+
+
+## 专用验收与API产物分离
+
+CertLab专用7个验收入口及答题解析器/测试移至CertLab tools/forge-acceptance，独立Node 24执行与类型检查，不参与Forge API构建。通过App控制器指定Forge编译根目录；不增加API路由或改变生产运行机制。用途和运行边界见CertLab验收目录README。
+
+
+## 2026-10-23 通用组件边界清理
+
+不再内置CertLab客户端、业务工作类型、Asset DTO/图像分支或业务种子。App通过显式createAppPort工厂实现业务协议；Forge保持通用工作/身份/命令/治理。产品与测试独立构建，新增发布边界与两类不同App测试；CertLab接入/开发/发布和浏览器夹具已同步。实现、全部验证、接口升级要求与本地恢复点见[清理记录](acceptance/app-neutrality-record.md)。Docker运行验收仍单列。

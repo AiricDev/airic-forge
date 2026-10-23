@@ -15,3 +15,6 @@ playwright-report/
 # Production frontend build output.
 apps/workbench/public/
 deploy/p0/
+
+# Isolated API test compilation, never a release artifact.
+test-dist/

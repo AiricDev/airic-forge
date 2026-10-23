@@ -15,7 +15,7 @@ function fixture() {
   const root = mkdtempSync(join(tmpdir(), "forge password cli "));
   const db = new ForgeDatabase(root);
   const user = db.ensureUser("existing@example.invalid");
-  db.recordAppIdentity("certlab", "synthetic-app-user", user.id, user.email);
+  db.recordAppIdentity("sample-app", "synthetic-app-user", user.id, user.email);
   db.close();
   return { root, user, args: ["--email", " EXISTING@example.invalid ", "--data-dir", root, "--password-stdin"], close: () => rmSync(root, { recursive: true, force: true }) };
 }
@@ -36,7 +36,7 @@ test("CLI sets and resets an existing password without changing the account, ide
         if (previous) assert(!verifyPassword(previous, current));
         assert.notEqual(current, password);
         assert.deepEqual(db.userByEmail(f.user.email), { ...f.user, passwordConfigured: true });
-        assert.equal(db.linkedUserId("certlab", "synthetic-app-user"), f.user.id);
+        assert.equal(db.linkedUserId("sample-app", "synthetic-app-user"), f.user.id);
         assert.equal(db.listUsers().length, 1);
         assert.equal(db.setInitialPassword(f.user.id, "should-not-replace"), false);
       } finally { db.close(); }

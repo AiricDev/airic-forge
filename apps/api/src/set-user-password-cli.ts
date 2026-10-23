@@ -15,7 +15,7 @@ Sets or resets an existing Forge user's password. Does not create users or chang
 Stop Forge first, then restart it afterwards to discard existing login sessions.
 By default, enter the password twice at hidden terminal prompts (at least 12 characters).
 --password-stdin reads one UTF-8 line from a pipe, never from a terminal.
-Data defaults to FORGE_DATA_DIR from the root .env, or runtime/certlab/data.
+Data defaults to FORGE_DATA_DIR from the root .env, or runtime/data.
 Passwords must not be supplied in command arguments or environment variables.
 `;
 
@@ -109,7 +109,7 @@ const messages: Record<string, string> = {
   InvalidPasswordInput: "Password input must be valid UTF-8.",
   PasswordInputMustBeOneLine: "Provide exactly one password line.",
   PasswordConfirmationMismatch: "Passwords do not match. No password was changed.",
-  UserNotFound: "Forge user not found. Connect from CertLab first; this command does not create users.",
+  UserNotFound: "Forge user not found. Connect from the integrated App first; this command does not create users.",
   "Password must contain at least 12 characters": "Password must contain at least 12 characters.",
 };
 

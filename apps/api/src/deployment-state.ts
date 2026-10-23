@@ -25,7 +25,7 @@ function schema(dataDir: string) {
     return sha(JSON.stringify(db.prepare("SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name").all()));
   } finally { db.close(); }
 }
-interface Manifest { version: 1; organizationId: string; projectDir: string; dataDir: string; deploymentId: string; sourceAliases: { project: string; data: string }; schema: string; files: Record<string, string>; }
+interface Manifest { version: 2; appId: string; organizationId: string; projectDir: string; dataDir: string; deploymentId: string; sourceAliases: { project: string; data: string }; schema: string; files: Record<string, string>; }
 export function backupDeployment(config: ForgeConfig, target: string, appBackup: string) {
   assertServiceStopped(config.dataDir);
   target = resolve(target);
@@ -34,7 +34,7 @@ export function backupDeployment(config: ForgeConfig, target: string, appBackup:
   }
   if (existsSync(target)) throw Error("SnapshotTargetExists");
   const binding = JSON.parse(readFileSync(join(config.dataDir, "instance-binding.json"), "utf8"));
-  if (binding.organizationId !== config.organizationId) throw Error("InstanceBindingMismatch");
+  if (binding.appId !== config.appId || binding.organizationId !== config.organizationId) throw Error("InstanceBindingMismatch");
   const appManifest = JSON.parse(readFileSync(join(appBackup, "manifest.json"), "utf8"));
   if (appManifest.status !== "complete") throw Error("CompleteAppBackupRequired");
   const databaseSchema = schema(config.dataDir);
@@ -46,14 +46,14 @@ export function backupDeployment(config: ForgeConfig, target: string, appBackup:
     return resolve(p) !== cache && !resolve(p).startsWith(cache + "/") && local[0] !== "service-lock.json";
   } });
   cpSync(appBackup, join(target, "app"), { recursive: true, dereference: false });
-  const manifest: Manifest = { version: 1, organizationId: config.organizationId, projectDir: realpathSync(config.projectDir), dataDir: realpathSync(config.dataDir), deploymentId: config.deploymentId ?? "source", sourceAliases: { project: resolve(config.projectDir), data: resolve(config.dataDir) }, schema: databaseSchema, files: inventory(target) };
+  const manifest: Manifest = { version: 2, appId:config.appId ?? "", organizationId: config.organizationId, projectDir: realpathSync(config.projectDir), dataDir: realpathSync(config.dataDir), deploymentId: config.deploymentId ?? "source", sourceAliases: { project: resolve(config.projectDir), data: resolve(config.dataDir) }, schema: databaseSchema, files: inventory(target) };
   writeFileSync(join(target, "manifest.json"), JSON.stringify(manifest), { flag: "wx", mode: 0o600 });
   verifyDeployment(target);
   return { target, files: Object.keys(manifest.files).length, schema: databaseSchema };
 }
 export function verifyDeployment(source: string): Manifest {
   const manifest = JSON.parse(readFileSync(join(source, "manifest.json"), "utf8")) as Manifest;
-  if (manifest.version !== 1) throw Error("UnsupportedSnapshotVersion");
+  if (manifest.version !== 2) throw Error("UnsupportedSnapshotVersion");
   const actual = inventory(source);
   if (JSON.stringify(actual) !== JSON.stringify(manifest.files)) throw Error("SnapshotChecksumMismatch");
   if (schema(join(source, "data")) !== manifest.schema) throw Error("SnapshotSchemaMismatch");
@@ -61,7 +61,7 @@ export function verifyDeployment(source: string): Manifest {
 }
 export function restoreDeployment(config: ForgeConfig, source: string) {
   const manifest = verifyDeployment(source);
-  if (manifest.organizationId !== config.organizationId) throw Error("InstanceBindingMismatch");
+  if (manifest.appId !== config.appId || manifest.organizationId !== config.organizationId) throw Error("InstanceBindingMismatch");
   if (config.deploymentId !== manifest.deploymentId) throw Error("RestoreDeploymentVersionMismatch");
   if (resolve(config.projectDir).startsWith(resolve(config.dataDir) + "/") || resolve(config.dataDir).startsWith(resolve(config.projectDir) + "/") || resolve(config.dataDir) === resolve(config.projectDir)) throw Error("SnapshotRootsOverlap");
   for (const path of [config.projectDir, config.dataDir]) if (existsSync(path)) throw Error("RestoreTargetMustNotExist");
@@ -99,7 +99,7 @@ export function restoreDeployment(config: ForgeConfig, source: string) {
     }
   };
   if (existsSync(sessions)) walk(sessions);
-  writeFileSync(join(data, "instance-binding.json"), JSON.stringify({ appId: "certlab", organizationId: config.organizationId, projectDir: realpathSync(project), dataDir: realpathSync(data) }), { mode: 0o600 });
+  writeFileSync(join(data, "instance-binding.json"), JSON.stringify({ appId: config.appId ?? "", organizationId: config.organizationId, projectDir: realpathSync(project), dataDir: realpathSync(data) }), { mode: 0o600 });
   git(project, ["fsck", "--no-dangling"]);
   if (schema(data) !== manifest.schema) throw Error("SnapshotSchemaMismatch");
   writeFileSync(join(data, "restore.json"), JSON.stringify({ from: sha(readFileSync(join(source, "manifest.json"))), repairs, deploymentId: manifest.deploymentId }), { mode: 0o600 });

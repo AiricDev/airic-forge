@@ -10,22 +10,22 @@ import { validateWorkDefinition } from "@airic-forge/domain";
 test("a missing Git working directory reports the launch failure rather than trimming undefined stderr", () => {
   const root = mkdtempSync(join(tmpdir(), "forge-git-missing-"));
   try {
-    const om = new GitOperatingModel(join(root, "missing"), join(root, "data"), resolve("../../seed/certlab"));
+    const om = new GitOperatingModel(join(root, "missing"), join(root, "data"), resolve("../../tests/fixtures/operating-model"));
     assert.throws(() => om.head("main"), /git rev-parse main failed: .*ENOENT/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("CertLab report-authoring seed resolves every declared document", () => {
+test("Synthetic document-task seed resolves every declared document", () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-git-"));
   try {
-    const om = new GitOperatingModel(join(root, "project"), join(root, "data"), resolve(process.cwd(), "../../seed/certlab"));
+    const om = new GitOperatingModel(join(root, "project"), join(root, "data"), resolve(process.cwd(), "../../tests/fixtures/operating-model"));
     om.initialize();
     const revision = om.head("main");
-    const definition = om.workDefinition(revision, "report-authoring");
+    const definition = om.workDefinition(revision, "document-task");
     assert.deepEqual(validateWorkDefinition(definition, om.knownKnowledge(revision)), []);
     assert.equal(definition.documents.length, 5);
     for (const document of definition.documents) {
-      assert.ok(om.document(revision, `work-definitions/report-authoring/${document.path}`).length > 0);
+      assert.ok(om.document(revision, `work-definitions/document-task/${document.path}`).length > 0);
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -40,7 +40,7 @@ test("knowledge lookup reuses a commit index without hiding changed or duplicate
     }
   }
   try {
-    const om = new ObservedOm(join(root, "project"), join(root, "data"), resolve(process.cwd(), "../../seed/certlab"));
+    const om = new ObservedOm(join(root, "project"), join(root, "data"), resolve(process.cwd(), "../../tests/fixtures/operating-model"));
     om.initialize();
     const user = om.ensureUserBranch("index-owner");
     const save = (path: string, content: string, title: string) => {

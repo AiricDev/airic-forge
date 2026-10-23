@@ -43,17 +43,17 @@ test('real Pi uses native deferred MCP, persistent files, automatic compaction a
     res.writeHead(200,{'Content-Type':'text/event-stream'});
     const send=(delta:unknown,finish:string|null=null)=>res.write('data: '+JSON.stringify({id:'native',object:'chat.completion.chunk',created:1,model:'deepseek-flash',choices:[{index:0,delta,finish_reason:finish}],...(finish==='stop'&&phase==='read'?{usage:{prompt_tokens:2000000,completion_tokens:10,total_tokens:2000010}}:{})})+'\n\n');
     const call=(name:string,args:unknown)=>{send({role:'assistant',tool_calls:[{index:0,id:'call-'+phase+'-'+step,type:'function',function:{name,arguments:JSON.stringify(args)}}]});send({},'tool_calls');};
-    if(!input.tools?.length||phase==='summary'){summaries++;send({role:'assistant',content:'Goal: finish the assessment. Done: read seven pages and saved reading-notes.md. Next: read that note and save the draft. Source fixed revision, page 1. No professional confirmation.'});send({},'stop');}
+    if(!input.tools?.length||phase==='summary'){summaries++;send({role:'assistant',content:'Goal: finish the entry. Done: read seven pages and saved reading-notes.md. Next: read that note and save the draft. Source fixed revision, page 1. No professional confirmation.'});send({},'stop');}
     else if(phase==='read'){
-      if(step===0){assert.ok(!input.tools.some((t:{function:{name:string}})=>t.function.name.includes('asset_read')),'business tools must initially be deferred');call('tool_search',{query:'asset read',limit:1});}
-      else if(step<=7)call('mcp__work__asset_read',{page:step,revision_id:'fixed'});
+      if(step===0){assert.ok(!input.tools.some((t:{function:{name:string}})=>t.function.name.includes('document_read')),'business tools must initially be deferred');call('tool_search',{query:'asset read',limit:1});}
+      else if(step<=7)call('mcp__work__document_read',{page:step,revision_id:'fixed'});
       else if(step===8)call('write',{path:'reading-notes.md',content:'Observed fixed revision page 1: monthly interval is 30 days. Figure detail remains uncertain. Next save a draft.'});
       else{send({role:'assistant',content:'Read outcomes saved in reading-notes.md.'});send({},'stop');}
       step++;
     }else{
       if(step===0)call('read',{path:'reading-notes.md'});
       else if(step===1){assert.ok(JSON.stringify(input.messages).includes('monthly interval is 30 days'));call('tool_search',{query:'save draft',limit:1});}
-      else if(step===2)call('mcp__work__assessment_save_draft',{note:'Monthly interval is 30 days; figure detail remains uncertain.'});
+      else if(step===2)call('mcp__work__entry_update',{note:'Monthly interval is 30 days; figure detail remains uncertain.'});
       else{assert.ok(JSON.stringify(input.messages).includes('committed'));send({role:'assistant',content:'Draft saved; figure limitation retained.'});send({},'stop');}
       step++;
     }
@@ -61,8 +61,8 @@ test('real Pi uses native deferred MCP, persistent files, automatic compaction a
   });server.listen(0,'127.0.0.1');await once(server,'listening');const address=server.address();assert.ok(address&&typeof address!=='string');
   const root=await mkdtemp(join(tmpdir(),'forge-native-flow-'));
   const config={...loadConfig({}),dataDir:root,modelProvider:'deepseek',modelId:'deepseek-flash',modelApiKey:'synthetic',modelBaseUrl:`http://127.0.0.1:${address.port}/v1`};
-  const tools:WorkAgentTool[]=[{capability:{id:'asset.read',kind:'query',title:'Read',description:'asset read PDF original page',inputSchema:{type:'object',properties:{page:{type:'integer'},revision_id:{type:'string'}}},outputSchema:{}},invoke:async p=>{reads++;return {source:{revision_id:'fixed',sha256:'hash',page:p.page},text:'Synthetic page '.repeat(1800),image:{mimeType:'image/png',data:Buffer.from('image-'+p.page).toString('base64')}};}},
-    {capability:{id:'assessment.save-draft',kind:'command',title:'Save draft',description:'save draft assessment',inputSchema:{type:'object',properties:{note:{type:'string'}}},outputSchema:{}},invoke:async p=>{writes++;assert.match(String(p.note),/uncertain/);return {status:'committed',commandId:'one-command'};}}];
+  const tools:WorkAgentTool[]=[{capability:{id:'document.read',kind:'query',title:'Read',description:'asset read PDF original page',inputSchema:{type:'object',properties:{page:{type:'integer'},revision_id:{type:'string'}}},outputSchema:{}},invoke:async p=>{reads++;return {source:{revision_id:'fixed',sha256:'hash',page:p.page},text:'Synthetic page '.repeat(1800),image:{mimeType:'image/png',data:Buffer.from('image-'+p.page).toString('base64')}};}},
+    {capability:{id:'entry.update',kind:'command',title:'Save draft',description:'save draft assessment',inputSchema:{type:'object',properties:{note:{type:'string'}}},outputSchema:{}},invoke:async p=>{writes++;assert.match(String(p.note),/uncertain/);return {status:'committed',commandId:'one-command'};}}];
   const input={sessionId:'browser',scope,signal:AbortSignal.timeout(30000),userMessage:'Read the synthetic manual',context:{},documents:[],availableDocumentIds:[],loadDocument:async()=>'',tools,onRuntimeEvent:async(e:AgentRuntimeEvent)=>{events.push(e);}};
   try{
     const first=await new PiWorkAgentRunner(config).runWork(input);assert.match(first.text,/saved/);assert.equal(reads,7);

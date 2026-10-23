@@ -6,16 +6,16 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { hashPassword } from "./auth.js";
 import type { ForgeConfig } from "./config.js";
-import { ForgeRuntime } from "./runtime.js";
+import { TestRuntime as ForgeRuntime } from "./test-runtime.js";
 import { buildServer } from "./server.js";
 
 test("two users are isolated; an admin can inspect without becoming the OM owner; restart keeps revisions", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-one-"));
   const config: ForgeConfig = {
     port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"),
-    seedProjectDir: resolve(process.cwd(), "../../seed/certlab"),
+    seedProjectDir: resolve(process.cwd(), "../../tests/fixtures/operating-model"),
     webDistDir: join(root, "missing-web"),
-    certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173",
+    appId:"sample-app", appUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173",
     };
   const runtime = new ForgeRuntime(config);
   const alice = testUser(runtime.db, "  ALICE@example.com ", false);
@@ -24,20 +24,20 @@ test("two users are isolated; an admin can inspect without becoming the OM owner
   const admin = testUser(runtime.db, "admin@example.com", true);
   assert.equal(alice.id, repeated.id);
   assert.notEqual(alice.id, bob.id);
-  runtime.db.recordAppIdentity("certlab", "app-alice", alice.id, alice.email);
-  assert.equal(runtime.db.linkedUserId("certlab", "app-alice"), alice.id);
-  assert.throws(() => runtime.db.recordAppIdentity("certlab", "app-alice", bob.id, bob.email), /AppIdentityEmailConflict/);
-  assert.equal(runtime.db.linkedUserId("certlab", "app-alice"), alice.id);
+  runtime.db.recordAppIdentity("sample-app", "app-alice", alice.id, alice.email);
+  assert.equal(runtime.db.linkedUserId("sample-app", "app-alice"), alice.id);
+  assert.throws(() => runtime.db.recordAppIdentity("sample-app", "app-alice", bob.id, bob.email), /AppIdentityEmailConflict/);
+  assert.equal(runtime.db.linkedUserId("sample-app", "app-alice"), alice.id);
   for (const user of [alice, bob, admin]) {
     runtime.om.ensureUserBranch(user.id);
     assert.equal(runtime.db.setInitialPassword(user.id, hashPassword("stage-one-password")), true);
   }
-  const catalog = { id: "catalog-1", appId: "certlab", domainRelease: "certlab/v1", digest: "digest-1", discoveredAt: "", tools: [
-    { id: "report.context", kind: "query" as const, title: "Context", description: "", inputSchema: {}, outputSchema: {} },
+  const catalog = { id: "catalog-1", appId: "sample-app", domainRelease: "sample/v1", digest: "digest-1", discoveredAt: "", tools: [
+    { id: "workspace.context", kind: "query" as const, title: "Context", description: "", inputSchema: {}, outputSchema: {} },
   ] };
   runtime.db.recordToolSnapshot(catalog);
-  assert.equal(runtime.db.toolSnapshot("certlab", catalog.digest)?.digest, catalog.digest);
-  const bobWork = runtime.db.createWork(bob.id, "certlab", "report-authoring", "report-bob");
+  assert.equal(runtime.db.toolSnapshot("sample-app", catalog.digest)?.digest, catalog.digest);
+  const bobWork = runtime.db.createWork(bob.id, "sample-app", "document-task", "report-bob");
   const bobTurn = runtime.db.nextTurn(bobWork.id, runtime.om.head(`users/${bob.id}`), catalog.digest, "context-digest");
   runtime.trajectories.append({ id: "event-bob", workId: bobWork.id, turnId: bobTurn.id, type: "turn.started", at: bobTurn.startedAt, payload: { omRevision: bobTurn.omRevision } });
   const app = buildServer(runtime);
@@ -51,8 +51,8 @@ test("two users are isolated; an admin can inspect without becoming the OM owner
     const aliceCookie = await login("ALICE@example.com");
     const aliceOm = await app.inject({ method: "GET", url: `/api/v1/om/users/${alice.id}`, headers: { cookie: aliceCookie } });
     assert.equal(aliceOm.statusCode, 200);
-    assert.ok(aliceOm.json().files.includes("work-definitions/report-authoring/work.yml"));
-    const draftPath = "work-definitions/report-authoring/method.md";
+    assert.ok(aliceOm.json().files.includes("work-definitions/document-task/work.yml"));
+    const draftPath = "work-definitions/document-task/method.md";
     const originalMethod = runtime.om.document(aliceOm.json().revision, draftPath);
     const draftContent = `${originalMethod}\n\nA private edit that is not active.\n`;
     const savedDraft = await app.inject({ method: "PUT", url: `/api/v1/om/users/${alice.id}/drafts`, headers: { cookie: aliceCookie }, payload: { path: draftPath, content: draftContent, baseRevision: aliceOm.json().revision } });
@@ -82,9 +82,9 @@ test("two users are isolated; an admin can inspect without becoming the OM owner
     const restarted = new ForgeRuntime(config);
     try {
       assert.equal(testUser(restarted.db, "alice@example.com", false).id, alice.id);
-      assert.equal(restarted.db.linkedUserId("certlab", "app-alice"), alice.id);
+      assert.equal(restarted.db.linkedUserId("sample-app", "app-alice"), alice.id);
       assert.equal(restarted.om.head(`users/${alice.id}`), revision);
-      assert.equal(restarted.db.toolSnapshot("certlab", catalog.digest)?.digest, catalog.digest);
+      assert.equal(restarted.db.toolSnapshot("sample-app", catalog.digest)?.digest, catalog.digest);
       assert.equal(restarted.drafts.draftsForUser(alice.id)[0]?.content, draftContent);
       assert.equal(restarted.om.head(`users/${alice.id}`), revision);
       assert.equal(restarted.db.work(bobWork.id)?.ownerUserId, bob.id);

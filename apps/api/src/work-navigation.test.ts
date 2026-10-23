@@ -4,7 +4,7 @@ import test from "node:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { ForgeRuntime } from "./runtime.js";
+import { TestRuntime as ForgeRuntime } from "./test-runtime.js";
 import type { ForgeConfig } from "./config.js";
 import { buildServer } from "./server.js";
 
@@ -13,7 +13,7 @@ test("Work list is paginated and detail keeps the original ownership boundary", 
   const webDistDir = join(root, "web");
   mkdirSync(webDistDir);
   writeFileSync(join(webDistDir, "index.html"), "<html>AiricForge Work</html>");
-  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir, certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", };
+  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../tests/fixtures/operating-model"), webDistDir, appId:"sample-app", appUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", };
   const runtime = new ForgeRuntime(config);
   const app = buildServer(runtime);
   try {
@@ -21,16 +21,16 @@ test("Work list is paginated and detail keeps the original ownership boundary", 
     const stranger = testUser(runtime.db, "work-stranger@example.invalid", false);
     const admin = testUser(runtime.db, "work-admin@example.invalid", true);
     runtime.om.ensureUserBranch(owner.id);
-    const manifestUrl = `/api/v1/om/users/${owner.id}/manifest?path=work-definitions%2Freport-authoring%2Fwork.yml`;
+    const manifestUrl = `/api/v1/om/users/${owner.id}/manifest?path=work-definitions%2Fdocument-task%2Fwork.yml`;
     const manifest = await app.inject({ method: "GET", url: manifestUrl, headers: { cookie: `forge_session=${runtime.webSessions.issue(owner.id)}` } });
     assert.equal(manifest.statusCode, 200);
-    assert.equal(manifest.json().definition.id, "report-authoring");
+    assert.equal(manifest.json().definition.id, "document-task");
     assert.ok(manifest.json().definition.documents.length > 0);
     assert.equal((await app.inject({ method: "GET", url: manifestUrl, headers: { cookie: `forge_session=${runtime.webSessions.issue(stranger.id)}` } })).statusCode, 403);
     assert.equal((await app.inject({ method: "GET", url: `/api/v1/om/users/${owner.id}/manifest?path=subject-knowledge%2Fanything.md`, headers: { cookie: `forge_session=${runtime.webSessions.issue(owner.id)}` } })).statusCode, 404);
     const draftUrl = `/api/v1/om/users/${owner.id}/drafts`;
     const ownerCookie = { cookie: `forge_session=${runtime.webSessions.issue(owner.id)}` };
-    const draftPath = "work-definitions/report-authoring/method.md";
+    const draftPath = "work-definitions/document-task/method.md";
     const original = runtime.om.document(runtime.om.head(`users/${owner.id}`), draftPath);
     const activeHead = runtime.om.head(`users/${owner.id}`);
     assert.equal((await app.inject({ method: "PUT", url: draftUrl, headers: ownerCookie, payload: { path: draftPath, content: `${original}\n\nPrivate idea`, baseRevision: activeHead } })).statusCode, 200);
@@ -41,8 +41,8 @@ test("Work list is paginated and detail keeps the original ownership boundary", 
     assert.equal((await app.inject({ method: "PUT", url: draftUrl, headers: ownerCookie, payload: { path: "../bad.md", content: "bad", baseRevision: activeHead } })).statusCode, 400);
     assert.equal((await app.inject({ method: "DELETE", url: `${draftUrl}?path=${encodeURIComponent(draftPath)}`, headers: ownerCookie })).statusCode, 204);
     assert.deepEqual((await app.inject({ method: "GET", url: draftUrl, headers: ownerCookie })).json().drafts, []);
-    const owned = Array.from({ length: 45 }, (_, index) => runtime.db.createWork(owner.id, "certlab", "report-authoring", `report-${index}`));
-    runtime.db.createWork(stranger.id, "certlab", "report-authoring", "private-report");
+    const owned = Array.from({ length: 45 }, (_, index) => runtime.db.createWork(owner.id, "sample-app", "document-task", `report-${index}`));
+    runtime.db.createWork(stranger.id, "sample-app", "document-task", "private-report");
     const cookie = (userId: string) => ({ cookie: `forge_session=${runtime.webSessions.issue(userId)}` });
     const list = async (page: string, headers = cookie(owner.id)) => app.inject({ method: "GET", url: `/api/v1/users/${owner.id}/works?page=${page}`, headers });
     const first = await list("1");
@@ -62,11 +62,11 @@ test("Work list is paginated and detail keeps the original ownership boundary", 
     assert.equal((await app.inject({ method: "GET", url: `/works/${workId}` })).statusCode, 200);
     assert.equal((await app.inject({ method: "GET", url: `/api/v1/works/${workId}`, headers: cookie(owner.id) })).statusCode, 200);
     runtime.db.completeWork(owned[0]!.id);
-    const filteredWorks = await app.inject({ method: "GET", url: `/api/v1/works?page=1&ownerId=${owner.id}&workType=report-authoring&status=completed`, headers: cookie(admin.id) });
+    const filteredWorks = await app.inject({ method: "GET", url: `/api/v1/works?page=1&ownerId=${owner.id}&workType=document-task&status=completed`, headers: cookie(admin.id) });
     assert.equal(filteredWorks.statusCode, 200);
     assert.equal(filteredWorks.json().total, 1);
     assert.equal(filteredWorks.json().works[0].id, owned[0]!.id);
-    assert.equal((await app.inject({ method: "GET", url: "/api/v1/works?page=1&workType=unsupported", headers: cookie(admin.id) })).statusCode, 400);
+    assert.equal((await app.inject({ method: "GET", url: "/api/v1/works?page=1&workType=unsupported", headers: cookie(admin.id) })).statusCode, 200);
     assert.equal((await app.inject({ method: "GET", url: "/api/v1/works?page=1", headers: cookie(owner.id) })).statusCode, 403);
     assert.equal((await app.inject({ method: "GET", url: `/api/v1/works?page=1&ownerId=${stranger.id}`, headers: cookie(owner.id) })).statusCode, 403);
     assert.equal((await app.inject({ method: "GET", url: "/api/v1/works?page=1&status=invalid", headers: cookie(admin.id) })).statusCode, 400);

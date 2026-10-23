@@ -3,12 +3,12 @@ import test from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { ForgeRuntime } from "./runtime.js";
+import { TestRuntime as ForgeRuntime } from "./test-runtime.js";
 import { buildServer } from "./server.js";
 
 test("ACP upgrades to WebSocket and handles session/new as a socket message", async () => {
   const root = mkdtempSync(join(tmpdir(), "forge-acp-socket-"));
-  const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", });
+  const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../tests/fixtures/operating-model"), webDistDir: join(root, "web"), appId:"sample-app", appUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", });
   const app = buildServer(runtime);
   try {
     const address = await app.listen({ port: 0, host: "127.0.0.1" });

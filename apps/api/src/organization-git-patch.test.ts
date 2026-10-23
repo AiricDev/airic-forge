@@ -4,8 +4,8 @@ import { omFixture } from "./om-test-fixture.js";
 import { createTestOmCommit } from "./om-commit-fixture.js";
 import { git } from "./personal-git-om.js";
 
-const policy = "work-definitions/report-authoring/policy.md";
-const method = "work-definitions/report-authoring/method.md";
+const policy = "work-definitions/document-task/policy.md";
+const method = "work-definitions/document-task/method.md";
 
 test("selective acceptance removes identical content but not unaccepted changes from the next comparison", async () => {
   const f = omFixture();
@@ -36,7 +36,7 @@ test("selective acceptance removes identical content but not unaccepted changes 
 test("document reads and selected Git patches preserve exact bytes, additions and deletions", async () => {
   const f = omFixture();
   try {
-    const added = "work-definitions/report-authoring/shared-formatting.md";
+    const added = "work-definitions/document-task/shared-formatting.md";
     const deleted = "subject-knowledge/README.md";
     const content = "\n  # Leading spaces\r\n\tIndented text\r\n\r\n";
     const author = await createTestOmCommit(f.runtime, f.owner.id, [

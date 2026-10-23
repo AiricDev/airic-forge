@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { omFixture } from "./om-test-fixture.js";
 import { ForgeUseCases } from "@airic-forge/domain";
-import { testCatalog } from "./certlab-test-catalog.js";
-import { ForgeRuntime } from "./runtime.js";
+import { testCatalog } from "./test-tool-catalog.js";
+import { TestRuntime as ForgeRuntime } from "./test-runtime.js";
 import type { ForgeConfig } from "./config.js";
 import { buildServer } from "./server.js";
 import { createTestOmCommit } from "./om-commit-fixture.js";
@@ -18,7 +18,7 @@ test("organization comparison and contribution detail return complete diffs abov
   const app = buildServer(f.runtime);
   try {
     const edits = Array.from({ length: 20 }, (_, index) => ({
-      path: `work-definitions/report-authoring/shared-${index}.md`,
+      path: `work-definitions/document-task/shared-${index}.md`,
       content: `# Shared method ${index}\n${"Governed shared policy detail.\n".repeat(2200)}End of method ${index}.\n`,
     }));
     await createTestOmCommit(f.runtime, f.owner.id, edits, "Share large OM improvement");
@@ -44,7 +44,7 @@ test("reviewed and accepted contribution details read immutable commits without 
   const f = omFixture();
   const app = buildServer(f.runtime);
   try {
-    const path = "work-definitions/report-authoring/policy.md";
+    const path = "work-definitions/document-task/policy.md";
     await createTestOmCommit(f.runtime, f.owner.id, [{ path, content: f.runtime.om.document(f.runtime.om.head("main"), path) + "\nReviewed shared policy.\n" }], "Share policy");
     const record = await f.runtime.useCases.createOrganizationContribution(f.admin.id, f.owner.id, "Share reviewed policy", "");
     const reviewed = await f.runtime.useCases.reviewOrganizationContribution(f.admin.id, record.id, [path]);
@@ -86,7 +86,7 @@ test("reviewed and accepted contribution details read immutable commits without 
 
 test("administrator selectively accepts personal OM and member sync preserves old HEAD", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-six-"));
-  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", };
+  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../tests/fixtures/operating-model"), webDistDir: join(root, "web"), appId:"sample-app", appUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", };
   const runtime = new ForgeRuntime(config);
   try {
     const admin = testUser(runtime.db, "admin@example.com", true);
@@ -99,8 +99,8 @@ test("administrator selectively accepts personal OM and member sync preserves ol
     const memberBranch = runtime.om.ensureUserBranch(member.id);
     const initialMain = runtime.om.head("main");
     const oldMemberHead = runtime.om.head(memberBranch.branch);
-    const policyPath = "work-definitions/report-authoring/policy.md";
-    const methodPath = "work-definitions/report-authoring/method.md";
+    const policyPath = "work-definitions/document-task/policy.md";
+    const methodPath = "work-definitions/document-task/method.md";
     const authorRevision = (await createTestOmCommit(runtime, author.id, [
       { path: policyPath, content: runtime.om.document(oldMemberHead, policyPath) + "\nShared organization policy.\n" },
       { path: methodPath, content: runtime.om.document(oldMemberHead, methodPath) + "\nPrivate author method.\n" },
@@ -132,7 +132,7 @@ test("administrator selectively accepts personal OM and member sync preserves ol
     assert.equal(runtime.om.includesRevision(memberBranch.branch, accepted.revision), true);
     assert.equal((await useCases.personalOm(member.id, member.id, oldMemberHead)).revision, oldMemberHead);
     await assert.rejects(() => runtime.omChanges.sync(member.id), /OrganizationAlreadyCurrent/);
-    const work = runtime.db.createWork(member.id, "certlab", "report-authoring", "report-1");
+    const work = runtime.db.createWork(member.id, "sample-app", "document-task", "report-1");
     await assert.rejects(() => useCases.addWorkFeedback(author.id, work.id, "avoidable-correction", "Wrong owner"), /Forbidden/);
     await useCases.addWorkFeedback(member.id, work.id, "required-human-decision", "Report approval belongs to a human");
     await useCases.addWorkFeedback(member.id, work.id, "avoidable-correction", "I had to repeat the evidence location");
@@ -148,13 +148,13 @@ test("administrator selectively accepts personal OM and member sync preserves ol
 
 test("a reviewed organization candidate cannot overwrite a newer main HEAD", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-six-stale-"));
-  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", };
+  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../tests/fixtures/operating-model"), webDistDir: join(root, "web"), appId:"sample-app", appUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", };
   const runtime = new ForgeRuntime(config);
   try {
     const author = testUser(runtime.db, "author@example.com", false);
     const admin = testUser(runtime.db, "reviewer@example.invalid", true);
     const user = runtime.om.ensureUserBranch(author.id);
-    const path = "work-definitions/report-authoring/policy.md";
+    const path = "work-definitions/document-task/policy.md";
     await createTestOmCommit(runtime, author.id, [{ path, content: runtime.om.document(runtime.om.head(user.branch), path) + "\nAuthor rule.\n" }], "Author rule");
     const candidate = await runtime.useCases.createOrganizationContribution(admin.id, author.id, "Selected policy", "");
     const selected = await runtime.useCases.reviewOrganizationContribution(admin.id, candidate.id, [path]);
@@ -168,7 +168,7 @@ test("a reviewed organization candidate cannot overwrite a newer main HEAD", asy
 test("organization sync preserves conflicts in a draft until resolved and directly committed", async () => {
   const f = omFixture();
   try {
-    const path = "work-definitions/report-authoring/policy.md";
+    const path = "work-definitions/document-task/policy.md";
     const base = f.runtime.om.head("main");
     const original = f.runtime.om.document(base, path);
     const author = await createTestOmCommit(f.runtime, f.owner.id, [{ path, content: original + "\nOrganization wording.\n" }], "Organization wording");
@@ -189,7 +189,7 @@ test("organization sync preserves conflicts in a draft until resolved and direct
 });
 test("organization HTTP routes expose main to members while keeping private evidence and baseline administrative", async () => {
   const root = mkdtempSync(join(tmpdir(), "airic-forge-stage-six-http-"));
-  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", };
+  const config: ForgeConfig = { port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve(process.cwd(), "../../tests/fixtures/operating-model"), webDistDir: join(root, "web"), appId:"sample-app", appUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", };
   const runtime = new ForgeRuntime(config);
   const app = buildServer(runtime);
   try {
@@ -197,14 +197,14 @@ test("organization HTTP routes expose main to members while keeping private evid
     const author = testUser(runtime.db, "author@example.com", false);
     const reader = testUser(runtime.db, "reader@example.com", false);
     for (const user of [admin, author, reader]) runtime.om.ensureUserBranch(user.id);
-    const work = runtime.db.createWork(author.id, "certlab", "report-authoring", "report-1");
+    const work = runtime.db.createWork(author.id, "sample-app", "document-task", "report-1");
     const cookie = (id: string) => ({ cookie: `forge_session=${runtime.webSessions.issue(id)}` });
     const readerHeaders = cookie(reader.id);
     const adminHeaders = cookie(admin.id);
     assert.equal((await app.inject({ method: "GET", url: "/api/v1/om/organization" })).statusCode, 401);
     assert.equal((await app.inject({ method: "GET", url: "/api/v1/om/organization", headers: readerHeaders })).statusCode, 200);
     assert.equal((await app.inject({ method: "GET", url: "/api/v1/om/organization/history", headers: readerHeaders })).statusCode, 200);
-    assert.equal((await app.inject({ method: "GET", url: "/api/v1/om/organization/file?path=work-definitions%2Freport-authoring%2Fwork.yml", headers: readerHeaders })).statusCode, 200);
+    assert.equal((await app.inject({ method: "GET", url: "/api/v1/om/organization/file?path=work-definitions%2Fdocument-task%2Fwork.yml", headers: readerHeaders })).statusCode, 200);
     assert.equal((await app.inject({ method: "GET", url: `/api/v1/works/${work.id}`, headers: readerHeaders })).statusCode, 403);
     assert.equal((await app.inject({ method: "GET", url: `/api/v1/organization/compare/${author.id}`, headers: readerHeaders })).statusCode, 403);
     assert.equal((await app.inject({ method: "GET", url: "/api/v1/organization/contributions", headers: readerHeaders })).statusCode, 403);

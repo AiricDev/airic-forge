@@ -69,15 +69,12 @@ export function WorkListPage({
             </TextField>
           )}
           <TextField
-            select
             label="筛选 Work 类型"
+            placeholder="输入工作类型标识"
             value={r.workType}
             onChange={(e) => filter({ workType: e.target.value })}
             sx={{ minWidth: 200, flex: 1 }}
-          >
-            <MenuItem value="">全部类型</MenuItem>
-            <MenuItem value="report-authoring">报告编制</MenuItem>
-          </TextField>
+          />
           <TextField
             select
             label="筛选 Work 状态"
@@ -155,9 +152,7 @@ export function WorkListPage({
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      {work.workType === "report-authoring"
-                        ? "报告评估"
-                        : "Report Type 定义"}
+                      {work.workType}
                       <Typography
                         variant="body2"
                         color="text.secondary"

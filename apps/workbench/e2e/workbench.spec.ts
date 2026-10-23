@@ -61,9 +61,10 @@ test("real API pagination, filters, detail refresh and return location", async (
     await expect(page.getByText(id, { exact: false }).first()).toBeVisible();
   await page.getByRole("button", { name: "返回 Work 列表" }).click();
   await expect(page.getByText("共 45 条 · 第 2 / 3 页")).toBeVisible();
-  await page.getByRole("combobox", { name: "筛选 Work 类型" }).click();
-  await page.getByRole("option", { name: "报告编制" }).click();
-  await expect(page).toHaveURL(/page=1.*workType=report-authoring/);
+  await page
+    .getByRole("textbox", { name: "筛选 Work 类型" })
+    .fill("document-task");
+  await expect(page).toHaveURL(/page=1.*workType=document-task/);
   await expect(page.getByText("共 45 条 · 第 1 / 3 页")).toBeVisible();
   await screenshot(page, "work-list");
 });
@@ -421,7 +422,7 @@ test("API Suggestion remains exportable without an OM Proposal", async ({
     .getAttribute("href");
   const response = await page.request.get(exportUrl!);
   expect(response.ok()).toBeTruthy();
-  expect(await response.text()).toContain("report.evidence-location");
+  expect(await response.text()).toContain("workspace.evidence-location");
   await screenshot(page, "api-suggestion");
 });
 

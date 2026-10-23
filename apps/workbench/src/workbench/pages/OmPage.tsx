@@ -221,11 +221,7 @@ export function OmPage({
                     ? (drafts.data?.drafts.map((d) => d.path) ?? [])
                     : [],
                 )}
-                defaultExpandedItems={[
-                  "work-definitions",
-                  "subject-knowledge",
-                  "work-definitions/report-authoring",
-                ]}
+                defaultExpandedItems={["work-definitions", "subject-knowledge"]}
                 selectedItems={path}
                 onSelectedItemsChange={(_, value) => {
                   if (value && s.files.includes(value)) select(value);

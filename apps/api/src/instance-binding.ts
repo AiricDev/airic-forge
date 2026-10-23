@@ -9,13 +9,14 @@ const canonical = (path: string): string => {
 };
 
 /** Validate both roots before creating either one or opening a database. */
-export function bindCertLabRoots(projectDir: string, dataDir: string, organizationId: string): void {
+export function bindInstanceRoots(projectDir: string, dataDir: string, organizationId: string, appId: string): void {
+  if (!appId.trim() || appId.length > 200) throw new Error("AppIdRequired");
   if (!organizationId.trim() || organizationId.length > 200) throw new Error("OrganizationIdRequired");
   for (const root of [projectDir, dataDir]) if (existsSync(root) && lstatSync(root).isSymbolicLink()) throw new Error("InstanceRootSymlinkDenied");
   const project = canonical(projectDir), data = canonical(dataDir);
   if (project === data || project.startsWith(data + "/") || data.startsWith(project + "/")) throw new Error("InstanceRootsMustBeSeparate");
   const marker = join(data, "instance-binding.json");
-  const expected = { appId: "certlab", organizationId, projectDir: project, dataDir: data };
+  const expected = { appId, organizationId, projectDir: project, dataDir: data };
   if (existsSync(marker)) {
     const value = JSON.parse(readFileSync(marker, "utf8"));
     if (JSON.stringify(value) !== JSON.stringify(expected)) throw new Error("InstanceBindingMismatch");

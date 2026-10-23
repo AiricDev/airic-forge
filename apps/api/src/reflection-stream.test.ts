@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { ForgeUseCases, type ReflectionAgentPort, type ReflectionRun, type ReflectionRunEvent } from "@airic-forge/domain";
-import { ForgeRuntime } from "./runtime.js";
+import { TestRuntime as ForgeRuntime } from "./test-runtime.js";
 import { buildServer } from "./server.js";
 import { hashPassword, verifyPassword } from "./auth.js";
 import { systemPort } from "./system-port.js";
@@ -18,13 +18,13 @@ function gate() {
 }
 async function fixture(agent: ReflectionAgentPort) {
   const root = mkdtempSync(join(tmpdir(), "forge-stream-"));
-  const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve("../../seed/certlab"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", webDistDir: join(root, "web") });
+  const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve("../../tests/fixtures/operating-model"), appId:"sample-app", appUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173", webDistDir: join(root, "web") });
   Object.assign(runtime, { useCases: new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, omChanges: runtime.omChanges, omDrafts: runtime.drafts, app: runtime.app, toolSnapshots: runtime.db, agents: { runWork: async () => ({ text: "" }) }, reflectionAgent: agent, reflectionRunStore: runtime.db, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, }) });
   const owner = testUser(runtime.db, "stream-owner@example.invalid", false);
   const other = testUser(runtime.db, "stream-other@example.invalid", false);
   const admin = testUser(runtime.db, "stream-admin@example.invalid", true);
   runtime.om.ensureUserBranch(owner.id);
-  const work = runtime.db.createWork(owner.id, "certlab", "report-authoring", "report");
+  const work = runtime.db.createWork(owner.id, "sample-app", "document-task", "report");
   runtime.trajectories.append({ id: "source-event", workId: work.id, type: "message", at: "now", payload: { text: "Evidence" } });
   const { reflection } = await runtime.useCases.openWorkReflection(owner.id, work.id);
   const app = buildServer(runtime);
@@ -145,7 +145,7 @@ test("saved snapshots survive database restart and interrupted runs are not re-e
   let db = new ForgeDatabase(root);
   try {
     const user = testUser(db, "restart@example.invalid", false);
-    const work = db.createWork(user.id, "certlab", "report-authoring", "report");
+    const work = db.createWork(user.id, "sample-app", "document-task", "report");
     const reflection = db.openReflection({ workId: work.id, ownerUserId: user.id, lensId: "conversation", lensVersion: 0, lensPrompt: "", question: "", evidenceEventIds: [], omRevision: "revision" }, "Intro");
     const run = db.createReflectionRun({ id: "run", reflectionId: reflection.id, ownerUserId: user.id, requestId: "request-1", message: "Discuss", status: "running", sequence: 1, text: "Partial", tools: [], createdAt: "now", updatedAt: "now" });
     assert.throws(() => db.createReflectionRun({ ...run, id: "duplicate" }));

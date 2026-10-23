@@ -13,9 +13,11 @@ export interface ForgeConfig {
   dataDir: string;
   /** Explicit fixture/import source for programmatic callers, never loaded from env. */
   seedProjectDir?: string;
-  reportWorkDefinitionId?: string;
+  workDefinitionId?: string;
   webDistDir: string;
-  certLabUrl: string;
+  appUrl: string;
+  appId?: string;
+  appAdapterModule?: string;
   organizationId: string;
   allowedOrigin: string;
   publicUrl?: string;
@@ -40,11 +42,13 @@ export function loadConfig(env = process.env): ForgeConfig {
     port: Number(env.FORGE_PORT ?? 4175),
     bindHost: env.FORGE_BIND_HOST,
     trustedProxy: env.FORGE_TRUST_PROXY,
-    projectDir: resolve(env.FORGE_PROJECT_DIR ?? "./runtime/certlab/project"),
-    dataDir: resolve(env.FORGE_DATA_DIR ?? "./runtime/certlab/data"),
-    reportWorkDefinitionId: env.FORGE_REPORT_WORK_DEFINITION,
+    projectDir: resolve(env.FORGE_PROJECT_DIR ?? "./runtime/project"),
+    dataDir: resolve(env.FORGE_DATA_DIR ?? "./runtime/data"),
+    workDefinitionId: env.FORGE_WORK_DEFINITION,
     webDistDir: resolve(env.FORGE_WEB_DIST_DIR ?? "./apps/workbench/public"),
-    certLabUrl: (env.FORGE_CERTLAB_URL ?? "http://127.0.0.1:8000").replace(/\/$/, ""),
+    appId: env.FORGE_APP_ID,
+    appAdapterModule: env.FORGE_APP_ADAPTER_MODULE ? resolve(env.FORGE_APP_ADAPTER_MODULE) : undefined,
+    appUrl: (env.FORGE_APP_URL ?? "http://127.0.0.1:8000").replace(/\/$/, ""),
     organizationId: (env.FORGE_ORGANIZATION_ID ?? "").trim(),
     allowedOrigin: env.FORGE_ALLOWED_ORIGIN ?? "http://127.0.0.1:5173",
     publicUrl: (env.FORGE_PUBLIC_URL ?? "http://127.0.0.1:4175").replace(/\/$/, ""),

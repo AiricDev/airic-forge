@@ -26,8 +26,8 @@ WD 是一类工作的入口；Subject Knowledge（SK）是可复用的业务理�
 
 ```yaml
 schemaVersion: 1
-id: report-authoring
-title: Report assessment
+id: document-task
+title: Document investigation
 description: Advance the explicit report goal.
 documents:
   - id: policy
@@ -52,7 +52,7 @@ completion:
 
 权威 App 状态、未决命令和人类纠正与 OM 分开提供。Pi 会话/工作文件支持接续，但不变成专业证据或授权。压缩采用 Pi 原生机制，不在 OM 声明另一套窗口或摘要流程。
 
-当前 report-authoring 可通过 FORGE_REPORT_WORK_DEFINITION 映射到组织实际 WD。空 OM 可启动服务，但没有对应 WD 就不能执行工作；当前生产启动不自动从 seed 导入。面向新组织的显式种子初始化与发布更新要求见 [集成需求](app-integration.md)。
+workType默认选取同名WD，部署可用FORGE_WORK_DEFINITION显式绑定单一WD。空 OM 可启动服务，但没有对应 WD 就不能执行工作；当前生产启动不自动从 seed 导入。面向新组织的显式种子初始化与发布更新要求见 [集成需求](app-integration.md)。
 
 ## 个人与组织治理
 

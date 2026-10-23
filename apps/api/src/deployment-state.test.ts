@@ -7,17 +7,17 @@ import { initializeInstance } from "./forge-ops.js";
 import { backupDeployment, restoreDeployment, verifyDeployment } from "./deployment-state.js";
 import { openNativeSession } from "./pi-native-session.js";
 import { loadConfig } from "./config.js";
-import { ForgeRuntime } from "./runtime.js";
+import { TestRuntime as ForgeRuntime } from "./test-runtime.js";
 import { acquireServiceLock } from "./service-lock.js";
 
 test("offline snapshot verifies integrity and relocates Git drafts and the explicitly bound native session", async () => {
   const root = mkdtempSync(join(tmpdir(), "forge-snapshot-"));
-  const config = { ...loadConfig({}), projectDir: join(root, "original/project"), dataDir: join(root, "original/data"), organizationId: "synthetic", modelProvider: "deepseek", modelId: "deepseek-flash", modelApiKey: "synthetic" };
+  const config = { ...loadConfig({}), appId:"app", projectDir: join(root, "original/project"), dataDir: join(root, "original/data"), organizationId: "synthetic", modelProvider: "deepseek", modelId: "deepseek-flash", modelApiKey: "synthetic" };
   try {
-    await initializeInstance(config, resolve("../../seed/certlab"));
+    await initializeInstance(config, resolve("../../tests/fixtures/operating-model"));
     const runtime = new ForgeRuntime(config); const user = runtime.db.ensureUser("owner@example.invalid"); runtime.om.ensureUserBranch(user.id);
     const revision = runtime.om.head(user.activeBranch);
-    await runtime.omChanges.save(user.id, "manual", { baseRevision: revision, edits: [{ path: "work-definitions/report-authoring/policy.md", content: "Unfinished draft" }], summary: "Preserve work" });
+    await runtime.omChanges.save(user.id, "manual", { baseRevision: revision, edits: [{ path: "work-definitions/document-task/policy.md", content: "Unfinished draft" }], summary: "Preserve work" });
     runtime.db.close();
     const args = { scope: { organizationId: "synthetic", ownerUserId: user.id, workId: "work", turnId: "turn", omRevision: revision, catalogDigest: "tools" }, kind: "work" as const, id: "work", tools: [], instructions: "Read", documents: [] };
     const first = await openNativeSession(config, args); first.session.sessionManager.appendMessage({ role: "user", content: "Continue original source", timestamp: 0 });

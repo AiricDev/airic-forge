@@ -11,7 +11,7 @@ import { GitContributions } from "./git-contributions.js";
 import { buildServer } from "./server.js";
 import { parse, stringify } from "yaml";
 
-const path = "work-definitions/report-authoring/policy.md";
+const path = "work-definitions/document-task/policy.md";
 
 test("drafts are uncommitted detached worktrees, recover from disk and confirm with Git metadata", async () => {
   const f = omFixture();
@@ -44,7 +44,7 @@ test("draft worktrees preserve deletions and additions; discard leaves branch un
   const f = omFixture();
   try {
     const base = f.runtime.om.head(`users/${f.owner.id}`);
-    const added = "work-definitions/report-authoring/new.md";
+    const added = "work-definitions/document-task/new.md";
     await f.runtime.omChanges.save(f.owner.id, "manual", { baseRevision: base, summary: "Replace draft document", edits: [{ path, content: null }, { path: added, content: "  exact\r\n\r\n" }] });
     assert.deepEqual(f.runtime.drafts.workspace(f.owner.id, "manual")?.edits, [{ path: added, content: "  exact\r\n\r\n" }, { path, content: null }]);
     await f.runtime.omChanges.discard(f.owner.id, "manual");
@@ -57,7 +57,7 @@ test("contribution creation, selection and acceptance use Git alone and append c
   const f = omFixture();
   try {
     const base = f.runtime.om.head("main");
-    const otherPath = "work-definitions/report-authoring/method.md";
+    const otherPath = "work-definitions/document-task/method.md";
     await createTestOmCommit(f.runtime, f.owner.id, [
       { path, content: f.runtime.om.document(base, path) + "\nShared rule.\n" },
       { path: otherPath, content: f.runtime.om.document(base, otherPath) + "\nShared method.\n" },
@@ -123,12 +123,12 @@ test("invalid partial contributions fail validation before publishing a branch r
   const f = omFixture();
   try {
     const base = f.runtime.om.head("main");
-    const definitionPath = "work-definitions/report-authoring/work.yml";
+    const definitionPath = "work-definitions/document-task/work.yml";
     const definition = parse(f.runtime.om.document(base, definitionPath));
     definition.documents.push({ ...definition.documents[0], id: "required-extra", path: "required-extra.md" });
     await createTestOmCommit(f.runtime, f.owner.id, [
       { path: definitionPath, content: stringify(definition) },
-      { path: "work-definitions/report-authoring/required-extra.md", content: "# Required method\n" },
+      { path: "work-definitions/document-task/required-extra.md", content: "# Required method\n" },
     ], "Add required method");
     const record = await f.runtime.useCases.createOrganizationContribution(f.admin.id, f.owner.id, "Share required method", "");
     await assert.rejects(() => f.runtime.useCases.reviewOrganizationContribution(f.admin.id, record.id, [definitionPath]), /InvalidOperatingModel/);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ReflectionAgentPort } from "@airic-forge/domain";
 import { omFixture } from "./om-test-fixture.js";
-const path = "work-definitions/report-authoring/method.md";
+const path = "work-definitions/document-task/method.md";
 test("independent Reflection prepares edits on explicit instruction without a Lens or fabricated Work", async () => {
   const agent: ReflectionAgentPort = { analyze: async (input) => {
     assert.equal(input.readTrajectory, undefined);
@@ -40,8 +40,8 @@ test("Work trajectory is bounded, citations must be disclosed, Lens remains opti
     return { outcome: "api-suggestion", analysis: "An App capability is missing.", attribution: "Read source events", citedEventIds: [events[0].id], suggestionMarkdown: "# Suggested capability" };
   } });
   try {
-    const work = f.runtime.db.createWork(f.owner.id, "certlab", "report-authoring", "report");
-    const other = f.runtime.db.createWork(f.other.id, "certlab", "report-authoring", "other");
+    const work = f.runtime.db.createWork(f.owner.id, "sample-app", "document-task", "report");
+    const other = f.runtime.db.createWork(f.other.id, "sample-app", "document-task", "other");
     for (let index = 0; index < 25; index++) f.runtime.trajectories.append({ id: `event-${index}`, workId: work.id, type: "message", at: "now", payload: {} });
     f.runtime.trajectories.append({ id: "private-other-event", workId: other.id, type: "message", at: "now", payload: {} });
     const opened = await f.runtime.useCases.openWorkReflection(f.owner.id, work.id);

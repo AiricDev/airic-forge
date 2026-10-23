@@ -31,7 +31,7 @@
 - 已记录人工反馈检查点；未提交复核、确认或正式输出，也未访问或修改现有业务报告。
 - 本次真实运行未触发上下文压缩；自动压缩及恢复由模拟回归单独验证。实际草稿保存成功不等于其专业结论已被人工接受。
 
-可复核机器结果：`live-acceptance/live-result.json`、`live-acceptance/metrics.json`及该目录中的原生会话、Work轨迹和笔记。CLI probe为`apps/api/src/pi-native-live-probe.ts`，须由操作者显式提供已授权的临时场景与资料，不会随服务启动或测试套件自动调用外部模型。
+可复核机器结果：`live-acceptance/live-result.json`、`live-acceptance/metrics.json`及该目录中的原生会话、Work轨迹和笔记。CLI probe为CertLab的`tools/forge-acceptance/native-agent-draft.ts`（已迁出Forge API），须由操作者显式提供已授权的临时场景与资料，不会随服务启动或测试套件自动调用外部模型。
 
 ## OM与本地服务
 

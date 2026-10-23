@@ -79,7 +79,7 @@ export function DashboardPage({
           <Stack spacing={2}>
             <Typography variant="h6">在 App 中继续</Typography>
             <Typography>
-              从 CertLab 的报告评估工作台打开 Copilot，继续已绑定的 Work。
+              从已集成应用打开 Copilot，继续已绑定的 Work。
             </Typography>
             <Button onClick={() => n.list({ owner: user.id, page: 1 })}>
               查看我的 Work

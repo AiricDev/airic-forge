@@ -19,9 +19,9 @@ mcp_tool_snapshots(app_id,digest,snapshot_json,discovered_at) 保存工具公开
 ## 实现与验证
 
 - 用例与端口：packages/domain/src/use-cases.ts、ports.ts、model.ts。
-- App 与 MCP 适配：apps/api/src/certlab-client.ts、mcp-client.ts。
-- 原生桥与内容：work-mcp-bridge.ts、material-tool-content.ts。
-- 不可变快照：database.ts；组合根 runtime.ts。
-- 测试：certlab-contract.test.ts、tool-snapshots.test.ts、material-tool-content.test.ts、pi-native-session.test.ts、work-execution.test.ts。
+- App装配与通用MCP：apps/api/src/app-adapter.ts、mcp-client.ts；DTO、来源投影和图像表示由App模块实现。
+- 原生桥：work-mcp-bridge.ts、pi-work-agent.ts，不按业务工具名分支。
+- 不可变快照：database.ts；组合根runtime.ts。
+- 测试：app-neutrality.test.ts、component-boundary.test.ts、tool-snapshots.test.ts、pi-native-session.test.ts；App适配器契约测试归App仓库。
 
-升级和数据恢复见 [恢复契约](persistence-and-recovery.md)，实际接入见 [CertLab 指南](../certlab-integration.md)。
+升级和数据恢复见[恢复契约](persistence-and-recovery.md)，具体接口见[App适配器契约](app-adapter.md)。PDF页码、区域和资料字段是App协议示例，不是Forge领域类型。

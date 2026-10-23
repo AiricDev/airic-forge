@@ -23,6 +23,6 @@ export function pinnedWorkFacts(events: TrajectoryEvent[]) {
   for (const e of events) if (e.type === "action" && typeof e.payload.commandId === "string") actions.set(e.payload.commandId, e);
   const unresolved = [...actions.values()].filter(e => ["pending", "unknown"].includes(String(e.payload.status))).map(e => ({ eventId: e.id, commandId: e.payload.commandId, capabilityId: e.payload.capabilityId, status: e.payload.status, locator: e.payload.locator }));
   const receipts = [...actions.values()].filter(e => e.payload.status === "committed").slice(-20).map(e => ({ eventId: e.id, commandId: e.payload.commandId, capabilityId: e.payload.capabilityId, locator: e.payload.locator, status: "committed" }));
-  const sources = events.filter(e => e.type === "observation" && ["asset.read", "asset.read-location"].includes(String(e.payload.capabilityId))).slice(-20).map(e => ({ eventId: e.id, source: (e.payload.result as Record<string, unknown> | undefined)?.source }));
+  const sources = events.filter(e => e.type === "observation" && !!(e.payload.result as Record<string, unknown> | undefined)?.source).slice(-20).map(e => ({ eventId: e.id, source: (e.payload.result as Record<string, unknown> | undefined)?.source }));
   return { corrections, unresolved, receipts, sources, olderEventsAvailable: true };
 }

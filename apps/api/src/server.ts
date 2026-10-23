@@ -1,4 +1,5 @@
-import { bindCertLabRoots } from "./instance-binding.js";
+import { loadAppPort } from "./app-adapter.js";
+import { bindInstanceRoots } from "./instance-binding.js";
 import { acquireServiceLock } from "./service-lock.js";
 import { checkAgentResources, resolveAgentResources } from "./agent-resources.js";
 import { registerUserHttp } from "./user-http.js";
@@ -15,7 +16,7 @@ import { registerReflectionHttp } from "./reflection-http.js";
 import { registerOmHttp } from "./om-http.js";
 import { registerGitHttp } from "./git-http.js";
 
-type BootstrapBody = { appId: "certlab"; workType: "report-authoring"; entityId: string; selection?: Record<string, unknown>; workId?: string };
+type BootstrapBody = { appId: string; workType: string; entityId: string; selection?: Record<string, unknown>; workId?: string };
 type RpcRequest = { id?: string | number; method?: string; params?: Record<string, unknown> };
 
 const bearer = (value: unknown): string => {
@@ -56,15 +57,15 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
   app.post<{ Body: BootstrapBody }>("/api/v1/app-sessions/bootstrap", async (request, reply) => {
     try {
       const body = request.body;
-      if (body.appId !== "certlab" || body.workType !== "report-authoring" || typeof body.entityId !== "string" || !body.entityId || Object.keys(body).some(key => !["appId", "workType", "entityId", "selection", "workId"].includes(key))) return reply.code(400).send({ error: "UnsupportedAppContext" });
-      const result = await runtime.useCases.bootstrap({ token: bearer(request.headers.authorization), entityId: body.entityId, workType: body.workType, selection: body.selection, workId: body.workId });
+      if (typeof body.appId !== "string" || !body.appId || (runtime.config.appId !== undefined && body.appId !== runtime.config.appId) || typeof body.workType !== "string" || !body.workType || typeof body.entityId !== "string" || !body.entityId || Object.keys(body).some(key => !["appId", "workType", "entityId", "selection", "workId"].includes(key))) return reply.code(400).send({ error: "UnsupportedAppContext" });
+      const result = await runtime.useCases.bootstrap({ token: bearer(request.headers.authorization), appId: body.appId, entityId: body.entityId, workType: body.workType, selection: body.selection, workId: body.workId });
       const workspaceAvailable = await access(join(runtime.config.webDistDir, "index.html")).then(() => true, () => false);
       return reply.code(201).send({ ...result, acpUrl: "/acp", workspaceAvailable, workspaceUrl: runtime.config.publicUrl ?? "http://127.0.0.1:4175" });
     } catch (error) { return reply.code(401).send({ error: error instanceof Error ? error.message : "BootstrapFailed" }); }
   });
 
-  app.post<{ Body: { reportId: string } }>("/api/v1/app-sessions/works", async (request, reply) => {
-    try { return reply.send(await runtime.useCases.appWorks(bearer(request.headers.authorization), request.body.reportId)); }
+  app.post<{ Body: {appId:string; workType:string; entityId: string } }>("/api/v1/app-sessions/works", async (request, reply) => {
+    try { return reply.send(await runtime.useCases.appWorks(bearer(request.headers.authorization), request.body.entityId, request.body.workType, request.body.appId)); }
     catch (error) { return reply.code(403).send({ error: error instanceof Error ? error.message : "AppWorksFailed" }); }
   });
 
@@ -167,7 +168,7 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
     if (!actorId) return reply.code(401).send({ error: "Unauthorized" });
     const rawPage = request.query.page ?? "1";
     if (!/^[1-9]\d{0,5}$/.test(rawPage) || Number(rawPage) > 100_000) return reply.code(400).send({ error: "InvalidWorkPage" });
-    try { return reply.send(await runtime.useCases.listWorks(actorId, { ...(request.query.ownerId ? { ownerUserId: request.query.ownerId } : {}), ...(request.query.workType ? { workType: request.query.workType as "report-authoring" } : {}), ...(request.query.status ? { status: request.query.status as "active" | "completed" } : {}) }, Number(rawPage))); }
+    try { return reply.send(await runtime.useCases.listWorks(actorId, { ...(request.query.ownerId ? { ownerUserId: request.query.ownerId } : {}), ...(request.query.workType ? { workType: request.query.workType as string } : {}), ...(request.query.status ? { status: request.query.status as "active" | "completed" } : {}) }, Number(rawPage))); }
     catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 400).send({ error: error instanceof Error ? error.message : "WorkListFailed" }); }
   });
 
@@ -441,11 +442,12 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const config = loadConfig();
-  bindCertLabRoots(config.projectDir, config.dataDir, config.organizationId);
+  const appPort = loadAppPort(config);
+  bindInstanceRoots(config.projectDir, config.dataDir, config.organizationId, config.appId ?? "");
   await checkAgentResources(config);
   if (config.testIdentitySwitch && config.bindHost && config.bindHost !== "127.0.0.1") throw new Error("TestIdentitySwitchRequiresLoopback");
   const releaseLock = acquireServiceLock(config.dataDir);
-  const runtime = new ForgeRuntime(config);
+  const runtime = new ForgeRuntime(config, appPort);
   const app = buildServer(runtime);
   let stopping = false;
   const stop = async () => {

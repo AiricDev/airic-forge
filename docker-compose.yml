@@ -1,6 +1,6 @@
 services:
   airic-forge:
-    build: .
+    image: ${FORGE_APP_IMAGE:?Set a pinned App-assembled Forge image}
     ports:
       - "127.0.0.1:4175:4175"
     environment:
@@ -10,7 +10,9 @@ services:
       FORGE_PROJECT_DIR: /project
       FORGE_DATA_DIR: /data
       FORGE_WEB_DIST_DIR: /app/apps/workbench/public
-      FORGE_CERTLAB_URL: ${FORGE_CERTLAB_URL:-http://host.docker.internal:8000}
+      FORGE_APP_URL: ${FORGE_APP_URL:?Set the App origin}
+      FORGE_APP_ID: ${FORGE_APP_ID:?Set the App identity}
+      FORGE_APP_ADAPTER_MODULE: ${FORGE_APP_ADAPTER_MODULE:?Set the adapter path supplied by the App image}
       FORGE_ORGANIZATION_ID: ${FORGE_ORGANIZATION_ID:?Set FORGE_ORGANIZATION_ID}
       FORGE_ALLOWED_ORIGIN: ${FORGE_ALLOWED_ORIGIN:-http://localhost:5173}
       FORGE_PUBLIC_URL: ${FORGE_PUBLIC_URL:-http://127.0.0.1:4175}

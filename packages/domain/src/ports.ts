@@ -20,9 +20,9 @@ export interface SessionGrant {
   workId: string;
   sessionId: string;
   appToken: string;
-  reportId: string;
-  workType?: "report-authoring";
-  entityId?: string;
+  appId: string;
+  workType: string;
+  entityId: string;
   selection?: Record<string, unknown>;
 }
 
@@ -103,8 +103,8 @@ export interface WorkPort {
   turnsForWork(workId: string): MaybePromise<TurnRecord[]>;
   activeWork(ownerUserId: string, appId: string, workType: string, entityId: string): MaybePromise<Work | undefined>;
   createWork(ownerUserId: string, appId: string, workType: string, entityId: string, binding?: { goal: string; appUserId: string; selection?: Record<string, unknown> }): MaybePromise<Work>;
-  /** Atomically binds one durable report conversation; existing histories are selected, never merged. */
-  ensureReportWork(ownerUserId: string, appId: string, workType: string, entityId: string, binding: { goal: string; appUserId: string }): MaybePromise<Work>;
+  /** Atomically binds one durable resource conversation; existing histories are selected, never merged. */
+  ensureResourceWork(ownerUserId: string, appId: string, workType: string, entityId: string, binding: { goal: string; appUserId: string }): MaybePromise<Work>;
   createOrTouchSession(workId: string): MaybePromise<{ id: string }>;
   userForWork(workId: string): MaybePromise<string | undefined>;
   nextTurn(workId: string, omRevision: string, catalogDigest: string, contextDigest: string): MaybePromise<TurnRecord>;
@@ -151,29 +151,32 @@ export interface PasswordSetupPort { issue(userId: string, expiresAt: string): M
 export interface AppCommandLocator {
   commandId: string;
   capabilityId: string;
-  reportId: string;
-  assessmentId?: string;
+  entityId: string;
   targetKind?: string;
   targetId?: string;
-  resourceKind: "project";
+  resourceKind: string;
   resourceId: string;
   scope: string;
 }
 export interface AppCommandTarget {
-  resourceKind: "project";
+  resourceKind: string;
   resourceId: string;
   scope: string;
   targetKind: string;
   targetId: string;
 }
 
-/** Only the configured CertLab binding implements the live App port. */
+/** The deployed App adapter owns business DTOs, target validation and receipt semantics. */
 export interface AppPort {
+  describeIntegration?(): InstanceSettings["integration"];
+  bindInput?(entityId: string, input: Record<string, unknown>): Record<string, unknown>;
+  auditObservation?(capabilityId: string, result: Record<string, unknown>): Record<string, unknown>;
+  toolContent?(capabilityId: string, result: Record<string, unknown>, supportsImages: boolean): AgentToolContent[];
   identity(token: string): Promise<AppIdentity>;
   discoverTools(token: string): Promise<AppToolSnapshot>;
-  reportContext(token: string, reportId: string, selection?: Record<string, unknown>): Promise<Record<string, unknown>>;
+  resourceContext(token: string, entityId: string, selection?: Record<string, unknown>, workType?: string): Promise<Record<string, unknown>>;
   query(token: string, capabilityId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
-  prepareCommand?(token: string, capabilityId: string, input: Record<string, unknown>): Promise<AppCommandTarget>;
+  prepareCommand(token: string, capabilityId: string, input: Record<string, unknown>): Promise<AppCommandTarget>;
   submitCommand(token: string, capabilityId: string, body: Record<string, unknown>, locator?: AppCommandLocator): Promise<{ status: "committed" | "rejected" | "unknown"; receipt?: Record<string, unknown>; reason?: string }>;
   receipt(token: string, locator: AppCommandLocator): Promise<Record<string, unknown> | undefined>;
 }
@@ -193,7 +196,9 @@ export interface ToolSnapshotPort {
 
 }
 
+export type AgentToolContent = { type: "text"; text: string } | { type: "image"; mimeType: string; data: string };
 export interface WorkAgentTool {
+  content?(result: Record<string, unknown>, supportsImages: boolean): AgentToolContent[];
   capability: AppToolDefinition;
   invoke(input: Record<string, unknown>): Promise<Record<string, unknown>>;
 }

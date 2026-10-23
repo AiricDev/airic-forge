@@ -23,3 +23,6 @@ SQLite、Git、JSONL 及 App 回执之间可能存在中间状态。恢复后保
 ## App 所有的离线组合快照
 
 `forge-ops backup/verify/restore` 的实际命令与拒绝条件见 [部署手册](../deployment.md)。备份必须在停止 App/Forge 后进行，携带 complete App bundle，保存原生会话和工作文件。恢复只写全新目录，检查组织、部署身份、文件校验和及数据库完整性，修复 Git worktree 和原生会话头/显式绑定的路径；不改写业务历史或重放未决命令。依赖缓存可重建，Secret 单独保管。`deployment-state.test.ts` 验证个人草稿、原会话 ID、阅读进度及跨路径重开；软件降级不等于数据可降级。
+
+
+App通用化：实例与部署快照同时绑定App和组织。新快照版本为2，包含appId；旧快照保留但不隐式补字段恢复。既有Work/轨迹不可变，不重写历史定位；旧格式的未决外部命令需要操作者按原回执核对，不用新键或猜测的新目标重放。

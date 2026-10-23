@@ -6,22 +6,22 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { ForgeUseCases, type AgentRunnerPort } from "@airic-forge/domain";
 import { ForgeDatabase } from "./database.js";
-import { ForgeRuntime } from "./runtime.js";
-import { testCatalog } from "./certlab-test-catalog.js";
+import { TestRuntime as ForgeRuntime } from "./test-runtime.js";
+import { testCatalog } from "./test-tool-catalog.js";
 import { hashPassword, verifyPassword } from "./auth.js";
 import { systemPort } from "./system-port.js";
 import { buildServer } from "./server.js";
 
 function fixture(agents: AgentRunnerPort) {
   const root = mkdtempSync(join(tmpdir(), "forge-work-lifecycle-"));
-  const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve("../../seed/certlab"), webDistDir: join(root, "web"), certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost", });
+  const runtime = new ForgeRuntime({ port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"), seedProjectDir: resolve("../../tests/fixtures/operating-model"), webDistDir: join(root, "web"), appId:"sample-app", appUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost", });
   let email = "author@example.invalid";
   let actorId = "author";
   let submissions = 0;
-  runtime.app.identity = async () => ({ appId: "certlab", organizationId: "synthetic-org", appUserId: actorId, email, displayName: "Author" });
-  runtime.app.reportContext = async (_token, id) => ({ resource: { namespace: "certlab", resourceType: "report", resourceId: id, projectId: "project" } });
+  runtime.app.identity = async () => ({ appId: "sample-app", organizationId: "synthetic-org", appUserId: actorId, email, displayName: "Author" });
+  runtime.app.resourceContext = async (_token, id) => ({ resource: { namespace: "sample-app", resourceType: "report", resourceId: id, projectId: "project" } });
   runtime.app.discoverTools = async () => testCatalog();
-  runtime.app.query = async () => ({ assessment: { id: "assessment", report_id: "report", record_no: submissions } });
+  runtime.app.query = async () => ({ assessment: { id: "assessment", workspace_id: "report", record_no: submissions } });
   const useCases = new ForgeUseCases({ accounts: runtime.db, works: runtime.db, om: runtime.om, app: runtime.app, organizationId: "synthetic-org", toolSnapshots: runtime.db, agents, sessions: runtime.sessions, passwordSetups: runtime.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: runtime.trajectories, system: systemPort, });
   const owner = testUser(runtime.db, email, false);
   return { root, runtime, useCases, submitted: () => submissions, changeActor: (id: string) => { actorId = id; }, changeEmail: (value: string) => { email = value; }, commit: () => ++submissions, close: () => { runtime.db.close(); rmSync(root, { recursive: true, force: true }); } };
@@ -30,14 +30,14 @@ function fixture(agents: AgentRunnerPort) {
 test("report bootstrap resume binds the original actor, report and owner", async () => {
   const f = fixture({ runWork: async () => ({ text: "Done" }) });
   try {
-    const first = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
-    const resumed = await f.useCases.bootstrap({ token: "synthetic", reportId: "report", workId: first.work.id });
+    const first = await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report" });
+    const resumed = await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report", workId: first.work.id });
     assert.equal(resumed.work.id, first.work.id);
     assert.equal(resumed.work.goal, first.work.goal);
-    assert.equal((await f.useCases.appWorks("synthetic", "report")).works.length, 1);
-    await assert.rejects(() => f.useCases.bootstrap({ token: "synthetic", reportId: "other", workId: first.work.id }), /WorkBindingMismatch/);
+    assert.equal((await f.useCases.appWorks("synthetic", "report", "document-task", "sample-app")).works.length, 1);
+    await assert.rejects(() => f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "other", workId: first.work.id }), /WorkBindingMismatch/);
     f.changeEmail("different@example.invalid");
-    await assert.rejects(() => f.useCases.bootstrap({ token: "synthetic", reportId: "report", workId: first.work.id }), /AppIdentityEmailConflict/);
+    await assert.rejects(() => f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report", workId: first.work.id }), /AppIdentityEmailConflict/);
     assert.equal(f.runtime.db.work(first.work.id)?.ownerUserId, first.user.id);
   } finally { f.close(); }
 });
@@ -46,29 +46,29 @@ test("report bootstrap restores one durable Work/session under concurrent opens 
   let runs = 0;
   const f = fixture({ runWork: async () => { runs++; return { text: "Read only" }; } });
   try {
-    const [first, again] = await Promise.all([f.useCases.bootstrap({ token: "synthetic", entityId: "report", workType: "report-authoring" }), f.useCases.bootstrap({ token: "synthetic", reportId: "report" })]);
+    const [first, again] = await Promise.all([f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report" }), f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report" })]);
     assert.equal(first.work.id, again.work.id);
     assert.equal(first.session.id, again.session.id);
-    const wd = f.runtime.om.workDefinition(first.activeRevision, "report-authoring");
+    const wd = f.runtime.om.workDefinition(first.activeRevision, "document-task");
     assert.equal(first.work.goal, wd.description);
     assert.equal(runs, 0);
     assert.equal((await f.useCases.sessionHistory(again.ticket)).turns.length, 0);
     await f.useCases.startTurn(first.ticket, "Read only");
-    const restored = await f.useCases.bootstrap({ token: "new-token", reportId: "report" });
+    const restored = await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "new-token", entityId: "report" });
     assert.equal(restored.work.id, first.work.id);
     assert.equal((await f.useCases.sessionHistory(restored.ticket)).turns.length, 1);
     assert.equal(runs, 1);
-    const other = await f.useCases.bootstrap({ token: "synthetic", reportId: "another-report" });
+    const other = await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "another-report" });
     assert.notEqual(other.work.id, first.work.id);
     const reopened = new ForgeDatabase(join(f.root, "data"));
     try {
-      assert.equal(reopened.ensureReportWork(first.user.id, "certlab", "report-authoring", "report", { goal: "must not replace", appUserId: "author" }).id, first.work.id);
+      assert.equal(reopened.ensureResourceWork(first.user.id, "sample-app", "document-task", "report", { goal: "must not replace", appUserId: "author" }).id, first.work.id);
       assert.equal(reopened.createOrTouchSession(first.work.id).id, first.session.id);
     } finally { reopened.close(); }
     f.changeActor("another-author"); f.changeEmail("another@example.invalid");
-    const separateOwner = await f.useCases.bootstrap({ token: "other-token", reportId: "report" });
+    const separateOwner = await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "other-token", entityId: "report" });
     assert.notEqual(separateOwner.work.id, first.work.id);
-    await assert.rejects(() => f.useCases.bootstrap({ token: "other-token", reportId: "report", workId: first.work.id }), /WorkBindingMismatch/);
+    await assert.rejects(() => f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "other-token", entityId: "report", workId: first.work.id }), /WorkBindingMismatch/);
   } finally { f.close(); }
 });
 
@@ -76,15 +76,15 @@ test("first report open pins an existing Work without merging or following later
   const f = fixture({ runWork: async () => ({ text: "Done" }) });
   try {
     const owner = f.runtime.db.userByEmail("author@example.invalid")!;
-    for (const goal of ["Grounding", "Labels"]) f.runtime.db.createWork(owner.id, "certlab", "report-authoring", "report", { goal, appUserId: "author" });
-    const latest = f.runtime.db.activeWork(owner.id, "certlab", "report-authoring", "report")!;
-    const selected = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
+    for (const goal of ["Grounding", "Labels"]) f.runtime.db.createWork(owner.id, "sample-app", "document-task", "report", { goal, appUserId: "author" });
+    const latest = f.runtime.db.activeWork(owner.id, "sample-app", "document-task", "report")!;
+    const selected = await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report" });
     assert.equal(selected.work.id, latest.id);
     assert.equal(selected.work.goal, latest.goal);
-    const unrelated = f.runtime.db.createWork(owner.id, "certlab", "report-authoring", "report", { goal: "Separate old work", appUserId: "author" });
-    assert.equal((await f.useCases.bootstrap({ token: "synthetic", reportId: "report" })).work.id, selected.work.id);
-    await assert.rejects(() => f.useCases.bootstrap({ token: "synthetic", reportId: "report", workId: unrelated.id }), /WorkBindingMismatch/);
-    assert.equal((await f.useCases.appWorks("synthetic", "report")).works.length, 3);
+    const unrelated = f.runtime.db.createWork(owner.id, "sample-app", "document-task", "report", { goal: "Separate old work", appUserId: "author" });
+    assert.equal((await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report" })).work.id, selected.work.id);
+    await assert.rejects(() => f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report", workId: unrelated.id }), /WorkBindingMismatch/);
+    assert.equal((await f.useCases.appWorks("synthetic", "report", "document-task", "sample-app")).works.length, 3);
   } finally { f.close(); }
 });
 
@@ -93,7 +93,7 @@ test("material observations keep the original revision/page while bytes and full
   const pixels = "transient-pixels";
   const fullText = "transient-secret-material-text";
   const f = fixture({ runWork: async ({ tools }) => {
-    const result = await tools.find((tool) => tool.capability.id === "asset.read")!.invoke({ revision_id: "v1", page: 2 });
+    const result = await tools.find((tool) => tool.capability.id === "document.read")!.invoke({ revision_id: "v1", page: 2 });
     assert.equal(result.text, fullText);
     assert.deepEqual(result.image, { mimeType: "image/png", data: pixels });
     return { text: "Read original page. Unverified; human review required." };
@@ -103,7 +103,7 @@ test("material observations keep the original revision/page while bytes and full
     current_revision_id: current, is_current: current === input.revision_id },
     text: fullText, image: { mimeType: "image/png", data: pixels }, warnings: ["unverified"] });
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
+    const session = await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report" });
     await f.useCases.startTurn(session.ticket, "Read v1");
     current = "v2";
     const history = await f.useCases.sessionHistory(session.ticket);
@@ -121,10 +121,10 @@ test("stop waits for an in-flight command, preserves its committed receipt and p
   let ready!: () => void; const started = new Promise<void>((resolve) => { ready = resolve; });
   let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; });
   const f = fixture({ runWork: async ({ tools }) => {
-    const tool = tools.find((item) => item.capability.id === "assessment.start")!;
-    const committed = await tool.invoke({ assessment_id: "assessment", expected_record_no: 0 });
+    const tool = tools.find((item) => item.capability.id === "entry.begin")!;
+    const committed = await tool.invoke({ entry_id: "assessment", expected_record_no: 0 });
     assert.equal(committed.status, "committed");
-    await assert.rejects(() => tool.invoke({ assessment_id: "assessment", expected_record_no: 1 }));
+    await assert.rejects(() => tool.invoke({ entry_id: "assessment", expected_record_no: 1 }));
     return { text: "Must not become a completed reply" };
   } });
   f.runtime.app.submitCommand = async (_token, _id, body) => {
@@ -132,7 +132,7 @@ test("stop waits for an in-flight command, preserves its committed receipt and p
     return { status: "committed", receipt: { commandId: body.commandId, status: "committed" } };
   };
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
+    const session = await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report" });
     const running = f.useCases.startTurn(session.ticket, "Start");
     const failed = assert.rejects(() => running);
     await started;
@@ -145,7 +145,7 @@ test("stop waits for an in-flight command, preserves its committed receipt and p
     assert.equal(f.submitted(), 1);
     assert.equal(history.events.filter((event) => event.type === "action" && event.payload.status === "committed").length, 1);
     assert.equal(history.events.some((event) => event.type === "turn.completed"), false);
-    assert.equal(JSON.stringify(history).includes("synthetic"), false);
+    assert.equal(JSON.stringify(history).includes("private-app-token-not-in-history"), false);
   } finally { f.close(); }
 });
 
@@ -157,14 +157,14 @@ test("cancelled partial text remains durable and does not become a complete resp
     return { text: "unreachable" };
   } });
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
+    const session = await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report" });
     const running = f.useCases.startTurn(session.ticket, "Read"); const failed = assert.rejects(() => running);
     await started;
     const history = await f.useCases.cancelTurn(session.ticket); await failed;
     assert.equal(history.events.filter((event) => event.payload.agentTextDelta === "Partial reply").length, 1);
     assert.equal(history.events.some((event) => event.type === "turn.completed"), false);
     await f.useCases.disconnectAcp(session.ticket);
-    const resumed = await f.useCases.bootstrap({ token: "synthetic", reportId: "report", workId: session.work.id });
+    const resumed = await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report", workId: session.work.id });
     assert.equal((await f.useCases.sessionHistory(resumed.ticket)).turns.length, 1);
     assert.equal(f.submitted(), 0);
   } finally { f.close(); }
@@ -174,7 +174,7 @@ test("repeating the same accepted prompt ID returns the original Turn without a 
   let calls = 0;
   const f = fixture({ runWork: async () => { calls++; return { text: "Original reply" }; } });
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
+    const session = await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report" });
     const first = await f.useCases.startTurn(session.ticket, "Read", undefined, [], "prompt-one");
     const replay = await f.useCases.startTurn(session.ticket, "Read", undefined, [], "prompt-one");
     assert.equal(first.turn.id, replay.turn.id);
@@ -187,9 +187,9 @@ test("repeating the same accepted prompt ID returns the original Turn without a 
 test("restart marks an abandoned Turn interrupted and preserves original goal and pending command locator", async () => {
   const f = fixture({ runWork: async () => ({ text: "unused" }) });
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
+    const session = await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report" });
     const turn = f.runtime.db.nextTurn(session.work.id, f.runtime.om.head(`users/${session.user.id}`), "accepted", "context");
-    f.runtime.trajectories.append({ id: "pending", workId: session.work.id, turnId: turn.id, type: "action", at: systemPort.now(), payload: { commandId: "original-key", status: "pending", capabilityId: "assessment.start", locator: { commandId: "original-key", reportId: "report", assessmentId: "assessment", capabilityId: "assessment.start", resourceKind: "project", resourceId: "project", scope: "assessment.start" } } });
+    f.runtime.trajectories.append({ id: "pending", workId: session.work.id, turnId: turn.id, type: "action", at: systemPort.now(), payload: { commandId: "original-key", status: "pending", capabilityId: "entry.begin", locator: { commandId: "original-key", entityId: "report", assessmentId: "assessment", capabilityId: "entry.begin", resourceKind: "project", resourceId: "project", scope: "entry.begin" } } });
     const restart = new ForgeRuntime(f.runtime.config);
     try {
       assert.equal(restart.db.turnsForWork(session.work.id)[0].status, "interrupted");
@@ -202,7 +202,7 @@ test("restart marks an abandoned Turn interrupted and preserves original goal an
 
 test("real ACP snapshots and repeated RPC IDs preserve one Turn and the same server-owned messages", async () => {
   let calls = 0;
-  const f = fixture({ runWork: async ({ onText, onModelStatus, tools }) => { calls++; onModelStatus?.(); await tools.find(tool => tool.capability.id === "assessment.context")!.invoke({ assessment_id: "assessment" }); onText?.("Partial"); return { text: "Saved server reply" }; } });
+  const f = fixture({ runWork: async ({ onText, onModelStatus, tools }) => { calls++; onModelStatus?.(); await tools.find(tool => tool.capability.id === "entry.context")!.invoke({ entry_id: "assessment" }); onText?.("Partial"); return { text: "Saved server reply" }; } });
   const updates: Record<string, unknown>[] = [];
   Object.assign(f.runtime, { useCases: f.useCases });
   const server = buildServer(f.runtime);
@@ -217,7 +217,7 @@ test("real ACP snapshots and repeated RPC IDs preserve one Turn and the same ser
     socket!.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
   });
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
+    const session = await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report" });
     const address = await server.listen({ host: "127.0.0.1", port: 0 });
     socket = new WebSocket(address.replace(/^http/, "ws") + "/acp");
     await new Promise<void>((resolveOpen, reject) => { socket!.onopen = () => resolveOpen(); socket!.onerror = () => reject(new Error("Socket failed")); });
@@ -228,7 +228,7 @@ test("real ACP snapshots and repeated RPC IDs preserve one Turn and the same ser
     assert.equal(calls, 1);
     const progress = updates.filter(event => event.phase === "activity").map(event => event.activity as Record<string, unknown>);
     assert(progress.some(event => event.phase === "model" && event.status === "running"));
-    assert(progress.some(event => event.capabilityId === "assessment.context" && event.status === "completed"));
+    assert(progress.some(event => event.capabilityId === "entry.context" && event.status === "completed"));
     assert(!JSON.stringify(progress).includes("record_no"));
     const history = (await rpc("history", "session/history")).result as { turns: unknown[]; events: { type: string }[] };
     assert.equal(history.turns.length, 1);
@@ -240,8 +240,8 @@ test("checkpoints stop business calls; explicit scoped feedback resumes fresh fa
   let turns = 0;
   const f = fixture({ runWork: async ({ tools, checkpoint, context }) => {
     turns++;
-    const read = tools.find((item) => item.capability.id === "assessment.context")!;
-    const observed = await read.invoke({ assessment_id: "assessment" });
+    const read = tools.find((item) => item.capability.id === "entry.context")!;
+    const observed = await read.invoke({ entry_id: "assessment" });
     if (turns > 1) {
       assert.equal((context.workProgress as { feedback: unknown[] }).feedback.length, 1);
       assert.equal((observed.assessment as { record_no: number }).record_no, 1);
@@ -253,11 +253,11 @@ test("checkpoints stop business calls; explicit scoped feedback resumes fresh fa
       resumeCondition: "Actual return arrives and engineer resumes this Work" };
     await assert.rejects(() => checkpoint!({ ...input, eventIds: ["invented"] }), /CheckpointEvidenceNotFound/);
     await checkpoint!(input);
-    await assert.rejects(() => read.invoke({ assessment_id: "assessment" }), /WorkAwaitingFeedback/);
+    await assert.rejects(() => read.invoke({ entry_id: "assessment" }), /WorkAwaitingFeedback/);
     return { text: "Step finished, goal is waiting" };
   } });
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
+    const session = await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report" });
     const head = f.runtime.om.head(`users/${session.user.id}`);
     await f.useCases.startTurn(session.ticket, "Read original", undefined, [], "first");
     const history = await f.useCases.sessionHistory(session.ticket);
@@ -282,11 +282,11 @@ test("checkpoints stop business calls; explicit scoped feedback resumes fresh fa
 test("B3 command preparation persists the original scoped locator and never replays a lost creation", async () => {
   let submissions = 0;
   const f = fixture({ runWork: async ({ tools }) => {
-    const create = tools.find((tool) => tool.capability.id === "test-task.create")!;
-    const result = await create.invoke({ assessment_id: "assessment", expected_record_no: 0,
-      requirements: "Actual PE-1 measurement required", asset_revision_ids: [], register_blocker: true });
+    const create = tools.find((tool) => tool.capability.id === "entry.create")!;
+    const result = await create.invoke({ entry_id: "assessment", expected_record_no: 0,
+      requirements: "Actual PE-1 measurement required", document_revision_ids: [], register_blocker: true });
     assert.equal(result.status, "unknown");
-    await assert.rejects(() => create.invoke({ assessment_id: "assessment" }), /UnresolvedCommandBlocksFurtherWrites/);
+    await assert.rejects(() => create.invoke({ entry_id: "assessment" }), /UnresolvedCommandBlocksFurtherWrites/);
     return { text: "Unknown original command, no repeated creation" };
   } });
   f.runtime.app.prepareCommand = async () => ({ resourceKind: "project", resourceId: "project",
@@ -297,7 +297,7 @@ test("B3 command preparation persists the original scoped locator and never repl
     return undefined;
   };
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
+    const session = await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report" });
     await f.useCases.startTurn(session.ticket, "Register test");
     const history = await f.useCases.sessionHistory(session.ticket);
     assert.equal(history.unresolvedCommands.length, 1);
@@ -310,7 +310,7 @@ test("B3 command preparation persists the original scoped locator and never repl
 
 test("successive Turns keep exact corrections and execution scope without rebuilding conversation memory",async()=>{
   let runs=0;const f=fixture({runWork:async input=>{runs++;assert.equal(input.scope.ownerUserId,(await f.runtime.db.work(input.scope.workId))!.ownerUserId);assert.ok(input.scope.omRevision&&input.scope.catalogDigest);assert.equal('conversation' in input,false);if(runs>1)assert.ok(JSON.stringify(input.context.workFacts).includes('exact human correction'));return {text:'Read-only step done'};}});
-  try{const boot=await f.useCases.bootstrap({token:'synthetic',reportId:'report'});for(let i=0;i<3;i++){await f.useCases.startTurn(boot.ticket,'Continue');const state=await f.useCases.sessionHistory(boot.ticket);await f.useCases.checkpointFeedback(boot.ticket,{checkpointId:state.progress.checkpoint!.id,kind:'correct',note:'exact human correction'},'ack-'+i);}assert.equal(runs,3);}finally{f.close();}
+  try{const boot=await f.useCases.bootstrap({appId:"sample-app",workType:"document-task",token:'synthetic',entityId:'report'});for(let i=0;i<3;i++){await f.useCases.startTurn(boot.ticket,'Continue');const state=await f.useCases.sessionHistory(boot.ticket);await f.useCases.checkpointFeedback(boot.ticket,{checkpointId:state.progress.checkpoint!.id,kind:'correct',note:'exact human correction'},'ack-'+i);}assert.equal(runs,3);}finally{f.close();}
 });
 
 test("missing independent workspace is explicit JSON 404 while App bootstrap remains usable",async()=>{
@@ -319,9 +319,9 @@ test("missing independent workspace is explicit JSON 404 while App bootstrap rem
   try {
     const missing=await server.inject({method:"GET",url:"/works/anything"});
     assert.equal(missing.statusCode,404);assert.equal(missing.json().error,"WebWorkspaceNotBuilt");
-    const bootstrap=await server.inject({method:"POST",url:"/api/v1/app-sessions/bootstrap",headers:{authorization:"Bearer synthetic"},payload:{appId:"certlab",workType:"report-authoring",entityId:"report"}});
+    const bootstrap=await server.inject({method:"POST",url:"/api/v1/app-sessions/bootstrap",headers:{authorization:"Bearer synthetic"},payload:{appId:"sample-app",workType:"document-task",entityId:"report"}});
     assert.equal(bootstrap.statusCode,201);assert.equal(bootstrap.json().workspaceAvailable,false);assert.ok(bootstrap.json().ticket);
-    const obsoleteGoal = await server.inject({method:"POST",url:"/api/v1/app-sessions/bootstrap",headers:{authorization:"Bearer synthetic"},payload:{appId:"certlab",workType:"report-authoring",entityId:"report",goal:"Split this report"}});
+    const obsoleteGoal = await server.inject({method:"POST",url:"/api/v1/app-sessions/bootstrap",headers:{authorization:"Bearer synthetic"},payload:{appId:"sample-app",workType:"document-task",entityId:"report",goal:"Split this report"}});
     assert.equal(obsoleteGoal.statusCode, 400);
   } finally {await server.close();f.close();}
 });
@@ -329,7 +329,7 @@ test("missing independent workspace is explicit JSON 404 while App bootstrap rem
 test("failed model initialization is reported at its exact stage and restored from Work history", async () => {
   const f = fixture({ runWork: async () => { throw new Error("ForgeModelNotConfigured"); } });
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
+    const session = await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report" });
     const activities: Array<{ phase: string; status: string; code?: string }> = [];
     await assert.rejects(f.useCases.startTurn(session.ticket, "Read", undefined, [], undefined, undefined, undefined, activity => activities.push(activity)), /ForgeModelNotConfigured/);
     assert.equal(activities.at(-1)?.phase, "model");
@@ -342,11 +342,11 @@ test("failed model initialization is reported at its exact stage and restored fr
 
 test("an agent failure after a successful tool remains a distinct failed step", async () => {
   const f = fixture({ runWork: async ({tools}) => {
-    await tools.find(tool => tool.capability.id === "assessment.context")!.invoke({assessment_id:"assessment"});
+    await tools.find(tool => tool.capability.id === "entry.context")!.invoke({entry_id:"assessment"});
     throw new Error("SyntheticResultInvalid");
   } });
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
+    const session = await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report" });
     await assert.rejects(f.useCases.startTurn(session.ticket,"Read"),/SyntheticResultInvalid/);
     const history = await f.useCases.sessionHistory(session.ticket);
     const steps = history.events.map(event => event.payload.activity as {phase:string; status:string; code?:string} | undefined).filter(Boolean);
@@ -367,30 +367,30 @@ test("ordinary users discover tools each Turn, ignore WD scope, pin snapshots an
   }});
   let failed=false;
   const snapshot=testCatalog("tools-first");
-  snapshot.tools.push({id:"report.dynamic-query",title:"Dynamic",description:"From MCP",kind:"query",inputSchema:{},outputSchema:{}});
+  snapshot.tools.push({id:"workspace.dynamic-query",title:"Dynamic",description:"From MCP",kind:"query",inputSchema:{},outputSchema:{}});
   f.runtime.app.discoverTools=async(token)=>{assert.equal(token,"ordinary-user-token");if(failed)throw Error("McpDiscoveryUnavailable");return snapshot;};
   try {
-    const session=await f.useCases.bootstrap({token:"ordinary-user-token",reportId:"report"});
+    const session=await f.useCases.bootstrap({appId:"sample-app",workType:"document-task",token:"ordinary-user-token",entityId:"report"});
     assert.equal(session.user.role,"user");
     // An old WD's empty allowlist is inert; the active Git revision is never rewritten.
     const original=f.runtime.om.workDefinition.bind(f.runtime.om);
     f.runtime.om.workDefinition=(revision,id)=>({...original(revision,id),capabilities:{allowed:[]}});
     const running=f.useCases.startTurn(session.ticket,"First discovery");await ready;
-    snapshot.digest="tools-next";snapshot.tools.push({id:"report.next-query",title:"Next",description:"Newly published",kind:"query",inputSchema:{},outputSchema:{}});
+    snapshot.digest="tools-next";snapshot.tools.push({id:"workspace.next-query",title:"Next",description:"Newly published",kind:"query",inputSchema:{},outputSchema:{}});
     release();const first=await running;
-    assert(observed[0].includes("report.dynamic-query"));assert(!observed[0].includes("report.next-query"));
+    assert(observed[0].includes("workspace.dynamic-query"));assert(!observed[0].includes("workspace.next-query"));
     assert.equal(first.turn.catalogDigest,"tools-first");
-    const firstSaved=f.runtime.db.toolSnapshot("certlab","tools-first")!;
-    assert(firstSaved.tools.some(tool=>tool.id==="report.dynamic-query"));assert(!firstSaved.tools.some(tool=>tool.id==="report.next-query"));
+    const firstSaved=f.runtime.db.toolSnapshot("sample-app","tools-first")!;
+    assert(firstSaved.tools.some(tool=>tool.id==="workspace.dynamic-query"));assert(!firstSaved.tools.some(tool=>tool.id==="workspace.next-query"));
     const progress=(await f.useCases.sessionHistory(session.ticket)).progress;
     if(progress.checkpoint && progress.waiting)await f.useCases.checkpointFeedback(session.ticket,{checkpointId:progress.checkpoint.id,kind:"approve",note:"Synthetic review"},"next-tools-request");
     const next=await f.useCases.startTurn(session.ticket,"Discover updated tools");
-    assert.equal(next.turn.catalogDigest,"tools-next");assert(observed[1].includes("report.next-query"));
+    assert.equal(next.turn.catalogDigest,"tools-next");assert(observed[1].includes("workspace.next-query"));
     const nextProgress=(await f.useCases.sessionHistory(session.ticket)).progress;
     if(nextProgress.checkpoint && nextProgress.waiting)await f.useCases.checkpointFeedback(session.ticket,{checkpointId:nextProgress.checkpoint.id,kind:"approve",note:"Synthetic review"},"fail-tools-request");
     failed=true;await assert.rejects(f.useCases.startTurn(session.ticket,"Must not use previous tools"),/McpDiscoveryUnavailable/);
     assert.equal(observed.length,2);assert.equal(f.runtime.db.turnsForWork(session.work.id).length,2);
-    assert(f.runtime.db.toolSnapshot("certlab","tools-first"));assert(f.runtime.db.toolSnapshot("certlab","tools-next"));
+    assert(f.runtime.db.toolSnapshot("sample-app","tools-first"));assert(f.runtime.db.toolSnapshot("sample-app","tools-next"));
     Object.assign(f.runtime,{useCases:f.useCases});
     const app=buildServer(f.runtime);
     try {
@@ -407,11 +407,11 @@ test("shutdown drains an active Work and refuses further execution without repla
     return { text: "unreachable" };
   } });
   try {
-    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
+    const session = await f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report" });
     const running = f.useCases.startTurn(session.ticket, "Read"); const failed = assert.rejects(() => running);
     await started; await f.useCases.shutdown(); await failed;
     await assert.rejects(() => f.useCases.startTurn(session.ticket, "Continue"), /ForgeStopping/);
-    await assert.rejects(() => f.useCases.bootstrap({ token: "synthetic", reportId: "report" }), /ForgeStopping/);
+    await assert.rejects(() => f.useCases.bootstrap({appId:"sample-app",workType:"document-task", token: "private-app-token-not-in-history", entityId: "report" }), /ForgeStopping/);
     assert.equal(f.submitted(), 0);
     assert.equal((await f.useCases.sessionHistory(session.ticket)).events.some(e => e.type === "turn.completed"), false);
   } finally { f.close(); }

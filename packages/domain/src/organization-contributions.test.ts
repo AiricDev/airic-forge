@@ -3,7 +3,7 @@ import test from "node:test";
 import { ForgeUseCases } from "./use-cases.js";
 import type { OrganizationContribution, OrganizationContributionPort } from "./ports.js";
 
-const record: OrganizationContribution = { id: "con-test", authorUserId: "author", sourceRevision: "source", baseMainRevision: "main-base", reason: "Share policy", evidence: "", status: "open", selectedPaths: ["work-definitions/report-authoring/policy.md"], candidateBranch: "contributions/con-test", reviewedRevision: "candidate", selectionRevision: "candidate", createdAt: "now" };
+const record: OrganizationContribution = { id: "con-test", authorUserId: "author", sourceRevision: "source", baseMainRevision: "main-base", reason: "Share policy", evidence: "", status: "open", selectedPaths: ["work-definitions/document-task/policy.md"], candidateBranch: "contributions/con-test", reviewedRevision: "candidate", selectionRevision: "candidate", createdAt: "now" };
 function fixture(overrides: Partial<OrganizationContribution> = {}) {
   let accepted = 0;
   const current = { ...record, ...overrides };

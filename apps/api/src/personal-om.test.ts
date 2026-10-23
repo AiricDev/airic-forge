@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { GitOmWorkspaces } from "./git-om-workspaces.js";
 import { omFixture } from "./om-test-fixture.js";
-const path = "work-definitions/report-authoring/policy.md";
+const path = "work-definitions/document-task/policy.md";
 test("manual drafts commit directly, preserve history, survive restart and retry idempotently", async () => {
   const f = omFixture();
   try {
     const base = f.runtime.om.head(`users/${f.owner.id}`);
-    const turnWork = f.runtime.db.createWork(f.owner.id, "certlab", "report-authoring", "report-1");
+    const turnWork = f.runtime.db.createWork(f.owner.id, "sample-app", "document-task", "report-1");
     const oldTurn = f.runtime.db.nextTurn(turnWork.id, base, "catalog", "context");
     const draft = await f.save(f.owner.id, "manual", path, f.runtime.om.document(base, path) + "\nReviewed rule.\n");
     assert.equal(f.runtime.om.head(`users/${f.owner.id}`), base);

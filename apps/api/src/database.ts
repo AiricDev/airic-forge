@@ -340,7 +340,7 @@ export class ForgeDatabase {
     return this.work(work.id)!;
   }
 
-  ensureReportWork(ownerUserId: string, appId: string, workType: string, entityId: string, binding: { goal: string; appUserId: string }): Work {
+  ensureResourceWork(ownerUserId: string, appId: string, workType: string, entityId: string, binding: { goal: string; appUserId: string }): Work {
     this.#db.exec("BEGIN IMMEDIATE");
     try {
       const bound = this.#db.prepare("SELECT work_id FROM report_conversations WHERE owner_user_id=? AND app_id=? AND work_type=? AND entity_id=?").get(ownerUserId, appId, workType, entityId) as { work_id: string } | undefined;

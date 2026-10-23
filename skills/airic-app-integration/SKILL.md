@@ -12,7 +12,7 @@ Use current-user MCP discovery. Do not introduce a second capability registry, c
 ## Start with the right contract
 
 - Read [App integration and delivery requirements](../../docs/app-integration.md) first. It distinguishes agreed requirements from implemented behavior and assigns stable I-xx acceptance identifiers.
-- For CertLab, read [the current integration guide](../../docs/certlab-integration.md), then inspect the deployed App's assistant protocol and the specific source entry points it names.
+- Read [the App adapter contract](../../docs/contracts/app-adapter.md), then inspect the integrating App's protocol and App-owned adapter. Never place that App's DTO policy, seed or acceptance fixture in Forge product sources.
 - For tool discovery or commands, consult [MCP discovery](../../docs/contracts/mcp-tool-discovery.md); for sessions and resource loading, consult [native execution](../../docs/contracts/context-projection.md).
 - Use [integration scenarios](../../docs/acceptance/app-integration.feature) to scope verification. These are requirements, not evidence of passing tests.
 
@@ -22,7 +22,8 @@ Inspect the actual deployed Forge version and target App before copying configur
 
 | Concern | Placement |
 | --- | --- |
-| PDF chunking, text/image choice, coverage, working notes, compaction recovery | Reusable base Agent capability / Skill / extension |
+| Source-linked findings, actual observation coverage, working notes, compaction recovery | Reusable base Agent capability / Skill / extension |
+| App-managed Asset discovery, format/page/image/region/truncation/retry semantics and usage guidance | App MCP services and published tool contracts |
 | Domain-specific judgment, evidence sufficiency, exceptions and responsibilities | Organization OM |
 | Material retrieval schema, source identity, query/command semantics | App MCP adapter and existing business use cases |
 | Agent packages/configuration, dependency versions, system programs | App code and release artifacts |
@@ -52,3 +53,7 @@ Use the existing use-case/port boundaries. Keep Pi types, package resolution, pa
 - Backups include OM/worktrees, database, trajectories, native sessions and working files plus the App recovery point. Verify path repair and source identities after relocation. Separate software rollback, OM reversal and data restore.
 
 Report implemented behavior, requirements still pending, executed checks and actual release/resource identities separately. Do not claim that a new guide, green health endpoint, passing mock run or model's success sentence proves the integration or professional judgment is complete.
+
+## App-owned deployment adapter
+
+Forge has no built-in business App. Publish a synchronous createAppPort factory as App code and configure FORGE_APP_ID, FORGE_APP_URL and FORGE_APP_ADAPTER_MODULE. Implement authoritative identity/context, bound inputs, command preparation, original receipt validation, audit projection and optional image content. Keep report/assessment/item-specific fields and professional checks in that adapter and the App use cases. Bootstrap uses explicit appId/workType/entityId; Work types are strings, never a Forge business enum. Use separate product/test builds; verify another unrelated App plus the actual App's HTTP/MCP contracts.

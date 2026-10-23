@@ -25,16 +25,16 @@ pnpm user:set-password --email user@example.com
 `--password-stdin`，只接受一行 UTF-8（最多 4096 字节），不会回显。
 不要把实际密码写进 shell 命令、历史、脚本或日志。
 
-仅设置/重置已存在的 Forge 用户，不创建账号、不授予管理员、不修改 CertLab 密码，
+仅设置/重置已存在的 Forge 用户，不创建账号、不授予管理员、不修改 业务App 密码，
 也不初始化或迁移应用数据库。
-用户须先通过 CertLab 连接 Forge 建立账号。完成后重启 Forge，再登录。
+用户须先通过 业务App 连接 Forge 建立账号。完成后重启 Forge，再登录。
 密码变更本身不撤销内存中的既有登录/ACP 会话；停服与重启使这些会话失效。
 
 ## 页面与职责
 
 - `src/workbench/WorkspaceApp.tsx`：登录、账户菜单、MUI 导航和按需加载。管理员的成效基线位于整个导航最后；其余主导航提供工作台、个人 OM、Work 与轨迹、改进工作方式、本地 agent 与 Git，管理区提供组织贡献、用户、实例设置及 Lens 管理。不再设置组织治理汇总页。实例设置不再提供能力目录标签页；成效基线仍仅管理员可访问。
 - `pages/AdminOverviewPages.tsx` 的实例设置：管理员只读查看实际 OM Git 仓库、运行数据及个人 worktree 根目录，以及集成 App、组织、MCP 地址和传输类型。Lens 管理独立于实例设置。配置接口 `/api/v1/instance-settings` 只返回明确允许展示的字段，不暴露密钥或完整运行配置。
-- `pages/WorkListPage.tsx` / `pages/WorkDetailPage.tsx`：报告名称、筛选、分页、Work 对话和 Reflection 入口，以及显式结果评价。
+- `pages/WorkListPage.tsx` / `pages/WorkDetailPage.tsx`：业务对象名称、筛选、分页、Work 对话和 Reflection 入口，以及显式结果评价。
 - `ReflectionChat.tsx` / `reflection-stream.ts`：连续 Reflection 对话、三种 Lens、SSE 快照、工具状态、停止、恢复和原请求 ID 核对。浏览器断开只移除观察者，运行由服务端管理；权限失效停止自动连接。状态通知在最新回复附近显示，不记录或渲染私有推理。
 - `Conversation.tsx` / `trajectory.ts`：原始 Work 轨迹的展示投影。历史流式片段按 Turn 合并；完成 Turn 使用其最终回答；引用原片段时仍能定位到原事件。存储历史不改写。
 - `OmDraftReview.tsx`：提交前后差异、编辑、删除、丢弃、过期基准合并与直接确认提交。Reflection 运行期间禁用该讨论的草稿写操作，服务端继续执行互斥检查。
@@ -46,7 +46,7 @@ pnpm user:set-password --email user@example.com
 
 普通问答不自动改 OM；用户明确要求即可准备草稿，Lens 可选。API Suggestion 可导出，但不会自动增加工具。Markdown 禁止原始 HTML、内嵌图片和不安全链接。Git 接入与草稿操作见 [个人 OM](personal-om-changes.md)。
 
-能力列表和输入输出定义来自配置 App 实例 `/mcp` 的标准 `tools/list`。Forge 每 Turn 规范化分页结果并固定不可变工具快照，不设管理员接受或 WD 工具白名单，实际业务权限由 App 判定。MCP 地址不附加访问令牌，直接访问需要 App 身份认证。旧 manifest/Agent OpenAPI 不再使用；当前接入见 [CertLab](certlab-integration.md)，后续交付需求见 [App 集成与交付](app-integration.md)。
+能力列表和输入输出定义来自配置 App 实例 `/mcp` 的标准 `tools/list`。Forge 每 Turn 规范化分页结果并固定不可变工具快照，不设管理员接受或 WD 工具白名单，实际业务权限由 App 判定。MCP 地址不附加访问令牌，直接访问需要 App 身份认证。旧 manifest/Agent OpenAPI 不再使用；当前接入见 [App适配器](contracts/app-adapter.md)，后续交付需求见 [App 集成与交付](app-integration.md)。
 
 ## 验证
 

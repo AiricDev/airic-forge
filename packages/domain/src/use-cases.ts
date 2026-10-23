@@ -1,6 +1,5 @@
 import { UserAdministration } from "./user-administration.js";
 import { isAllowedOmDocumentPath, validateWorkDefinition } from "./operating-model.js";
-import { materialObservation } from "./materials.js";
 import { pinnedWorkFacts, conversationMessages, CONTEXT_POLICY_VERSION } from "./work-context.js";
 import type { AccountPort, AgentRunnerPort, AppSessionPort, AppPort, AppCommandLocator, ToolSnapshotPort, EvidenceExtractorPort, EvidenceSessionPort, MeasurementPort, OmDraftPort, OperatingModelPort, OrganizationContributionPort, PasswordCodecPort, PasswordSetupPort, ReflectionAgentPort, ReflectionRunStore, ReflectionLens, ReflectionRecord, SessionGrant, SystemPort, TrajectoryPort, WorkFeedbackKind, WorkListFilters, WorkPort, WorkAgentTool, WorkActivity } from "./ports.js";
 
@@ -22,7 +21,7 @@ export class ForgeUseCases {
   readonly reflectionRuns?: ReflectionRuns;
   readonly omChanges?: PersonalOmChanges;
   readonly users: UserAdministration;
-  constructor(private readonly ports: { accounts: AccountPort; works: WorkPort; om: OperatingModelPort; omChanges?: PersonalOmChanges; reportWorkDefinitionId?: string; omDrafts?: OmDraftPort; organization?: OrganizationContributionPort; measurements?: MeasurementPort; instanceSettings?: InstanceSettings; app: AppPort; organizationId?: string; toolSnapshots: ToolSnapshotPort; agents: AgentRunnerPort; reflectionAgent?: ReflectionAgentPort; reflectionRunStore?: ReflectionRunStore; sessions: AppSessionPort; evidenceExtractor?: EvidenceExtractorPort; evidenceSessions?: EvidenceSessionPort; passwordSetups: PasswordSetupPort; passwordCodec: PasswordCodecPort; trajectories: TrajectoryPort; system: SystemPort; }) {
+  constructor(private readonly ports: { accounts: AccountPort; works: WorkPort; om: OperatingModelPort; omChanges?: PersonalOmChanges; workDefinitionId?: string; omDrafts?: OmDraftPort; organization?: OrganizationContributionPort; measurements?: MeasurementPort; instanceSettings?: InstanceSettings; app: AppPort; organizationId?: string; toolSnapshots: ToolSnapshotPort; agents: AgentRunnerPort; reflectionAgent?: ReflectionAgentPort; reflectionRunStore?: ReflectionRunStore; sessions: AppSessionPort; evidenceExtractor?: EvidenceExtractorPort; evidenceSessions?: EvidenceSessionPort; passwordSetups: PasswordSetupPort; passwordCodec: PasswordCodecPort; trajectories: TrajectoryPort; system: SystemPort; }) {
     this.omChanges = ports.omChanges;
     this.users = new UserAdministration(ports.accounts);
     if (ports.reflectionRunStore) this.reflectionRuns = new ReflectionRuns(ports.reflectionRunStore, ports.system);
@@ -35,20 +34,20 @@ export class ForgeUseCases {
   }
 
   private workDefinitionId(workType: string): string {
-    return workType === "report-authoring" ? this.ports.reportWorkDefinitionId ?? workType : workType;
+    return this.ports.workDefinitionId ?? workType;
   }
 
-  async bootstrap(input: { token: string; reportId?: string; entityId?: string; workType?: "report-authoring"; selection?: Record<string, unknown>; workId?: string }) {
+  async bootstrap(input: { token: string; appId: string; entityId: string; workType: string; selection?: Record<string, unknown>; workId?: string }) {
     if (this.stopping) throw new Error("ForgeStopping");
-    const workType = input.workType ?? "report-authoring";
-    const entityId = input.entityId ?? input.reportId;
-    if (!entityId || workType !== "report-authoring") throw new Error("UnsupportedAppContext");
+    const workType = input.workType;
+    const entityId = input.entityId;
+    if (!entityId || !workType || !input.appId) throw new Error("UnsupportedAppContext");
     const identity = await this.ports.app.identity(input.token);
-    if (identity.appId !== "certlab" || (this.ports.organizationId && identity.organizationId !== this.ports.organizationId)) throw new Error("AppOrganizationBindingMismatch");
+    if (identity.appId !== input.appId || (this.ports.organizationId && identity.organizationId !== this.ports.organizationId)) throw new Error("AppOrganizationBindingMismatch");
     const email = identity.email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("AppIdentityEmailRequired");
     const context = await this.authoritativeContext(input.token, workType, entityId, input.selection);
-    this.assertContextTarget(context, workType, entityId);
+    this.assertContextTarget(context, identity.appId, entityId);
     const existing = input.workId ? await this.ports.works.work(input.workId) : undefined;
     if (input.workId && (!existing || existing.appId !== identity.appId || existing.entityId !== entityId || existing.workType !== workType || existing.appUserId !== identity.appUserId || existing.status !== "active")) throw new Error("WorkBindingMismatch");
     const linkedUserId = await this.ports.accounts.linkedUserId(identity.appId, identity.appUserId);
@@ -61,9 +60,9 @@ export class ForgeUseCases {
     await this.ports.accounts.recordAppIdentity(identity.appId, identity.appUserId, user.id, email);
     const revision = await this.ports.om.head(branch.branch);
     const definition = await this.ports.om.workDefinition(revision, this.workDefinitionId(workType));
-    const reportGoal = definition.description.trim() || definition.title.trim();
-    if (!reportGoal || reportGoal.length > 4000) throw new Error("WorkGoalRequired");
-    const work = await this.ports.works.ensureReportWork(user.id, identity.appId, workType, entityId, { goal: reportGoal, appUserId: identity.appUserId });
+    const workGoal = definition.description.trim() || definition.title.trim();
+    if (!workGoal || workGoal.length > 4000) throw new Error("WorkGoalRequired");
+    const work = await this.ports.works.ensureResourceWork(user.id, identity.appId, workType, entityId, { goal: workGoal, appUserId: identity.appUserId });
     if (work.ownerUserId !== user.id || work.appUserId !== identity.appUserId || work.status !== "active" || (input.workId && work.id !== input.workId)) throw new Error("WorkBindingMismatch");
     if (typeof context.entityTitle === "string" && context.entityTitle.trim()) {
       work.entityTitle = context.entityTitle.trim().slice(0, 300);
@@ -72,7 +71,7 @@ export class ForgeUseCases {
     const session = await this.ports.works.createOrTouchSession(work.id);
     const ticket = this.ports.system.id("acp");
     const expiresAt = new Date(Date.parse(this.ports.system.now()) + 5 * 60_000).toISOString();
-    await this.ports.sessions.put({ ticket, expiresAt, forgeUserId: user.id, workId: work.id, sessionId: session.id, appToken: input.token, reportId: entityId, workType, entityId, selection: work.selection });
+    await this.ports.sessions.put({ ticket, expiresAt, forgeUserId: user.id, workId: work.id, sessionId: session.id, appToken: input.token, entityId, workType, appId: identity.appId, selection: work.selection });
     const passwordSetupTicket = user.passwordConfigured ? undefined : await this.ports.passwordSetups.issue(user.id, expiresAt);
     return { user, work, session, ticket, expiresAt, activeRevision: await this.ports.om.head(branch.branch), passwordSetupRequired: !user.passwordConfigured, passwordSetupTicket };
     });
@@ -151,16 +150,16 @@ export class ForgeUseCases {
     } finally { this.feedbackWorks.delete(session.workId); }
   }
 
-  async appWorks(token: string, reportId: string) {
+  async appWorks(token: string, entityId: string, workType: string, appId: string) {
     const identity = await this.ports.app.identity(token);
-    if (identity.appId !== "certlab" || (this.ports.organizationId && identity.organizationId !== this.ports.organizationId)) throw new Error("AppOrganizationBindingMismatch");
-    const context = await this.authoritativeContext(token, "report-authoring", reportId);
-    this.assertContextTarget(context, "report-authoring", reportId);
+    if (identity.appId !== appId || (this.ports.organizationId && identity.organizationId !== this.ports.organizationId)) throw new Error("AppOrganizationBindingMismatch");
+    const context = await this.authoritativeContext(token, workType, entityId);
+    this.assertContextTarget(context, appId, entityId);
     const user = await this.ports.accounts.userByEmail(identity.email.trim().toLowerCase());
     if (user) await this.users.requireActive(user.id);
     if (!user || await this.ports.accounts.linkedUserId(identity.appId, identity.appUserId) !== user.id) return { works: [] };
-    const page = await this.ports.works.worksPage({ ownerUserId: user.id, workType: "report-authoring", status: "active" }, 0, 1000);
-    return { works: page.works.filter((work) => work.entityId === reportId && work.appUserId === identity.appUserId) };
+    const page = await this.ports.works.worksPage({ ownerUserId: user.id, workType, status: "active" }, 0, 1000);
+    return { works: page.works.filter((work) => work.entityId === entityId && work.appUserId === identity.appUserId) };
   }
 
   async attachEvidence(ticket: string, filename: string, mediaType: string, content: Uint8Array) {
@@ -202,8 +201,8 @@ export class ForgeUseCases {
       }
     }
     if (workProgress(await this.ports.trajectories.read(session.workId)).waiting) throw new Error("WorkAwaitingFeedback");
-    const workType = session.workType ?? "report-authoring";
-    const entityId = session.entityId ?? session.reportId;
+    const workType = session.workType;
+    const entityId = session.entityId;
     if (this.runningWorks.has(session.workId) || this.feedbackWorks.has(session.workId)) throw new Error("WorkTurnAlreadyRunning");
     if (this.stopping) throw new Error("ForgeStopping");
     this.runningWorks.add(session.workId);
@@ -215,7 +214,7 @@ export class ForgeUseCases {
     const assertRunning = async () => { controller.signal.throwIfAborted(); await this.appSession(ticket); };
     try {
     const preparingAt = this.ports.system.now();
-    const preparation: WorkActivity = { id: this.ports.system.id("progress"), phase: "preparing", status: "running", label: "核对报告、权限与工作方法", at: preparingAt, startedAt: preparingAt };
+    const preparation: WorkActivity = { id: this.ports.system.id("progress"), phase: "preparing", status: "running", label: "核对工作对象、权限与工作方法", at: preparingAt, startedAt: preparingAt };
     onActivity?.(preparation);
     const userId = await this.ports.works.userForWork(session.workId);
     if (!userId) throw new Error("WorkNotFound");
@@ -224,10 +223,9 @@ export class ForgeUseCases {
       this.ports.app.discoverTools(session.appToken), this.ports.om.workDefinition(revision, this.workDefinitionId(workType)), this.authoritativeContext(session.appToken, workType, entityId, session.selection),
     ]);
     const catalog = structuredClone(discovered);
-    if (catalog.appId !== "certlab" || catalog.domainRelease !== "certlab/v1") throw new Error("UnsupportedAppTools");
+    if (catalog.appId !== session.appId || !catalog.domainRelease) throw new Error("UnsupportedAppTools");
     await this.ports.toolSnapshots.recordToolSnapshot(catalog);
-    this.assertContextTarget(context, workType, entityId);
-    const resource = context.resource as Record<string, unknown>;
+    this.assertContextTarget(context, session.appId, entityId);
     const work = await this.ports.works.work(session.workId);
     context.workGoal = work?.goal;
     context.workDefinitionId = definition.id;
@@ -335,51 +333,40 @@ export class ForgeUseCases {
     const controlTools = new Set(["command.context", "command.receipt"]);
     const tools: WorkAgentTool[] = catalog.tools.filter((capability) => !controlTools.has(capability.id)).map((capability) => ({
       capability,
+      content: (result, supportsImages) => this.ports.app.toolContent?.(capability.id, result, supportsImages) ?? [{type: "text", text: JSON.stringify(result)}],
       invoke: (input) => {
         const operation = monitor(capability.title, async () => {
         await assertRunning();
         if (paused) throw new Error("WorkAwaitingFeedback");
-        if (input.report_id !== undefined && input.report_id !== entityId) throw new Error("CommandTargetMismatch");
-        const boundInput: Record<string, unknown> = { ...structuredClone(input), report_id: entityId };
+        const boundInput = this.ports.app.bindInput?.(entityId, structuredClone(input)) ?? structuredClone(input);
         if (capability.kind === "query") {
           const result = await this.ports.app.query(session.appToken, capability.id, boundInput);
           const eventId = this.ports.system.id("evt");
           await this.ports.trajectories.append({ id: eventId, workId: session.workId, turnId: turn.id,
-            type: "observation", at: this.ports.system.now(), payload: { capabilityId: capability.id, input: boundInput, result: ["asset.read", "asset.read-location", "asset.search"].includes(capability.id) ? materialObservation(result) : result } });
+            type: "observation", at: this.ports.system.now(), payload: { capabilityId: capability.id, input: boundInput, result: this.ports.app.auditObservation?.(capability.id, result) ?? result } });
           return { ...result, observationEventId: eventId };
         }
         if (unresolvedCommand) throw new Error("UnresolvedCommandBlocksFurtherWrites");
-        if (typeof resource.projectId !== "string" || !capability.receiptScope) throw new Error("CommandLocatorUnavailable");
-        let prepared: { resourceKind: "project"; resourceId: string; scope: string; targetKind: string; targetId: string } | undefined;
-        if (!capability.id.startsWith("assessment.")) {
-          if (!this.ports.app.prepareCommand) throw new Error("CommandLocatorUnavailable");
-          try {
-            prepared = await this.ports.app.prepareCommand(session.appToken, capability.id, boundInput);
-          } catch (error) {
-            handoffReason = error instanceof Error ? error.message : "CommandPreparationRejected";
-            paused = true;
-            const observationEventId = this.ports.system.id("evt");
-            await this.ports.trajectories.append({ id: observationEventId, workId: session.workId,
-              turnId: turn.id, type: "observation", at: this.ports.system.now(),
-              payload: { capabilityId: capability.id, input: boundInput, preparationRejected: handoffReason } });
-            return { status: "rejected", reason: handoffReason, observationEventId };
-          }
-          if (prepared.resourceId !== resource.projectId) throw new Error("CommandTargetMismatch");
-        } else {
-        if (typeof boundInput.assessment_id !== "string") throw new Error("CommandLocatorUnavailable");
-        const fresh = await this.ports.app.query(session.appToken, "assessment.context", { report_id: entityId, assessment_id: boundInput.assessment_id });
-        const assessment = fresh.assessment as Record<string, unknown> | undefined;
-        if (!assessment || assessment.id !== boundInput.assessment_id || assessment.report_id !== entityId) throw new Error("CommandTargetMismatch");
-        if (!Number.isInteger(assessment.record_no) || boundInput.expected_record_no !== assessment.record_no) throw new Error("ExpectedRecordNoMismatch");
+        if (!capability.receiptScope) throw new Error("CommandLocatorUnavailable");
+        let prepared: import("./ports.js").AppCommandTarget;
+        try {
+          prepared = await this.ports.app.prepareCommand(session.appToken, capability.id, boundInput);
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : "CommandPreparationRejected";
+          const observationEventId = this.ports.system.id("evt");
+          await this.ports.trajectories.append({ id: observationEventId, workId: session.workId,
+            turnId: turn.id, type: "observation", at: this.ports.system.now(),
+            payload: { capabilityId: capability.id, input: boundInput, preparationRejected: reason } });
+          // No command ID/effect exists yet. The caller may correct input; unknown issued commands remain blocked.
+          throw error;
         }
+        if (![prepared.resourceKind, prepared.resourceId, prepared.scope, prepared.targetKind, prepared.targetId].every(value => typeof value === "string" && !!value)) throw new Error("CommandLocatorUnavailable");
         await assertRunning();
         if (unresolvedCommand) throw new Error("UnresolvedCommandBlocksFurtherWrites");
         const actionId = this.ports.system.id("act");
         const commandId = this.ports.system.id("cmd");
         unresolvedCommand = true;
-        const locator: AppCommandLocator = { commandId, capabilityId: capability.id, reportId: entityId,
-          ...(typeof boundInput.assessment_id === "string" ? { assessmentId: boundInput.assessment_id } : {}),
-          resourceKind: "project", resourceId: resource.projectId, scope: capability.receiptScope, ...prepared };
+        const locator: AppCommandLocator = { commandId, capabilityId: capability.id, entityId, ...prepared };
         await this.ports.trajectories.append({ id: this.ports.system.id("evt"), workId: session.workId, turnId: turn.id, type: "action", at: this.ports.system.now(), payload: { actionId, commandId, capabilityId: capability.id, status: "pending", locator, input: boundInput } });
         let outcome: Awaited<ReturnType<AppPort["submitCommand"]>>;
         try {
@@ -425,7 +412,7 @@ export class ForgeUseCases {
         } });
       modelActivity = await startActivity("model", "准备模型会话");
       const result = await this.ports.agents.runWork({ sessionId: session.sessionId, signal: controller.signal, userMessage, context,
-        scope: { organizationId: this.ports.organizationId ?? "certlab", ownerUserId: userId, workId: session.workId, turnId: turn.id, omRevision: revision, catalogDigest: catalog.digest },
+        scope: { organizationId: this.ports.organizationId ?? "unbound", ownerUserId: userId, workId: session.workId, turnId: turn.id, omRevision: revision, catalogDigest: catalog.digest },
         onRuntimeEvent: async event => { await this.ports.trajectories.append({id:this.ports.system.id("evt"),workId:session.workId,turnId:turn.id,type:"message",at:this.ports.system.now(),payload:{agentRuntime:event}}); },
         onModelStatus: waitingForModel,
         onContextStatus: status => { const write = contextStatus(status); trajectoryWrites.push(write); void write.catch(() => {}); },
@@ -465,7 +452,7 @@ export class ForgeUseCases {
       if (modelActivity?.status === "running") { await finishActivity(modelActivity); modelActivity = undefined; }
       await Promise.allSettled([...operations]);
       controller.signal.throwIfAborted();
-      if (!checkpointWritten && catalog.tools.some(tool => ["command.context", "asset.read", "asset.search", "asset.read-location"].includes(tool.id))
+      if (!checkpointWritten
         && (progress.checkAt === "step" || handoffReason || unresolvedCommand)) {
         const facts = (await this.ports.trajectories.read(session.workId)).filter((event) =>
           event.turnId === turn.id && (event.type === "observation"
@@ -700,7 +687,7 @@ export class ForgeUseCases {
       };
       if (!this.ports.reflectionAgent) throw new Error("ReflectionAgentNotConfigured");
       const result = await this.ports.reflectionAgent.analyze({
-        scope: {organizationId:this.ports.organizationId ?? "certlab",ownerUserId:actorUserId,workId:reflection.workId ?? reflectionId,turnId:reflectionId,omRevision:draft.baseRevision,catalogDigest:this.ports.system.digest([lens.id,lens.version,lens.prompt,!!reflection.workId,lens.id!=="api-suggestion"])},
+        scope: {organizationId:this.ports.organizationId ?? "unbound",ownerUserId:actorUserId,workId:reflection.workId ?? reflectionId,turnId:reflectionId,omRevision:draft.baseRevision,catalogDigest:this.ports.system.digest([lens.id,lens.version,lens.prompt,!!reflection.workId,lens.id!=="api-suggestion"])},
         onRuntimeEvent: reflection.workId ? async event => { await this.ports.trajectories.append({id:this.ports.system.id("evt"),workId:reflection.workId!,type:"message",at:this.ports.system.now(),payload:{reflectionId,agentRuntime:event}}); } : undefined,
         reflectionId, lens, question: message.trim(), messages: await this.ports.works.reflectionMessages(reflectionId),
         evidence: selected, ...(reflection.workId ? { readTrajectory } : {}),
@@ -884,7 +871,7 @@ export class ForgeUseCases {
   }
   async listWorks(actorUserId: string, filters: WorkListFilters, page = 1) {
     if (!Number.isSafeInteger(page) || page < 1 || page > 100_000) throw new Error("InvalidWorkPage");
-    if (filters.workType && !["report-authoring"].includes(filters.workType)) throw new Error("InvalidWorkFilter");
+    if (filters.workType !== undefined && (!filters.workType.trim() || filters.workType.length > 200)) throw new Error("InvalidWorkFilter");
     if (filters.status && !["active", "completed"].includes(filters.status)) throw new Error("InvalidWorkFilter");
     if (filters.ownerUserId) await this.authorizedOmOwner(actorUserId, filters.ownerUserId);
     else await this.requireAdmin(actorUserId);
@@ -1011,15 +998,14 @@ export class ForgeUseCases {
   }
   private async assertActiveWork(session: SessionGrant): Promise<void> {
     const work = await this.ports.works.work(session.workId);
-    if (!work || work.status !== "active" || work.ownerUserId !== session.forgeUserId || work.appId !== "certlab" || work.entityId !== (session.entityId ?? session.reportId)) throw new Error("WorkCompleted");
+    if (!work || work.status !== "active" || work.ownerUserId !== session.forgeUserId || work.appId !== session.appId || work.entityId !== (session.entityId)) throw new Error("WorkCompleted");
   }
   private async authoritativeContext(token: string, workType: string, entityId: string, selection?: Record<string, unknown>) {
-    if (workType !== "report-authoring") throw new Error("UnsupportedAppContext");
-    return this.ports.app.reportContext(token, entityId, selection);
+    return this.ports.app.resourceContext(token, entityId, selection, workType);
   }
-  private assertContextTarget(context: Record<string, unknown>, workType: string, entityId: string): void {
+  private assertContextTarget(context: Record<string, unknown>, appId: string, entityId: string): void {
     const resource = context.resource as Record<string, unknown> | undefined;
-    if (workType !== "report-authoring" || resource?.namespace !== "certlab" || resource.resourceType !== "report" || resource.resourceId !== entityId) throw new Error("InvalidReportContext");
+    if (resource?.namespace !== appId || typeof resource.resourceType !== "string" || !resource.resourceType || resource.resourceId !== entityId) throw new Error("InvalidResourceContext");
   }
   private async authorizedOmOwner(actorUserId: string, ownerUserId: string) {
     const actor = await this.ports.accounts.userById(actorUserId);

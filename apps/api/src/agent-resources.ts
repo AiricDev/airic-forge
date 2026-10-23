@@ -11,7 +11,7 @@ import { assertServiceStopped } from "./service-lock.js";
 type Settings = ReturnType<SettingsManager["getSettings"]>;
 
 export const defaultAgentConfigDir = fileURLToPath(new URL("../agent", import.meta.url));
-export const pdfSkillDir = fileURLToPath(new URL("../skills/pdf-reading", import.meta.url));
+export const workingNotesSkillDir = fileURLToPath(new URL("../skills/working-notes", import.meta.url));
 export type AgentKind = "work" | "reflection";
 export interface AgentResources {
   digest: string;
@@ -82,7 +82,7 @@ export async function resolveAgentResources(config: ForgeConfig, kind: AgentKind
   if (prepare) for (const pkg of manager.listConfiguredPackages()) await manager.install(pkg.source);
   const resolved = await manager.resolve(async () => "error");
   const paths = (key: keyof ResolvedPaths) => resolved[key].filter(r => r.enabled && r.metadata.source !== "auto").map(r => r.path);
-  const extensions = paths("extensions"), skills = [...(kind === "work" ? [pdfSkillDir] : []), ...paths("skills")];
+  const extensions = paths("extensions"), skills = [...(kind === "work" ? [workingNotesSkillDir] : []), ...paths("skills")];
   const roots = [file, ...extensions.map(dirname), ...skills.map(p => statSync(p).isDirectory() ? p : dirname(p)), ...paths("prompts")];
   for (const pkg of manager.listConfiguredPackages()) {
     if (!pkg.installedPath || !existsSync(pkg.installedPath)) throw new Error(`AgentPackageMissing: ${pkg.source}`);

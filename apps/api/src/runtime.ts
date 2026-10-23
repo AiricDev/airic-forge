@@ -1,8 +1,8 @@
-import { ForgeUseCases, PersonalOmChanges, GitAccess, type InstanceSettings } from "@airic-forge/domain";
+import { ForgeUseCases, PersonalOmChanges, GitAccess, type InstanceSettings, type AppPort } from "@airic-forge/domain";
 import { join } from "node:path";
 import { InMemoryAppSessionStore } from "./app-session-store.js";
-import { CertLabClient } from "./certlab-client.js";
-import { bindCertLabRoots } from "./instance-binding.js";
+import { loadAppPort } from "./app-adapter.js";
+import { bindInstanceRoots } from "./instance-binding.js";
 import { ForgeConfig } from "./config.js";
 import { ForgeDatabase } from "./database.js";
 import { PersonalGitOperatingModel } from "./personal-git-om.js";
@@ -30,24 +30,24 @@ export class ForgeRuntime {
   readonly evidenceSessions = new InMemoryEvidenceSessionStore();
   readonly passwordSetups = new InMemoryPasswordSetupStore();
   readonly webSessions = new InMemoryWebSessionStore();
-  readonly app: CertLabClient;
+  readonly app: AppPort;
   readonly useCases: ForgeUseCases;
   readonly instanceSettings: InstanceSettings;
-  constructor(readonly config: ForgeConfig) {
-    bindCertLabRoots(config.projectDir, config.dataDir, config.organizationId);
+  constructor(readonly config: ForgeConfig, app: AppPort = loadAppPort(config)) {
+    bindInstanceRoots(config.projectDir, config.dataDir, config.organizationId, config.appId ?? "");
     this.db = new ForgeDatabase(config.dataDir);
     this.db.interruptReflectionRuns(systemPort.now());
     this.db.interruptWorkTurns();
     this.om = new PersonalGitOperatingModel(config.projectDir, config.dataDir, config.seedProjectDir);
     this.trajectories = new JsonlTrajectoryStore(config.dataDir);
-    this.app = new CertLabClient(config.certLabUrl, config.organizationId);
-    this.instanceSettings = { operatingModel: { repositoryPath: config.projectDir, dataPath: config.dataDir, personalWorktreesPath: join(config.dataDir, "worktrees", "users") }, integration: this.app.describeIntegration() };
+    this.app = app;
+    this.instanceSettings = { operatingModel: { repositoryPath: config.projectDir, dataPath: config.dataDir, personalWorktreesPath: join(config.dataDir, "worktrees", "users") }, integration: app.describeIntegration?.() ?? {appId:config.appId ?? "",organizationId:config.organizationId,baseUrl:config.appUrl,mcpUrl:`${config.appUrl}/mcp`,transport:"streamable-http"} };
     this.om.initialize();
     this.drafts = new GitOmWorkspaces(this.om);
     this.organization = new GitContributions(this.om);
     this.omChanges = new PersonalOmChanges({ accounts: this.db, om: this.om, drafts: this.drafts, system: systemPort });
     this.gitAccess = new GitAccess({ accounts: this.db, tokens: this.db, system: systemPort });
-    this.useCases = new ForgeUseCases({ accounts: this.db, works: this.db, om: this.om, omChanges: this.omChanges, reportWorkDefinitionId: config.reportWorkDefinitionId, omDrafts: this.drafts, organization: this.organization, measurements: this.db, instanceSettings: this.instanceSettings, app: this.app, organizationId: config.organizationId, toolSnapshots: this.db, agents: new PiWorkAgentRunner(config), reflectionAgent: new PiReflectionAgentRunner(config), reflectionRunStore: this.db, sessions: this.sessions, evidenceExtractor: new LocalEvidenceExtractor(), evidenceSessions: this.evidenceSessions, passwordSetups: this.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: this.trajectories, system: systemPort,  });
+    this.useCases = new ForgeUseCases({ accounts: this.db, works: this.db, om: this.om, omChanges: this.omChanges, workDefinitionId: config.workDefinitionId, omDrafts: this.drafts, organization: this.organization, measurements: this.db, instanceSettings: this.instanceSettings, app: this.app, organizationId: config.organizationId, toolSnapshots: this.db, agents: new PiWorkAgentRunner(config), reflectionAgent: new PiReflectionAgentRunner(config), reflectionRunStore: this.db, sessions: this.sessions, evidenceExtractor: new LocalEvidenceExtractor(), evidenceSessions: this.evidenceSessions, passwordSetups: this.passwordSetups, passwordCodec: { hash: hashPassword, verify: verifyPassword }, trajectories: this.trajectories, system: systemPort,  });
     this.bindUserLifecycle();
     // No model execution survives a process restart; interrupted work remains historical.
     for (const user of this.db.listUsers()) if (user.status === "draining") this.db.finishUserDrain(user.id);

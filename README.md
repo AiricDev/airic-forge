@@ -1,6 +1,6 @@
 # AiricForge
 
-面向业务 App 的 Agent 执行、Operating Model 治理和实践学习服务。当前通过 MCP 对接 CertLab，在 App 中提供 Copilot，并在工作台管理个人/组织 OM 与 Reflection。
+面向业务 App 的 Agent 执行、Operating Model 治理和实践学习服务。通过 App 所有的适配器对接业务系统，在 App 中提供 Copilot，并在工作台管理个人/组织 OM 与 Reflection。
 
 - [文档导航](docs/README.md)
 - [App 集成与交付](docs/app-integration.md)

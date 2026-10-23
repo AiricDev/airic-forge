@@ -11,7 +11,7 @@ test("personal and organization versions retain commit history without auxiliary
     const branch = `users/${f.owner.id}`;
     const base = om.head("main");
     const initialEntry = om.history("main")[0];
-    const path = "work-definitions/report-authoring/policy.md";
+    const path = "work-definitions/document-task/policy.md";
     let content = om.document(base, path);
     const versions: Array<{ revision: string; subject: string }> = [];
     for (const subject of ["Clarify report policy", "Refine report policy"]) {

@@ -7,7 +7,7 @@
 - Node.js 24、pnpm workspace、TypeScript；依赖以各 package.json 与 pnpm-lock.yaml 为准。
 - API 使用 Fastify、WebSocket/ACP；Reflection 使用持久化 Run 和 SSE。
 - Pi SDK 精确锁定 1.2.0。Work 与 Reflection 复用原生会话、文件工具、自动压缩及显式资源。
-- MCP 使用官方 TypeScript SDK，业务调用经 CertLab MCP 委托原业务用例。
+- MCP 使用官方 TypeScript SDK，业务调用经App代码适配器委托原业务用例。
 - SQLite 保存用户、业务工作和索引；Git 保存 OM 内容、草稿及贡献；JSONL 保存规范化工作轨迹。原生消息/图像保存在本地 Pi 会话。
 - 生产 UI 为 apps/workbench，React、MUI 和 assistant-ui；产物位于 apps/workbench/public，由 API 同源提供。
 
@@ -21,7 +21,7 @@
 | OM 结构、个人提交及组织治理 | operating-model.ts、om-changes.ts、use-cases.ts |
 | 用户角色、停用与运行收尾 | user-administration.ts、password-administration.ts、reflection-runs.ts |
 | HTTP、ACP、SSE 与同源校验 | apps/api/src/server.ts、om-http.ts、reflection-http.ts、user-http.ts |
-| App MCP、资料来源与回执映射 | certlab-client.ts、mcp-client.ts、material-tool-content.ts |
+| 通用App适配器装配与MCP传输 | app-adapter.ts、mcp-client.ts；业务DTO/来源/回执映射由App代码实现 |
 | 原生运行、资源与短期业务桥 | pi-native-session.ts、pi-work-agent.ts、pi-reflection-agent.ts、work-mcp-bridge.ts |
 | OM Git、个人提交与草稿 | git-om.ts、personal-git-om.ts、git-om-workspaces.ts |
 | 组织贡献与个人 Git 传输 | git-contributions.ts、git-http.ts |
@@ -33,13 +33,13 @@
 
 ## 执行路径
 
-1. App bootstrap 验证用户、实例组织、报告与已有 Work，建立内存凭据和 ACP 票据。
+1. App bootstrap 验证用户、实例组织、业务对象与已有 Work，建立内存凭据和 ACP 票据。
 2. Turn 用例取权威 App 状态、当前个人 OM HEAD 和 MCP 工具快照，解析 WD 与必要知识并固定来源。
 3. Pi 适配器按明确身份 create/open 原生会话，附加 OM 与当前事实，使用延迟 MCP 发现工具。
 4. 业务桥将调用交回已有用例，注入关联和原命令身份；App 验证输入、权限、版本，返回原始回执。
 5. 规范轨迹关联结果、检查点和运行元数据；Pi 保存原生消息与压缩条目。未知结果不自动重放。
 
-详见 [MCP 契约](contracts/mcp-tool-discovery.md)、[原生执行](contracts/context-projection.md)及 [CertLab 接入](certlab-integration.md)。
+详见 [MCP 契约](contracts/mcp-tool-discovery.md)、[原生执行](contracts/context-projection.md)及 [App适配器](contracts/app-adapter.md)。
 
 ## OM 与 Reflection
 
@@ -51,7 +51,7 @@ Reflection 使用相同的原生执行装配，但只提供轨迹和候选治理
 
 新数据库直接建立当前结构，不建立旧 Proposal、数据库 OM 草稿或贡献表，不运行历史转换器。已有当前结构按原身份继续读取，不删除其中任何历史表、行或 Git 引用。未升级的旧产品数据格式不在兼容承诺内；切换前应单独备份和确认。
 
-运行目录与只读发布配置分开；当前 config 尚未提供 App 自选 Pi 资源目录。启动参数和本地检查见 [部署说明](deployment.md)。容器构建是发布路径，本机开发可独立启动 API 与前端，完整快速联调入口仍待实现。
+运行目录与只读发布配置分开；App通过FORGE_AGENT_CONFIG_DIR选择原生Pi资源，通过FORGE_APP_ADAPTER_MODULE选择业务适配器。启动参数和本地检查见[部署说明](deployment.md)。App拥有本机快速联调入口，不需要Docker build；容器运行验收单独执行。
 
 ## 验证
 

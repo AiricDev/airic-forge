@@ -29,6 +29,8 @@ test("native packages load explicit extensions, freeze resources and rotate sess
     const checked = await checkAgentResources(f.config, true); assert.equal(checked.work.extensions, 1); assert.equal(checked.reflection.extensions, 0);
     const first = await openNativeSession(f.config, input);
     assert(first.session.getAllTools().some(t => t.name === "example_source"));
+    assert.match(first.session.systemPrompt, /working-notes/);
+    assert.doesNotMatch(first.session.systemPrompt, /<name>pdf-reading<\/name>/);
     first.session.sessionManager.appendMessage({ role: "user", content: "Synthetic request", timestamp: 0 });
     writeFileSync(join(first.cwd, "progress.md"), "Original source page 2; next inspect figure.");
     const oldFile = first.sessionFile;

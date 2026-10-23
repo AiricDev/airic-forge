@@ -35,6 +35,5 @@ export async function openWorkMcpBridge(tools:BridgeTool[]) {
 /** Preserve validated App image blocks as MCP image content rather than base64 text. */
 export function toMcpTool(tool:import('@airic-forge/domain').WorkAgentTool,supportsImages:boolean):BridgeTool {
   return {name:tool.capability.id,description:tool.capability.description,inputSchema:tool.capability.inputSchema,
-    invoke:async params=>{const result=await tool.invoke(params);return {content:['asset.read','asset.read-location'].includes(tool.capability.id)?materialToolContent(result,supportsImages):[{type:'text',text:JSON.stringify(result)}]};}};
+    invoke:async params=>{const result=await tool.invoke(params);return {content:tool.content?.(result,supportsImages)??[{type:'text',text:JSON.stringify(result)}]};}};
 }
-import {materialToolContent} from './material-tool-content.js';

@@ -4,7 +4,7 @@ import { isAllowedOmDocumentPath, validateWorkDefinition, type WorkDefinition } 
 
 const definition: WorkDefinition = {
   schemaVersion: 1,
-  id: "report-authoring",
+  id: "document-task",
   title: "Report authoring",
   description: "Test",
   documents: [{ id: "policy", path: "policy.md", title: "Policy", role: "policy", load: "required" }],

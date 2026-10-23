@@ -1,12 +1,12 @@
 # 资源关系与权限
 
-当前实例连接一个 CertLab 和一个组织。Forge 的 admin/user 角色管理其自身资源，不授予 CertLab 专业权限。
+每个实例显式绑定一个App和一个组织。Forge的admin/user角色只管理自身资源，不授予业务App的专业权限。
 
 | 资源 | 关系与事实来源 |
 | --- | --- |
 | 用户与 App identity | 已验证 App 身份按规范化邮箱关联 Forge 用户；SQLite 保存关联与用户状态 |
 | 个人 OM | users/<id> HEAD 为 active；Git 保存内容与历史 |
-| Work 与会话 | 所有者、App、工作类型、报告绑定；业务长期会话与临时 ACP 连接分开 |
+| Work 与会话 | 所有者、App、工作类型、业务对象绑定；业务长期会话与临时 ACP 连接分开 |
 | Turn | 固定 OM、工具快照、App 上下文和来源；SQLite/JSONL 记录业务执行 |
 | 原生 Pi 会话 | 按用户、Work/Reflection 和明确来源绑定，保存在运行数据中 |
 | Reflection | 可关联有权访问的 Work，或为个人独立讨论；连续消息及 Run 持久化 |

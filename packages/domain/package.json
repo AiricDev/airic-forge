@@ -5,9 +5,9 @@
   "exports": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node build.mjs",
     "check": "tsc --noEmit -p tsconfig.json",
-    "test": "node --test dist/*.test.js"
+    "test": "node build.mjs --tests && node --test test-dist/*.test.js"
   },
   "devDependencies": { "@types/node": "^24.7.2", "typescript": "^5.9.3" }
 }

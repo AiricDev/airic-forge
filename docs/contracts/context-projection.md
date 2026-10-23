@@ -13,7 +13,7 @@ App 通过显式 Work/Reflection Pi settings 配置资源；包准备和诊断�
 
 ## 原生能力与资源
 
-保留默认系统提示，附加固定OM和专业约束；通过显式ResourceLoader只加载当前OM、发布的pdf-reading Skill及原生MCP/tool_search扩展，不加载宿主全局配置。原生read/write/edit/bash/grep/find/ls提供文件操作；bash使用原生工具构造器，子进程环境不继承模型/业务凭据。
+保留默认系统提示，附加固定OM和专业约束；通过显式ResourceLoader只加载当前OM、发布的working-notes Skill及原生MCP/tool_search扩展，不加载宿主全局配置。原生read/write/edit/bash/grep/find/ls提供文件操作；bash使用原生工具构造器，子进程环境不继承模型/业务凭据。
 
 自动压缩开启，使用模型声明窗口、默认20K近期保留及至少16K/当前输出上限的reserve，不再使用Forge输入窗口或第二套摘要器。原生token估算、原始条目和compaction条目归Pi管理。输出上限继续使用FORGE_CONTEXT_OUTPUT_TOKENS。FORGE_CONTEXT_INPUT_TOKENS已删除，不保留旧逻辑开关。
 
@@ -23,7 +23,7 @@ App 通过显式 Work/Reflection Pi settings 配置资源；包准备和诊断�
 
 `work-mcp-bridge.ts`使用标准MCP Server和Streamable HTTP，在本机随机端口暴露当前回调。每次运行独立内存Bearer凭据，未授权请求拒绝；结束/取消时关闭服务。凭据不写配置、提示和会话。
 
-业务Schema来自当前不可变工具快照；Pi原生MCP注册并通过tool_search延迟加载。不再转换为自定义Pi ToolDefinition。桥只将请求交回原用例，复用报告绑定、版本检查、关联、命令ID、原回执和未知结果保护；不重建专业权限。
+业务Schema来自当前不可变工具快照；Pi原生MCP注册并通过tool_search延迟加载。不再转换为自定义Pi ToolDefinition。桥只将请求交回原用例，复用业务对象绑定、App适配器的版本预检、关联、命令ID、原回执和未知结果保护；不重建专业权限。
 
 Work附带检查点、按需OM与历史读取。Reflection仅提供已有Work轨迹和候选读写回调，无App Token。MCP图像使用原生image块，文本包含固定来源元数据，不把base64当文字或视觉摘要冒充原件。
 

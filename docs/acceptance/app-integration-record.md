@@ -53,3 +53,8 @@
 | Unowned Capability | not-found | 基础阅读随 Forge、App 配置/装配在 CertLab、业务规则在 OM、恢复机械路径在 Forge 运维适配器，均沿已批准所有者放置。 | high / — |
 
 后续维护从部署手册进入实际适配器与 App 命令；无需新建全局注册表或修改 Agent 自身治理规则。没有额外待决的架构所有权问题；不因本轮通过而推断生产隔离或专业正确性已验收。
+
+
+## 2026-10-23 后续质量迭代
+
+上述I-01记录为当时的实现；当前默认资源已改为working-notes并删除pdf-reading，Asset读取细节由App MCP说明。质量测试入口只读调用实际Pi适配器和临时App，不能代替生产Work/保存验收。最终API类型检查及133项全量回归通过。当前本地API/Forge已空闲备份重启，旧会话与OM保留；真实模型比较的完整记录在CertLab evaluations/semi-s2-manual-v2/results-20261023.md。

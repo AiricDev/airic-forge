@@ -4,7 +4,7 @@ import test from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { ForgeRuntime } from "./runtime.js";
+import { TestRuntime as ForgeRuntime } from "./test-runtime.js";
 import { buildServer } from "./server.js";
 import type { ForgeConfig } from "./config.js";
 
@@ -12,8 +12,8 @@ test("test identity switch requires an explicit flag and the original admin sess
   const root = mkdtempSync(join(tmpdir(), "airic-forge-test-identity-"));
   const config: ForgeConfig = {
     port: 0, projectDir: join(root, "project"), dataDir: join(root, "data"),
-    seedProjectDir: resolve(process.cwd(), "../../seed/certlab"), webDistDir: join(root, "web"),
-    certLabUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173",
+    seedProjectDir: resolve(process.cwd(), "../../tests/fixtures/operating-model"), webDistDir: join(root, "web"),
+    appId:"sample-app", appUrl: "http://127.0.0.1:1", organizationId: "synthetic-org", allowedOrigin: "http://localhost:5173",
     testIdentitySwitch: false,
   };
   const runtime = new ForgeRuntime(config);

@@ -2,10 +2,10 @@
 # I-xx 对应 docs/app-integration.md 的稳定需求编号。
 Feature: App 组装 Forge 并独立演化组织 OM
 
-  Scenario: 通用 PDF 阅读不要求领域 OM 提供操作细节 (I-01)
+  Scenario: App读取指导与通用笔记不要求领域OM提供操作细节 (I-01)
     Given 两个不同领域的 App 提供符合文档读取契约的工具
     And 两个组织 OM 仅包含各自业务判断和证据要求
-    When 相同版本的通用阅读能力处理各自的大型图文 PDF
+    When 相同版本的基础Agent根据各自App MCP指导处理大型图文PDF
     Then Agent 能定位范围并按需读取原文和图像
     And 能记录来源、事实、疑点、覆盖范围和下一步
     And 压缩后能接续任务并产出可核对的业务草稿
@@ -39,18 +39,18 @@ Feature: App 组装 Forge 并独立演化组织 OM
     And 不静默略过扩展并宣称配置完整
 
   Scenario: Reflection 保持独立资源和授权 (I-04, I-09)
-    Given Work 配置了业务资料工具和通用阅读能力
+    Given Work 配置了业务资料工具和通用笔记能力
     When 为 Reflection 装配环境
     Then 使用其明确选择的资源及轨迹和候选稿治理能力
     And 不继承 Work 的 App token 或业务桥
     And 正式候选稿经既有治理工具保存
 
   Scenario: 恢复正确用户的业务 Work (I-05)
-    Given 用户在某报告下已有 Work
-    When 该用户重新认证并打开该报告的 Copilot
+    Given 用户在某业务对象下已有Work
+    When 该用户重新认证并打开该对象的Copilot
     Then 恢复正确归属的 Work 和历史
     And 页面选择只作为聚焦提示
-    And 其他用户或其他报告不能借绑定读取此 Work
+    And 其他用户或其他对象不能借绑定读取此 Work
 
   Scenario: 重复初始化与发布种子不重置生效 OM (I-06)
     Given 组织已从种子 A 初始化并采用个人和组织修改

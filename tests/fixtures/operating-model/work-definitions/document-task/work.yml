@@ -1,11 +1,11 @@
 schemaVersion: 1
-id: report-authoring
-title: CertLab report assessment
-description: Advance the explicit single-report goal using authoritative assessments and human checkpoints.
+id: document-task
+title: Synthetic document task
+description: Advance a synthetic task using authoritative App facts and human checkpoints.
 documents:
   - id: policy
     path: policy.md
-    title: CertLab boundaries
+    title: Task boundaries
     role: policy
     load: required
   - id: method

@@ -6,13 +6,13 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Worker } from "node:worker_threads";
 import { ForgeDatabase } from "./database.js";
-import { ForgeRuntime } from "./runtime.js";
+import { TestRuntime as ForgeRuntime } from "./test-runtime.js";
 import { buildServer } from "./server.js";
 import { hashPassword } from "./auth.js";
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(),"forge-users-"));
-  const runtime = new ForgeRuntime({ port:0, projectDir:join(root,"project"),dataDir:join(root,"data"),webDistDir:join(root,"web"),certLabUrl:"http://127.0.0.1:1",organizationId:"synthetic",allowedOrigin:"http://localhost" });
+  const runtime = new ForgeRuntime({ port:0, projectDir:join(root,"project"),dataDir:join(root,"data"),webDistDir:join(root,"web"),appId:"sample-app", appUrl:"http://127.0.0.1:1",organizationId:"synthetic",allowedOrigin:"http://localhost" });
   const admin = runtime.db.ensureUser("admin@example.invalid"), user = runtime.db.ensureUser("user@example.invalid");
   runtime.db.setInitialPassword(user.id,hashPassword("Synthetic user password"));
   const app = buildServer(runtime);
@@ -88,7 +88,7 @@ test("disable without runs revokes web/app/setup credentials; restore never revi
   const f=fixture();
   try {
     const cookie=f.cookie(f.user.id),ticket=f.runtime.passwordSetups.issue(f.user.id,"2099-01-01T00:00:00Z");
-    f.runtime.sessions.put({ticket:"app-ticket",expiresAt:"2099-01-01T00:00:00Z",forgeUserId:f.user.id,workId:"work",sessionId:"session",appToken:"synthetic-token",reportId:"report"});
+    f.runtime.sessions.put({ticket:"app-ticket",expiresAt:"2099-01-01T00:00:00Z",forgeUserId:f.user.id,workId:"work",sessionId:"session",appToken:"synthetic-token", appId:"sample-app",workType:"document-task",entityId:"report"});
     const git = await f.runtime.gitAccess.issue(f.user.id,"Synthetic access");
     const result=await f.change(f.admin.id,f.user.id,change(0,{enabled:false}));assert.equal(result.json().user.status,"disabled");
     assert.equal((await f.app.inject({url:"/api/v1/auth/me",headers:cookie})).statusCode,401);
@@ -110,7 +110,7 @@ test("draining permits only accepted run observation/cancellation, blocks admiss
   let entered!:()=>void;const ready=new Promise<void>(yes=>{entered=yes;});
   try {
     const cookie=f.cookie(f.user.id);
-    const work=f.runtime.db.createWork(f.user.id,"certlab","report-authoring","report");
+    const work=f.runtime.db.createWork(f.user.id,"sample-app","document-task","report");
     const run=f.runtime.useCases.users.run(f.user.id,"work",work.id,async()=>{entered();await barrier;return "finished";});await ready;
     const result=await f.change(f.admin.id,f.user.id,change(0,{enabled:false}));assert.equal(result.json().user.status,"draining");
     assert.equal((await f.app.inject({url:"/api/v1/auth/me",headers:cookie})).statusCode,200);
@@ -127,7 +127,7 @@ test("draining permits only accepted run observation/cancellation, blocks admiss
 test("restarting finalizes draining accounts without deleting resources",async()=>{
   const f=fixture();
   try {
-    const work=f.runtime.db.createWork(f.user.id,"certlab","report-authoring","report");
+    const work=f.runtime.db.createWork(f.user.id,"sample-app","document-task","report");
     f.runtime.db.changeUser(f.admin.id,f.user.id,change(0,{enabled:false}),true);
     const restarted=new ForgeRuntime(f.runtime.config);
     assert.equal(restarted.db.userById(f.user.id)!.status,"disabled");
