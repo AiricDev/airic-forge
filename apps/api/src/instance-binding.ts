@@ -22,7 +22,11 @@ export function bindCertLabRoots(projectDir: string, dataDir: string, organizati
     return;
   }
   for (const root of [project, data]) {
-    if (existsSync(root) && readdirSync(root).length) throw new Error("ExistingUnboundRootDenied");
+    if (existsSync(root)) {
+      const entries = readdirSync(root);
+      const preparedCacheOnly = root === data && entries.every(name => name === "agent-packages" && lstatSync(join(root, name)).isDirectory());
+      if (entries.length && !preparedCacheOnly) throw new Error("ExistingUnboundRootDenied");
+    }
   }
   mkdirSync(data, { recursive: true });
   writeFileSync(marker, JSON.stringify(expected), { flag: "wx", mode: 0o600 });

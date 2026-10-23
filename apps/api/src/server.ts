@@ -1,3 +1,6 @@
+import { bindCertLabRoots } from "./instance-binding.js";
+import { acquireServiceLock } from "./service-lock.js";
+import { checkAgentResources, resolveAgentResources } from "./agent-resources.js";
 import { registerUserHttp } from "./user-http.js";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
@@ -83,6 +86,16 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
 
 
 
+
+  app.get("/api/v1/agent-environment", async (request, reply) => {
+    const actor = runtime.webSessions.userId(cookieToken(request.headers.cookie));
+    if (!actor) return reply.code(401).send({ error: "Unauthorized" });
+    try {
+      await runtime.useCases.instanceSettings(actor);
+      const [work, reflection] = await Promise.all([resolveAgentResources(runtime.config, "work"), resolveAgentResources(runtime.config, "reflection")]);
+      return { deploymentId: runtime.config.deploymentId ?? "source", work: { digest: work.digest, files: work.files }, reflection: { digest: reflection.digest, files: reflection.files } };
+    } catch (error) { return reply.code(error instanceof Error && error.message === "Forbidden" ? 403 : 503).send({ error: "AgentEnvironmentUnavailable" }); }
+  });
 
   app.get("/api/v1/instance-settings", async (request, reply) => {
     const actorId = runtime.webSessions.userId(cookieToken(request.headers.cookie));
@@ -428,7 +441,19 @@ export function buildServer(runtime = new ForgeRuntime(loadConfig())) {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const config = loadConfig();
+  bindCertLabRoots(config.projectDir, config.dataDir, config.organizationId);
+  await checkAgentResources(config);
   if (config.testIdentitySwitch && config.bindHost && config.bindHost !== "127.0.0.1") throw new Error("TestIdentitySwitchRequiresLoopback");
-  const app = buildServer(new ForgeRuntime(config));
+  const releaseLock = acquireServiceLock(config.dataDir);
+  const runtime = new ForgeRuntime(config);
+  const app = buildServer(runtime);
+  let stopping = false;
+  const stop = async () => {
+    if (stopping) return; stopping = true;
+    await runtime.useCases.shutdown();
+    await app.close(); runtime.db.close(); releaseLock();
+  };
+  process.on("SIGTERM", () => { void stop(); });
+  process.on("SIGINT", () => { void stop(); });
   await app.listen({ port: config.port, host: config.bindHost ?? (config.testIdentitySwitch ? "127.0.0.1" : "0.0.0.0") });
 }

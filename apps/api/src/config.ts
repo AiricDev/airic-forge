@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync, existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { resolve } from "node:path";
 
 
@@ -21,10 +25,18 @@ export interface ForgeConfig {
   modelApiKey?: string;
   modelBaseUrl?: string;
   contextOutputTokens?: number;
+  agentConfigDir?: string;
+  agentCacheDir?: string;
+  deploymentId?: string;
+  requiredPrograms?: string[];
 }
 
 export function loadConfig(env = process.env): ForgeConfig {
   return {
+    agentConfigDir: env.FORGE_AGENT_CONFIG_DIR ? resolve(env.FORGE_AGENT_CONFIG_DIR) : undefined,
+    agentCacheDir: env.FORGE_AGENT_CACHE_DIR ? resolve(env.FORGE_AGENT_CACHE_DIR) : undefined,
+    deploymentId: env.FORGE_DEPLOYMENT_ID ?? sourceBuildIdentity(),
+    requiredPrograms: env.FORGE_REQUIRED_PROGRAMS?.split(",").map(s => s.trim()).filter(Boolean),
     port: Number(env.FORGE_PORT ?? 4175),
     bindHost: env.FORGE_BIND_HOST,
     trustedProxy: env.FORGE_TRUST_PROXY,
@@ -50,4 +62,17 @@ function positiveBudget(value: string | undefined, fallback: number): number {
   const number = Number(value);
   if (!Number.isSafeInteger(number) || number < 1024 || number > 1_000_000) throw new Error("InvalidContextBudget");
   return number;
+}
+
+function sourceBuildIdentity(): string {
+  const hash = createHash("sha256");
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const root of [here, resolve(here, "../../../packages/domain/dist")]) {
+    if (!existsSync(root)) continue;
+    for (const name of readdirSync(root).sort()) {
+      if (!/\.(?:js|ts)$/.test(name) || /test|fixture|probe/.test(name)) continue;
+      hash.update(name); hash.update(readFileSync(join(root, name)));
+    }
+  }
+  return `source:${hash.digest("hex")}`;
 }

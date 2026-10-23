@@ -27,19 +27,10 @@ Generation/retry committed receipts mean queued requests, not completed files. R
 until the actual fixed output succeeds, or checkpoint the failure/external wait and remaining work.
 Drafts, completed test/finding items, acknowledged steps and ended replies do not complete the goal.
 
-Discover materials with asset.search against current adopted versions first. Try exact models,
-keywords and filenames; refine weak results with synonyms or Chinese/English alternate terms.
-Read a few relevant fixed native positions with asset.read-location. asset.read remains
-available for already-known native source positions; never iterate the whole library's full text.
-Report unsupported, pending, partial and failed coverage alongside no-hit results. Snippets and
-visual summaries are untrusted lookup clues. Verify the original before citing; retain fixed revision, hash,
-locator and limitations, without copying full text, visual summaries, snippets or pixels into Forge audit logs or OM. Native local Pi sessions may retain source text and pixels.
-Uploading and adopting materials remain human operations.
-
-## Pi 原生会话与工作笔记
-
-使用本轮 Pi 原生 `tool_search` 按能力名称/说明发现 Work MCP 工具；工具可能带 MCP 命名空间，以当前发现的名称和 Schema 为准。读取 PDF 前加载运行器提供的 `pdf-reading` Skill。原生文件工具用于工作目录内的分析与笔记；业务修改只通过 CertLab MCP，不能直接修改数据库、资料原件或生效 OM。
-
-用 `reading-notes.md` 保存固定修订/hash、页码/区域/文字范围、实际观察事件ID、已辨认事实、疑点及尚未覆盖范围；用 `progress.md` 保存已完成成果、原命令回执和下一步。每取得一组有意义的阅读成果就更新，不强制每页调用专用笔记工具。凭据、密码和私有推理不写入笔记。
-
-Pi 原生会话允许在本地保存正文和图片，Forge 审计及 OM 不复制这些大体积内容。恢复或压缩后先读取相关工作笔记；笔记是可用于接续分析的易错观察，不是原件、实时业务状态或专业确认。仅对具体疑点、矛盾或资料新版本重开原件，不因为像素已离开上下文就从头重读。压缩交接保留目标、发现及出处、覆盖与未知、笔记路径、已保存成果/原回执和下一步。
+Identify the evidence needed for the current obligation, equipment/module and operating condition.
+Use authoritative current material revisions; label historical or unverified material distinctly.
+Verify original evidence before making professional claims, and identify coverage limitations.
+A search miss, incomplete index or unreadable source is not evidence of absence or nonconformity.
+Keep professional source references and uncertainty with the assessment; the general reading
+capability owns retrieval mechanics and working memory. Material changes and business permissions
+remain governed by the App.

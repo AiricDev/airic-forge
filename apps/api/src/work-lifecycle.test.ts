@@ -398,3 +398,21 @@ test("ordinary users discover tools each Turn, ignore WD scope, pin snapshots an
     } finally {await app.close();}
   } finally {release();f.close();}
 });
+
+
+test("shutdown drains an active Work and refuses further execution without replaying writes", async () => {
+  let ready!: () => void; const started = new Promise<void>(resolve => { ready = resolve; });
+  const f = fixture({ runWork: async ({ signal }) => {
+    ready(); await new Promise<void>((_resolve, reject) => signal!.addEventListener("abort", () => reject(Error("Stopped")), { once: true }));
+    return { text: "unreachable" };
+  } });
+  try {
+    const session = await f.useCases.bootstrap({ token: "synthetic", reportId: "report" });
+    const running = f.useCases.startTurn(session.ticket, "Read"); const failed = assert.rejects(() => running);
+    await started; await f.useCases.shutdown(); await failed;
+    await assert.rejects(() => f.useCases.startTurn(session.ticket, "Continue"), /ForgeStopping/);
+    await assert.rejects(() => f.useCases.bootstrap({ token: "synthetic", reportId: "report" }), /ForgeStopping/);
+    assert.equal(f.submitted(), 0);
+    assert.equal((await f.useCases.sessionHistory(session.ticket)).events.some(e => e.type === "turn.completed"), false);
+  } finally { f.close(); }
+});

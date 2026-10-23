@@ -15,6 +15,7 @@ type ReflectionPreparation = { reflection: ReflectionRecord; conversational: boo
 
 export class ForgeUseCases {
   private readonly feedbackWorks = new Set<string>();
+  private stopping = false;
   private readonly runningWorks = new Set<string>();
   private readonly workRuns = new Map<string, { controller: AbortController; done: Promise<void>; finish: () => void }>();
   private readonly runningReflections = new Set<string>();
@@ -27,11 +28,18 @@ export class ForgeUseCases {
     if (ports.reflectionRunStore) this.reflectionRuns = new ReflectionRuns(ports.reflectionRunStore, ports.system);
   }
 
+  async shutdown(): Promise<void> {
+    this.stopping = true;
+    for (const run of this.workRuns.values()) run.controller.abort();
+    await Promise.all([...this.workRuns.values()].map(run => run.done).concat(this.reflectionRuns?.close() ?? Promise.resolve()));
+  }
+
   private workDefinitionId(workType: string): string {
     return workType === "report-authoring" ? this.ports.reportWorkDefinitionId ?? workType : workType;
   }
 
   async bootstrap(input: { token: string; reportId?: string; entityId?: string; workType?: "report-authoring"; selection?: Record<string, unknown>; workId?: string }) {
+    if (this.stopping) throw new Error("ForgeStopping");
     const workType = input.workType ?? "report-authoring";
     const entityId = input.entityId ?? input.reportId;
     if (!entityId || workType !== "report-authoring") throw new Error("UnsupportedAppContext");
@@ -172,6 +180,7 @@ export class ForgeUseCases {
   }
 
   async startTurn(ticket: string, userMessage: string, onText?: (text: string) => void, evidenceDigests: string[] = [], requestId?: string, onTurn?: (turnId: string) => void, onContextStatus?: (status: "organizing" | "ready" | "failed") => void, onActivity?: (activity: WorkActivity) => void) {
+    if (this.stopping) throw new Error("ForgeStopping");
     const session = await this.appSession(ticket);
     return this.users.run(session.forgeUserId, "work", session.workId, () => this.startTurnAccepted(ticket, userMessage, onText, evidenceDigests, requestId, onTurn, onContextStatus, onActivity));
   }
@@ -196,6 +205,7 @@ export class ForgeUseCases {
     const workType = session.workType ?? "report-authoring";
     const entityId = session.entityId ?? session.reportId;
     if (this.runningWorks.has(session.workId) || this.feedbackWorks.has(session.workId)) throw new Error("WorkTurnAlreadyRunning");
+    if (this.stopping) throw new Error("ForgeStopping");
     this.runningWorks.add(session.workId);
     const controller = new AbortController();
     let finish!: () => void;
@@ -587,6 +597,7 @@ export class ForgeUseCases {
   }
 
   private async startReflectionRunAccepted(actorUserId: string, reflectionId: string, message: string, requestId: string) {
+    if (this.stopping) throw new Error("ForgeStopping");
     const reflection = await this.readableReflection(actorUserId, reflectionId);
     if (reflection.ownerUserId !== actorUserId) throw new Error("ReflectionNotOwned");
     if (typeof requestId !== "string" || !/^[a-zA-Z0-9_-]{8,100}$/.test(requestId)) throw new Error("ReflectionRequestIdRequired");
@@ -633,6 +644,7 @@ export class ForgeUseCases {
   }
 
   private async prepareReflection(actorUserId: string, reflectionId: string, message: string): Promise<ReflectionPreparation> {
+    if (this.stopping) throw new Error("ForgeStopping");
     const reflection = await this.readableReflection(actorUserId, reflectionId);
     if (reflection.ownerUserId !== actorUserId) throw new Error("ReflectionNotOwned");
     if (reflection.status === "abandoned") throw new Error("ReflectionClosed");

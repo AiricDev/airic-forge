@@ -15,7 +15,7 @@
 
 已有真实 Pi/资料验收见 [原生执行记录](acceptance/pi-native-record.md)。它证明当时受验范围，不替代新交付方案的部署验收或专业接受。
 
-## 下一步实施顺序
+## 已实施的集成切片
 
 固定边界：通用 PDF 阅读归基础 Agent；组织 OM 只管理业务逻辑。Agent 配置随代码发布，生效 OM 独立演化。Docker 用于发布，本机源码联调无需 Docker build。
 
@@ -28,7 +28,7 @@
 | 5 | 初始化、App 构建与发布装配 | 新组织初始化幂等；新种子不覆盖 active；本地与镜像采用相同契约 |
 | 6 | 发布、持久化与运维入口 | 组合兼容、升级备份、回滚限制、跨目录会话/工作树修复和恢复演练 |
 
-[16 个行为场景](acceptance/app-integration.feature)覆盖 I-01～I-12；实施时映射到实际测试和运行记录。配置参数、统一联调命令、种子导入和迁移接口仍待实现，不能写成现成 API。
+[16 个行为场景](acceptance/app-integration.feature)覆盖 I-01～I-12；现有配置、联调、初始化和恢复入口见 [部署手册](deployment.md)，测试与运行边界见 [本轮记录](acceptance/app-integration-record.md)。Docker 镜像执行验收仍须在有 Docker daemon 的发布环境完成。
 
 ## 验证与变更闭包
 

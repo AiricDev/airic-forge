@@ -1,9 +1,9 @@
 # AiricForge 文档入口
 
-## App 集成与下一步交付
+## App 集成与交付
 
 - [App 集成、Agent 能力与交付需求](app-integration.md)：2026-10-23 确认的需求基线、责任、完整流程、现状差距及实施顺序。
-- [行为验收场景](acceptance/app-integration.feature)：待实现的语义场景，不是已通过记录。
+- [行为验收场景](acceptance/app-integration.feature)：语义场景；实际通过项和未执行项见 [集成验收记录](acceptance/app-integration-record.md)。
 - [CertLab 接入指南](certlab-integration.md)：当前协议、源码入口和交付改造点。
 - [App 集成 Skill](../skills/airic-app-integration/SKILL.md)：供开发 Agent 使用，替代归档 Framework 的旧接入 Skill。
 

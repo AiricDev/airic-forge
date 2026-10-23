@@ -19,6 +19,7 @@ const publicError = (error: unknown): string => {
 
 /** Owns one process's execution and Proposal mutation exclusion, not HTTP connections. */
 export class ReflectionRuns {
+  private closed = false;
   private readonly locks = new Set<string>();
   private readonly active = new Map<string, { controller: AbortController; committing: boolean; done: Promise<void> }>();
   private readonly accepting = new Map<string, { message: string; promise: Promise<{ run: ReflectionRun; created: boolean }> }>();
@@ -43,6 +44,7 @@ export class ReflectionRuns {
   }
 
   async startPrepared(input: { reflectionId: string; ownerUserId: string; requestId: string; message: string }, prepare: () => Promise<void>, execute: (context: ReflectionExecution) => Promise<string | undefined>) {
+    if (this.closed) throw new Error("ForgeStopping");
     const existing = this.forRequest(input.reflectionId, input.requestId, input.message);
     if (existing) return { run: existing, created: false };
     const key = `${input.reflectionId}:${input.requestId}`;
@@ -56,6 +58,7 @@ export class ReflectionRuns {
     const promise = Promise.resolve().then(async () => {
       try {
         await prepare();
+        if (this.closed) throw new Error("ForgeStopping");
         return this.startLocked(input, execute);
       } catch (error) { this.locks.delete(input.reflectionId); throw error; }
       finally { this.accepting.delete(key); }
@@ -65,6 +68,7 @@ export class ReflectionRuns {
   }
 
   start(input: { reflectionId: string; ownerUserId: string; requestId: string; message: string }, execute: (context: ReflectionExecution) => Promise<string | undefined>) {
+    if (this.closed) throw new Error("ForgeStopping");
     const existing = this.forRequest(input.reflectionId, input.requestId, input.message);
     if (existing) return { run: existing, created: false };
     if (this.busy(input.reflectionId)) throw new Error("ReflectionAlreadyRunning");
@@ -154,6 +158,8 @@ export class ReflectionRuns {
   }
 
   async close() {
+    this.closed = true;
+    await Promise.allSettled([...this.accepting.values()].map(control => control.promise));
     for (const [id] of this.active) {
       const run = this.store.reflectionRun(id)!;
       this.cancel(run.reflectionId, id);

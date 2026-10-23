@@ -1,6 +1,6 @@
 # AiricForge 当前技术设计
 
-本文件只描述当前架构与实现入口。下一步显式 Pi 配置、快速联调和发布装配按 [App 集成需求](app-integration.md)实施，不把 proposed 接口写成现有能力。
+本文件只描述当前架构与实现入口。显式 Pi 配置、快速联调、初始化和恢复入口见 [部署手册](deployment.md)；行为要求见 [App 集成需求](app-integration.md)。
 
 ## 运行与依赖
 
@@ -58,3 +58,5 @@ Reflection 使用相同的原生执行装配，但只提供轨迹和候选治理
 Domain 测纯规则；API 测真实 Git、SQLite、MCP、ACP 和原生 Pi，模型由确定性服务替代；Workbench 测呈现与交互，Playwright 用一次性真实 API。真实资料验收单独授权和记录。
 
 维护命令为 pnpm build、pnpm check、pnpm test、Workbench format:check 与 pnpm test:e2e；入口见各 package.json。当前测试映射及清理验证见 [清理记录](acceptance/repository-cleanup-record.md)。
+
+资源装配：`apps/api/src/agent-resources.ts` 使用 Pi 原生包管理/加载器；`forge-ops.ts` 拥有显式初始化命令，`deployment-state.ts` 拥有离线快照与路径修复，`service-lock.ts` 管理单服务实例运行锁。App 启动与镜像装配由 App 仓库负责。

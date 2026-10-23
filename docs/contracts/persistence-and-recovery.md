@@ -19,3 +19,7 @@ SQLite、Git、JSONL 及 App 回执之间可能存在中间状态。恢复后保
 当前进程重启会将运行 Turn/Reflection 标记为中断并完成用户停用收尾；已有资源保留。恢复测试使用临时目录和已有显式会话，不通过扫描“最近会话”猜测。
 
 发布级协调备份/恢复入口和跨目录 Git worktree/Pi 路径修复仍待按 [App 集成需求](../app-integration.md)实现并演练。软件回滚、OM 撤销和数据恢复分别处理，不能只换镜像后声称数据库或 App 效果已回退。
+
+## App 所有的离线组合快照
+
+`forge-ops backup/verify/restore` 的实际命令与拒绝条件见 [部署手册](../deployment.md)。备份必须在停止 App/Forge 后进行，携带 complete App bundle，保存原生会话和工作文件。恢复只写全新目录，检查组织、部署身份、文件校验和及数据库完整性，修复 Git worktree 和原生会话头/显式绑定的路径；不改写业务历史或重放未决命令。依赖缓存可重建，Secret 单独保管。`deployment-state.test.ts` 验证个人草稿、原会话 ID、阅读进度及跨路径重开；软件降级不等于数据可降级。

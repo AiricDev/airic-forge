@@ -62,7 +62,13 @@ test("two users are isolated; an admin can inspect without becoming the OM owner
     assert.equal((await app.inject({ method: "GET", url: "/api/v1/users", headers: { cookie: aliceCookie } })).statusCode, 403);
     assert.equal((await app.inject({ method: "GET", url: `/api/v1/works/${bobWork.id}`, headers: { cookie: aliceCookie } })).statusCode, 403);
     assert.equal((await app.inject({ method: "POST", url: "/api/v1/proposals", headers: { cookie: aliceCookie }, payload: { source: "manual", reason: "Check ownership" } })).statusCode, 404);
+    assert.equal((await app.inject({ method: "GET", url: "/api/v1/agent-environment" })).statusCode, 401);
+    assert.equal((await app.inject({ method: "GET", url: "/api/v1/agent-environment", headers: { cookie: aliceCookie } })).statusCode, 403);
     const adminCookie = await login("admin@example.com");
+    const environment = await app.inject({ method: "GET", url: "/api/v1/agent-environment", headers: { cookie: adminCookie } });
+    assert.equal(environment.statusCode, 200);
+    assert.match(environment.json().work.digest, /^[0-9a-f]{64}$/);
+    assert.equal(JSON.stringify(environment.json()).includes("API_KEY"), false);
     const inspected = await app.inject({ method: "GET", url: `/api/v1/om/users/${bob.id}`, headers: { cookie: adminCookie } });
     assert.equal(inspected.statusCode, 200);
     assert.equal(inspected.json().owner.id, bob.id);

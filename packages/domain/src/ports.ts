@@ -215,7 +215,7 @@ export interface AgentExecutionScope {
   organizationId: string; ownerUserId: string; workId: string; turnId: string;
   omRevision: string; catalogDigest: string;
 }
-export interface AgentRuntimeEvent { kind: string; sessionId: string; sessionFile?: string; toolName?: string; toolCallId?: string; status?: string; tokensBefore?: number; }
+export interface AgentRuntimeEvent { agentResourceDigest?: string; deploymentId?: string; kind: string; sessionId: string; sessionFile?: string; toolName?: string; toolCallId?: string; status?: string; tokensBefore?: number; }
 export interface AgentRunnerPort {
   runWork(input: {
     sessionId: string;

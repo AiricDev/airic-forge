@@ -16,7 +16,7 @@ Use current-user MCP discovery. Do not introduce a second capability registry, c
 - For tool discovery or commands, consult [MCP discovery](../../docs/contracts/mcp-tool-discovery.md); for sessions and resource loading, consult [native execution](../../docs/contracts/context-projection.md).
 - Use [integration scenarios](../../docs/acceptance/app-integration.feature) to scope verification. These are requirements, not evidence of passing tests.
 
-Inspect the actual deployed Forge version and target App before copying configuration. Current bootstrap still binds CertLab/report-authoring; do not advertise generic App registration or a Pi configuration-directory option as already implemented. Use [the deployment entry points](../../docs/deployment.md) for current commands and limitations.
+Inspect the actual deployed Forge version and target App before copying configuration. Current bootstrap still binds CertLab/report-authoring; the native Pi configuration directory, explicit initialization and offline recovery commands are implemented; generic App registration is not. Use [the deployment entry points](../../docs/deployment.md) for current commands and limitations.
 
 ## Place each change with its owner
 

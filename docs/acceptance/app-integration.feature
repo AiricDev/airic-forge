@@ -1,4 +1,4 @@
-# 需求规格，尚未建立对应的完整自动化及发布演练；不表示已经通过。
+# 需求规格；自动化、本机演练及未执行的镜像验收见 app-integration-record.md。
 # I-xx 对应 docs/app-integration.md 的稳定需求编号。
 Feature: App 组装 Forge 并独立演化组织 OM
 

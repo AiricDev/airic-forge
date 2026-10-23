@@ -8,7 +8,6 @@ COPY packages/domain/package.json packages/domain/package.json
 RUN pnpm install --frozen-lockfile
 COPY apps apps
 COPY packages packages
-COPY seed seed
 RUN pnpm --filter @airic-forge/domain build && pnpm --filter @airic-forge/api build && pnpm --filter @airic-forge/workbench build
 
 FROM node:24-bookworm-slim
@@ -22,8 +21,8 @@ COPY --from=build /app/packages/domain/dist /app/packages/domain/dist
 COPY --from=build /app/packages/domain/package.json /app/packages/domain/package.json
 COPY --from=build /app/apps/api/dist /app/apps/api/dist
 COPY --from=build /app/apps/api/skills /app/apps/api/skills
+COPY --from=build /app/apps/api/agent /app/apps/api/agent
 COPY --from=build /app/apps/api/package.json /app/apps/api/package.json
 COPY --from=build /app/apps/workbench/public /app/apps/workbench/public
-COPY --from=build /app/seed /app/seed
 EXPOSE 4175
 CMD ["node", "apps/api/dist/server.js"]

@@ -6,6 +6,9 @@
     "build": "pnpm -r build",
     "check": "pnpm -r check",
     "test": "pnpm -r test",
+    "agent:prepare": "node apps/api/dist/forge-ops.js prepare",
+    "agent:check": "node apps/api/dist/forge-ops.js check",
+    "instance:init": "node apps/api/dist/forge-ops.js init",
     "dev": "pnpm --filter @airic-forge/api dev",
     "test:e2e": "pnpm --filter @airic-forge/workbench test:e2e",
     "user:set-password": "node --env-file-if-exists=.env apps/api/dist/set-user-password-cli.js"

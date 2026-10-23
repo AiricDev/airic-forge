@@ -2,7 +2,7 @@
 
 本契约取代临时投影、自定义摘要缓存和强制结构化阅读笔记；历史验收记录仅说明旧实现。当前只有 Pi 1.2.0 原生会话/自动压缩这一条执行路径。
 
-2026-10-23 后续需求见 [App 集成与交付](../app-integration.md)：把部署声明的 Pi 配置与能力资源纳入装配/身份，并把通用 PDF 操作流程从 OM 迁出。下文描述当前显式资源实现，不表示通用配置加载已完成，也不要求组织 OM 维护阅读细节。
+App 通过显式 Work/Reflection Pi settings 配置资源；包准备和诊断见 [部署手册](../deployment.md)。通用阅读属于基础能力，组织 OM 只管理业务判断。
 
 ## 职责与身份
 
@@ -34,3 +34,7 @@ Forge审计增加message.payload.agentRuntime：会话绑定、工具名/调用I
 领域边界：AgentRunnerPort/ReflectionAgentPort及ForgeUseCases；共用适配器：pi-native-session；MCP交付：work-mcp-bridge。既有TrajectoryPort和AppPort继续持久化审计与业务回执，不增加数据库表。
 
 pi-native-session.test验证显式恢复、笔记保留、身份轮换/隔离、凭据不落盘、原生延迟MCP、自动压缩后接续保存草稿以及Reflection治理写入。现有用例测试继续覆盖取消、未知回执、检查点、重复请求与专业权限。真实资料验收另记，不以模拟模型证明真实专业结论正确。
+
+## 部署资源身份
+
+每次执行通过 Pi 原生解析器固定显式包/扩展/Skill/提示模板，禁用个人和工作目录隐式发现。配置、资源内容及安装锁文件组成摘要；资源源码复制为本轮快照。部署代码、资源、输出配置变化参与会话 epoch，旧工作文件仍可用于接续。`session.bound` 记录 deploymentId/agentResourceDigest，审计不复制正文。准备阶段才允许安装依赖；普通执行缺包即拒绝。扩展是受信进程代码，Reflection 的业务凭据隔离不构成操作系统沙箱。

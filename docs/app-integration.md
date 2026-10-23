@@ -141,7 +141,7 @@ App 升级不擅自更改 active OM；OM 采纳也不改变已固定 Turn 的来
 
 ## 8. 验收与实施顺序
 
-行为样例见 [App 集成验收场景](acceptance/app-integration.feature)。它是待实现的验收规格，不是自动化已通过的记录。
+行为样例见 [App 集成验收场景](acceptance/app-integration.feature)。它是行为验收规格；实际结果与限制见 [集成记录](acceptance/app-integration-record.md)。
 
 | 顺序 | 交付切片 / 责任边界 | 必须证明的结果 |
 | --- | --- | --- |
@@ -156,17 +156,8 @@ App 升级不擅自更改 active OM；OM 采纳也不改变已固定 Turn 的来
 
 反馈效率记录从修改到观察生效所需步骤、重启服务和耗时；本轮不虚构秒级性能承诺。下一步实施需把各场景映射到实际测试、启动命令和发布演练记录。
 
-## 9. 当前实现与差距（2026-10-23）
+## 9. 实现入口与验收边界（2026-10-23）
 
-| 范围 | 已核对的现状 | 本需求要求补齐 |
-| --- | --- | --- |
-| 原生执行 | `pi-native-session.ts` 已用持久化 Pi 会话、工作文件、原生压缩与显式 MCP/tool_search | 保持单一原生执行路径，不重建摘要或阅读门槛 |
-| 资源入口 | 内存 settings，禁用通用资源自动发现；Work 显式加载随 Forge 发布的 PDF Skill | App 受版本控制的 Pi 配置、资源选择、依赖准备、诊断和实际版本归因 |
-| 会话身份 | 当前 epoch 含 OM、工具快照、模型及策略标识 | 加入相关配置和实际能力资源身份，明确重载与接续 |
-| 阅读与 OM | 已有阅读 Skill；种子与用户 OM 中仍有阅读操作指导；Skill 也带认证业务语义 | 通用阅读与组织专业逻辑分离，更新种子及用户分支；本次只记录要求，不修改生效 OM |
-| 本地开发 | API 已有 `tsx watch`；可手动运行 App 与 Forge | App 所有的一致联调入口、依赖/端口诊断、资源重载和回归闭环 |
-| App 接入 | CertLab MCP、身份与报告绑定已实现；bootstrap 仍固定 CertLab/report-authoring | 明确可复用契约与 App 适配范围，不声称通用 App 注册已实现 |
-| 部署 | Dockerfile 与单服务本地 Compose 已使用当前 CertLab/组织配置；缺完整扩展配置装配 | App 负责固定发布及运行配置，完成能力依赖、镜像及恢复验收；当前示例不是完整正式交付 |
-| OM 初始化/恢复 | 已有 Git 治理和持久化机制、历史验收 | 补齐当前 Pi 会话/配置、种子升级、版本组合与路径迁移验收 |
+原生资源配置/快照在 agent-resources.ts；会话身份在 pi-native-session.ts；显式种子初始化在 forge-ops.ts；停机快照/迁移在 deployment-state.ts。CertLab 代码拥有 agent 配置、业务 seed、本机启动和发布装配。配置格式、具体命令及失败处理统一见 [部署手册](deployment.md)。
 
-源码定位：[配置](../apps/api/src/config.ts)、[原生资源](../apps/api/src/pi-native-session.ts)、[接入路由](../apps/api/src/server.ts)、[用例](../packages/domain/src/use-cases.ts)、[容器构建](../Dockerfile)、[Compose](../docker-compose.yml)。当前已实现协议以 [MCP 发现](contracts/mcp-tool-discovery.md)和[原生会话](contracts/context-projection.md)为准；本文新增要求不表示这些接口已经扩展。
+业务 AppPort、CertLab MCP 和领域授权保持既有契约；没有实现通用 App 注册或第二套权限。确定性回归及本机双端启动、停机、备份和跨路径恢复已执行。Docker daemon 不可用，镜像构建及容器组合运行仍需发布环境验收，不把源码级检查冒充镜像验收。专业判断质量不属于这些工程检查的证明范围。
